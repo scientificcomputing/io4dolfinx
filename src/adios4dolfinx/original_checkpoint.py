@@ -15,7 +15,7 @@ import adios2
 import dolfinx
 import numpy as np
 
-from .adios2_helpers import resolve_adios_scope
+from .backends.adios2.adios2_helpers import resolve_adios_scope
 from .comm_helpers import numpy_to_mpi
 from .structures import FunctionData, MeshData
 from .utils import (

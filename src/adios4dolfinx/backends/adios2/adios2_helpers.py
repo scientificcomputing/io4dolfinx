@@ -13,7 +13,7 @@ import dolfinx.graph
 import numpy as np
 import numpy.typing as npt
 
-from .utils import compute_local_range, valid_function_types
+from adios4dolfinx.utils import compute_local_range, valid_function_types
 
 
 def resolve_adios_scope(adios2):

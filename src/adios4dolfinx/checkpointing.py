@@ -11,7 +11,6 @@ from pathlib import Path
 
 from mpi4py import MPI
 
-import adios2
 import basix
 import dolfinx
 import numpy as np
@@ -19,7 +18,8 @@ import numpy.typing as npt
 import ufl
 from packaging.version import Version
 
-from .adios2_helpers import (
+from .backends import IOBackend
+from .backends.adios2.adios2_helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
     read_adjacency_list,
@@ -27,6 +27,8 @@ from .adios2_helpers import (
     read_cell_perms,
     resolve_adios_scope,
 )
+from .backends.adios2.backend import ADIOS2Interface
+from .backends.h5py.backend import H5PYInterface
 from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
@@ -34,6 +36,8 @@ from .comm_helpers import (
 )
 from .structures import FunctionData, MeshData
 from .utils import (
+    FileMode,
+    check_file_exists,
     compute_dofmap_pos,
     compute_local_range,
     index_owner,
@@ -42,8 +46,6 @@ from .utils import (
 )
 from .writers import write_function as _internal_function_writer
 from .writers import write_mesh as _internal_mesh_writer
-
-adios2 = resolve_adios_scope(adios2)
 
 __all__ = [
     "read_mesh_data",
@@ -58,10 +60,13 @@ __all__ = [
 ]
 
 
-def check_file_exists(filename: typing.Union[Path, str]):
-    """Check if file exists."""
-    if not Path(filename).exists():
-        raise FileNotFoundError(f"{filename} not found")
+def get_backend(backend: typing.Literal["h5py", "adios2"]) -> IOBackend:
+    if backend == "h5py":
+        return H5PYInterface
+    elif backend == "adios2":
+        return ADIOS2Interface
+    else:
+        raise NotImplementedError(f"Backend: {backend} not implemented")
 
 
 def write_attributes(
@@ -69,68 +74,24 @@ def write_attributes(
     comm: MPI.Intracomm,
     name: str,
     attributes: dict[str, np.ndarray],
-    engine: str = "BP4",
+    backend_args: dict[str, typing.Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
-    """Write attributes to file using ADIOS2.
-
-    Args:
-        filename: Path to file to write to
-        comm: MPI communicator used in storage
-        name: Name of the attributes
-        attributes: Dictionary of attributes to write to file
-        engine: ADIOS2 engine to use
-    """
-
-    adios = adios2.ADIOS(comm)
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Append,
-        engine=engine,
-        io_name="AttributesWriter",
-    ) as adios_file:
-        adios_file.file.BeginStep()
-
-        for k, v in attributes.items():
-            adios_file.io.DefineAttribute(f"{name}_{k}", v)
-
-        adios_file.file.PerformPuts()
-        adios_file.file.EndStep()
+    backend = get_backend(backend)
+    backend_args = backend.get_default_backend_args(backend_args)
+    backend.write_attributes(filename, comm, name, attributes, backend_args)
 
 
 def read_attributes(
     filename: typing.Union[Path, str],
     comm: MPI.Intracomm,
     name: str,
-    engine: str = "BP4",
-) -> dict[str, np.ndarray]:
-    """Read attributes from file using ADIOS2.
-
-    Args:
-        filename: Path to file to read from
-        comm: MPI communicator used in storage
-        name: Name of the attributes
-        engine: ADIOS2 engine to use
-    Returns:
-        The attributes
-    """
-    check_file_exists(filename)
-    adios = adios2.ADIOS(comm)
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Read,
-        engine=engine,
-        io_name="AttributesReader",
-    ) as adios_file:
-        adios_file.file.BeginStep()
-        attributes = {}
-        for k in adios_file.io.AvailableAttributes().keys():
-            if k.startswith(f"{name}_"):
-                a = adios_file.io.InquireAttribute(k)
-                attributes[k[len(name) + 1 :]] = a.Data()
-        adios_file.file.EndStep()
-    return attributes
+    backend_args: dict[str, typing.Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
+) -> dict[str, typing.Any]:
+    backend = get_backend(backend)
+    backend_args = backend.get_default_backend_args(backend_args)
+    return backend.read_attributes(filename, comm, name, backend_args)
 
 
 def read_timestamps(
@@ -149,6 +110,9 @@ def read_timestamps(
     """
     check_file_exists(filename)
 
+    import adios2
+
+    adios2 = resolve_adios_scope(adios2)
     adios = adios2.ADIOS(comm)
 
     with ADIOSFile(
@@ -222,6 +186,9 @@ def write_meshtags(
 
     name = meshtag_name or meshtags.name
 
+    import adios2
+
+    adios2 = resolve_adios_scope(adios2)
     adios = adios2.ADIOS(mesh.comm)
     with ADIOSFile(
         adios=adios,
@@ -277,6 +244,11 @@ def read_meshtags(
         The meshtags
     """
     check_file_exists(filename)
+
+    import adios2
+
+    adios2 = resolve_adios_scope(adios2)
+
     adios = adios2.ADIOS(mesh.comm)
     with ADIOSFile(
         adios=adios,
@@ -379,6 +351,11 @@ def read_function(
     check_file_exists(filename)
     mesh = u.function_space.mesh
     comm = mesh.comm
+
+    import adios2
+
+    adios2 = resolve_adios_scope(adios2)
+
     adios = adios2.ADIOS(comm)
     if name is None:
         name = u.name
@@ -550,6 +527,11 @@ def read_mesh_data(
     Returns:
         The mesh topology, geometry, UFL domain and partition function
     """
+
+    import adios2
+
+    adios2 = resolve_adios_scope(adios2)
+
     check_file_exists(filename)
     adios = adios2.ADIOS(comm)
 
@@ -714,7 +696,7 @@ def write_mesh(
     filename: Path,
     mesh: dolfinx.mesh.Mesh,
     engine: str = "BP4",
-    mode: adios2.Mode = adios2.Mode.Write,
+    mode: FileMode = FileMode.write,
     time: float = 0.0,
     store_partition_info: bool = False,
 ):
@@ -819,7 +801,7 @@ def write_function(
     filename: typing.Union[Path, str],
     u: dolfinx.fem.Function,
     engine: str = "BP4",
-    mode: adios2.Mode = adios2.Mode.Append,
+    mode: FileMode = FileMode.append,
     time: float = 0.0,
     name: typing.Optional[str] = None,
 ):

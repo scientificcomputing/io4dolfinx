@@ -22,6 +22,7 @@ from .checkpointing import (
 from .legacy_readers import read_function_from_legacy_h5, read_mesh_from_legacy_h5
 from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
 from .snapshot import snapshot_checkpoint
+from .utils import FileMode
 
 meta = metadata("adios4dolfinx")
 __version__ = meta["Version"]
@@ -31,6 +32,7 @@ __email__ = meta["Author-email"]
 __program_name__ = meta["Name"]
 
 __all__ = [
+    "FileMode",
     "write_meshtags",
     "read_meshtags",
     "read_mesh",

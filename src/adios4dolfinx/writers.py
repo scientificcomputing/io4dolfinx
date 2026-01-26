@@ -13,8 +13,9 @@ from mpi4py import MPI
 import adios2
 import numpy as np
 
-from .adios2_helpers import ADIOSFile, check_variable_exists, resolve_adios_scope
+from .backends.adios2.adios2_helpers import ADIOSFile, check_variable_exists, resolve_adios_scope
 from .structures import FunctionData, MeshData
+from .utils import FileMode
 
 adios2 = resolve_adios_scope(adios2)
 
@@ -125,7 +126,7 @@ def write_function(
     comm: MPI.Intracomm,
     u: FunctionData,
     engine: str = "BP4",
-    mode: adios2.Mode = adios2.Mode.Append,
+    mode: FileMode = FileMode.append,
     time: float = 0.0,
     io_name: str = "FunctionWriter",
 ):

@@ -9,7 +9,7 @@ from pathlib import Path
 import adios2
 import dolfinx
 
-from .adios2_helpers import ADIOSFile, resolve_adios_scope
+from .backends.adios2.adios2_helpers import ADIOSFile, resolve_adios_scope
 
 adios2 = resolve_adios_scope(adios2)
 

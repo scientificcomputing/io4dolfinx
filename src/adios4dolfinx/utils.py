@@ -11,6 +11,8 @@ Vectorized numpy operations used internally in adios4dolfinx
 from __future__ import annotations
 
 import typing
+from enum import Enum
+from pathlib import Path
 
 from mpi4py import MPI
 
@@ -20,6 +22,7 @@ import numpy.typing as npt
 from packaging.version import Version
 
 __all__ = [
+    "check_file_exists",
     "compute_local_range",
     "index_owner",
     "compute_dofmap_pos",
@@ -27,6 +30,19 @@ __all__ = [
     "compute_insert_position",
     "unroll_insert_position",
 ]
+
+
+class FileMode(Enum):
+    append = 10
+    write = 20
+    read = 30
+
+
+def check_file_exists(filename: typing.Union[Path, str]):
+    """Check if file exists."""
+    if not Path(filename).exists():
+        raise FileNotFoundError(f"{filename} not found")
+
 
 valid_function_types = typing.Union[np.float32, np.float64, np.complex64, np.complex128]
 valid_real_types = typing.Union[np.float32, np.float64]
