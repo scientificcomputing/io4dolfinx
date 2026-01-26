@@ -8,24 +8,37 @@ import ufl
 from adios4dolfinx import FileMode, read_mesh, write_mesh
 
 
-@pytest.mark.parametrize("encoder, suffix", [("BP4", ".bp"), ("HDF5", ".h5"), ("BP5", ".bp")])
+@pytest.mark.parametrize(
+    "backend, encoder, suffix",
+    [
+        ("adios2", "BP4", ".bp"),
+        ("adios2", "HDF5", ".h5"),
+        ("adios2", "BP5", ".bp"),
+        ("h5py", "HDF5", ".h5"),
+    ],
+)
 @pytest.mark.parametrize(
     "ghost_mode", [dolfinx.mesh.GhostMode.shared_facet, dolfinx.mesh.GhostMode.none]
 )
 @pytest.mark.parametrize("store_partition", [True, False])
-def test_mesh_read_writer(encoder, suffix, ghost_mode, tmp_path, store_partition):
+def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_partition):
     N = 7
     # Consistent tmp dir across processes
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-    file = fname / f"adios_mesh_{encoder}_{store_partition}"
+    file = fname / f"{backend}_mesh_{encoder}_{store_partition}"
     xdmf_file = fname / "xdmf_mesh_{encode}_{ghost_mode}_{store_partition}"
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, N, N, N, ghost_mode=ghost_mode)
+
+    backend_args = None
+    if backend == "adios2":
+        backend_args = {"engine": encoder}
 
     write_mesh(
         file.with_suffix(suffix),
         mesh,
         store_partition_info=store_partition,
-        backend_args={"engine": encoder},
+        backend_args=backend_args,
+        backend=backend,
     )
     mesh.comm.Barrier()
     with dolfinx.io.XDMFFile(mesh.comm, xdmf_file.with_suffix(".xdmf"), "w") as xdmf:

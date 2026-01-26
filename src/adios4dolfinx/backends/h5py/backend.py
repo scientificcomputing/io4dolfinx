@@ -161,4 +161,63 @@ def write_mesh(
         mode: Mode to use (write or append)
         time: Time stamp
     """
-    pass
+    backend_args = get_default_backend_args(backend_args)
+    h5_mode = convert_file_mode(mode)
+
+    with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
+        if "mesh" in h5file.keys() and h5_mode == "a":
+            mesh_directory = h5file["mesh"]
+            timestamps = mesh_directory.attrs["timestamps"]
+            if np.isclose(time, timestamps).any():
+                raise RuntimeError("Mesh has already been stored at time={time_stamp}.")
+            else:
+                mesh_directory.attrs["timestamps"] = np.append(
+                    mesh_directory.attrs["timestamps"], time
+                )
+                idx = len(mesh_directory.attrs["timestamps"]) - 1
+                write_topology = False
+        else:
+            mesh_directory = h5file.create_group("mesh")
+            mesh_directory.attrs["timestamps"] = np.array([time], dtype=np.float64)
+            idx = 0
+            write_topology = True
+
+        geometry_group = mesh_directory.create_group(f"{idx}")
+
+        # Write geometry data
+        gdim = mesh.local_geometry.shape[1]
+        geometry_dataset = geometry_group.create_dataset(
+            "Points", [mesh.num_nodes_global, gdim], dtype=mesh.local_geometry.dtype
+        )
+        geometry_dataset[mesh.local_geometry_pos[0] : mesh.local_geometry_pos[1], :] = (
+            mesh.local_geometry
+        )
+
+        # Write static partitioning data
+        if "PartitioningData" not in mesh_directory.keys() and mesh.store_partition:
+            assert mesh.partition_range is not None
+            par_dataset = mesh_directory.create_dataset("PartitioningData", [mesh.partition_global])
+            par_dataset[mesh.partition_range[0] : mesh.partition_range[1]]
+
+        if "PartitioningOffset" not in mesh_directory.keys() and mesh.store_partition:
+            assert mesh.ownership_offset is not None
+            par_dataset = mesh_directory.create_dataset(
+                "PartitioningOffset", [mesh.num_cells_global]
+            )
+            par_dataset[mesh.local_topology_pos[0] : mesh.local_topology_pos[1]]
+
+        if "PartitionProcesses" not in mesh_directory.attrs.keys() and mesh.store_partition:
+            mesh_directory.attrs["PartitionProcesses"] = mesh.partition_processes
+
+        # Write static data
+        if write_topology:
+            mesh_directory.attrs["CellType"] = mesh.cell_type
+            mesh_directory.attrs["Degree"] = mesh.degree
+            mesh_directory["LagrangeVariant"] = mesh.lagrange_variant
+            num_dofs_per_cell = mesh.local_topology.shape[1]
+            topology_dataset = mesh_directory.create_dataset(
+                "Topology", [mesh.num_cells_global, num_dofs_per_cell]
+            )
+            topology_dataset[mesh.local_topology_pos[0] : mesh.local_topology_pos[1], :] = (
+                mesh.local_topology
+            )
