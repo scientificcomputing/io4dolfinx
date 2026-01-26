@@ -27,8 +27,6 @@ from .backends.adios2.adios2_helpers import (
     read_cell_perms,
     resolve_adios_scope,
 )
-from .backends.adios2.backend import ADIOS2Interface
-from .backends.h5py.backend import H5PYInterface
 from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
@@ -62,8 +60,12 @@ __all__ = [
 
 def get_backend(backend: typing.Literal["h5py", "adios2"]) -> IOBackend:
     if backend == "h5py":
+        from adios4dolfinx.backends.h5py.backend import H5PYInterface
+
         return H5PYInterface
     elif backend == "adios2":
+        from adios4dolfinx.backends.adios2.backend import ADIOS2Interface
+
         return ADIOS2Interface
     else:
         raise NotImplementedError(f"Backend: {backend} not implemented")
