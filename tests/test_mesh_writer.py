@@ -21,7 +21,12 @@ def test_mesh_read_writer(encoder, suffix, ghost_mode, tmp_path, store_partition
     xdmf_file = fname / "xdmf_mesh_{encode}_{ghost_mode}_{store_partition}"
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, N, N, N, ghost_mode=ghost_mode)
 
-    write_mesh(file.with_suffix(suffix), mesh, encoder, store_partition_info=store_partition)
+    write_mesh(
+        file.with_suffix(suffix),
+        mesh,
+        store_partition_info=store_partition,
+        backend_args={"engine": encoder},
+    )
     mesh.comm.Barrier()
     with dolfinx.io.XDMFFile(mesh.comm, xdmf_file.with_suffix(".xdmf"), "w") as xdmf:
         xdmf.write_mesh(mesh)
