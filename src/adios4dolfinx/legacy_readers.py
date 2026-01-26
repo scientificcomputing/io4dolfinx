@@ -18,7 +18,7 @@ import numpy as np
 import numpy.typing as npt
 import ufl
 
-from .backends.adios2.adios2_helpers import (
+from .backends.adios2.helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
     read_array,

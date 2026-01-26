@@ -279,6 +279,5 @@ def test_read_timestamps(get_dtype, mesh_2D, tmp_path):
     timestamps_v = adios4dolfinx.read_timestamps(
         comm=mesh.comm, filename=filename, function_name="v"
     )
-
     assert np.allclose(timestamps_u, t_u)
     assert np.allclose(timestamps_v, t_v)

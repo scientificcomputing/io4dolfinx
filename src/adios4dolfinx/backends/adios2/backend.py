@@ -5,10 +5,11 @@ from mpi4py import MPI
 
 import adios2
 import numpy as np
+import numpy.typing as npt
 
 from adios4dolfinx.utils import FileMode, check_file_exists
 
-from .adios2_helpers import ADIOSFile, resolve_adios_scope
+from .helpers import ADIOSFile, adios_to_numpy_dtype, resolve_adios_scope
 
 adios2 = resolve_adios_scope(adios2)
 
@@ -102,3 +103,51 @@ class ADIOS2Interface:
                     attributes[k[len(name) + 1 :]] = a.Data()
             adios_file.file.EndStep()
         return attributes
+
+    @staticmethod
+    def read_timestamps(
+        filename: Union[Path, str],
+        comm: MPI.Intracomm,
+        function_name: str,
+        backend_args: dict[str, Any] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """
+        Read time-stamps from a checkpoint file.
+
+        Args:
+            comm: MPI communicator
+            filename: Path to file
+            function_name: Name of the function to read time-stamps for
+            backend_args: Arguments for backend, for instance file type.
+            backend: What backend to use for writing.
+        Returns:
+            The time-stamps
+        """
+        check_file_exists(filename)
+
+        adios = adios2.ADIOS(comm)
+
+        with ADIOSFile(
+            adios=adios,
+            filename=filename,
+            mode=adios2.Mode.Read,
+            **backend_args,
+            io_name="TimestepReader",
+        ) as adios_file:
+            time_name = f"{function_name}_time"
+            time_stamps = []
+            for _ in range(adios_file.file.Steps()):
+                adios_file.file.BeginStep()
+                if time_name in adios_file.io.AvailableVariables().keys():
+                    arr = adios_file.io.InquireVariable(time_name)
+                    time_shape = arr.Shape()
+                    arr.SetSelection([[0], [time_shape[0]]])
+                    times = np.empty(
+                        time_shape[0],
+                        dtype=adios_to_numpy_dtype[arr.Type()],
+                    )
+                    adios_file.file.Get(arr, times, adios2.Mode.Sync)
+                    time_stamps.append(times[0])
+                adios_file.file.EndStep()
+
+        return np.array(time_stamps)

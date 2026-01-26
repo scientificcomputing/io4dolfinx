@@ -18,8 +18,10 @@ import numpy.typing as npt
 import ufl
 from packaging.version import Version
 
+from adios4dolfinx.backends.adios2.backend import ADIOS2Interface
+
 from .backends import IOBackend
-from .backends.adios2.adios2_helpers import (
+from .backends.adios2.helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
     read_adjacency_list,
@@ -79,6 +81,16 @@ def write_attributes(
     backend_args: dict[str, typing.Any] | None = None,
     backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
+    """Write attributes to file.
+
+    Args:
+        filename: Path to file to write to
+        comm: MPI communicator used in storage
+        name: Name of the attributes
+        attributes: Dictionary of attributes to write to file
+        backend_args: Arguments for backend, for instance file type.
+        backend: What backend to use for writing.
+    """
     backend = get_backend(backend)
     backend_args = backend.get_default_backend_args(backend_args)
     backend.write_attributes(filename, comm, name, attributes, backend_args)
@@ -91,13 +103,28 @@ def read_attributes(
     backend_args: dict[str, typing.Any] | None = None,
     backend: typing.Literal["adios2", "h5py"] = "adios2",
 ) -> dict[str, typing.Any]:
+    """Read attributes from file.
+
+    Args:
+        filename: Path to file to read from
+        comm: MPI communicator used in storage
+        name: Name of the attributes
+        backend_args: Arguments for backend, for instance file type.
+        backend: What backend to use for writing.
+    Returns:
+        The attributes
+    """
     backend = get_backend(backend)
     backend_args = backend.get_default_backend_args(backend_args)
     return backend.read_attributes(filename, comm, name, backend_args)
 
 
 def read_timestamps(
-    filename: typing.Union[Path, str], comm: MPI.Intracomm, function_name: str, engine="BP4"
+    filename: typing.Union[Path, str],
+    comm: MPI.Intracomm,
+    function_name: str,
+    backend_args: dict[str, typing.Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ) -> npt.NDArray[np.float64]:
     """
     Read time-stamps from a checkpoint file.
@@ -106,41 +133,15 @@ def read_timestamps(
         comm: MPI communicator
         filename: Path to file
         function_name: Name of the function to read time-stamps for
-        engine: ADIOS2 engine
+        backend_args: Arguments for backend, for instance file type.
+        backend: What backend to use for writing.
     Returns:
         The time-stamps
     """
     check_file_exists(filename)
-
-    import adios2
-
-    adios2 = resolve_adios_scope(adios2)
-    adios = adios2.ADIOS(comm)
-
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Read,
-        engine=engine,
-        io_name="TimestepReader",
-    ) as adios_file:
-        time_name = f"{function_name}_time"
-        time_stamps = []
-        for i in range(adios_file.file.Steps()):
-            adios_file.file.BeginStep()
-            if time_name in adios_file.io.AvailableVariables().keys():
-                arr = adios_file.io.InquireVariable(time_name)
-                time_shape = arr.Shape()
-                arr.SetSelection([[0], [time_shape[0]]])
-                times = np.empty(
-                    time_shape[0],
-                    dtype=adios_to_numpy_dtype[arr.Type()],
-                )
-                adios_file.file.Get(arr, times, adios2.Mode.Sync)
-                time_stamps.append(times[0])
-            adios_file.file.EndStep()
-
-    return np.array(time_stamps)
+    backend = get_backend(backend)
+    backend_args = backend.get_default_backend_args(backend_args)
+    return backend.read_timestamps(filename, comm, function_name, backend_args)
 
 
 def write_meshtags(
@@ -701,6 +702,7 @@ def write_mesh(
     mode: FileMode = FileMode.write,
     time: float = 0.0,
     store_partition_info: bool = False,
+    backend: typing.Literal["adios2", "h5py"] = "adios",
 ):
     """
     Write a mesh to specified ADIOS2 format, see:
@@ -787,13 +789,12 @@ def write_mesh(
         partition_range=partition_range,
         partition_global=partition_global,
     )
-
     _internal_mesh_writer(
         filename,
         mesh.comm,
         mesh_data,
         engine,
-        mode=mode,
+        mode=ADIOS2Interface.convert_file_mode(mode),
         time=time,
         io_name="MeshWriter",
     )
@@ -870,4 +871,12 @@ def write_function(
     )
     # Write to file
     fname = Path(filename)
-    _internal_function_writer(fname, comm, function_data, engine, mode, time, "FunctionWriter")
+    _internal_function_writer(
+        fname,
+        comm,
+        function_data,
+        engine,
+        ADIOS2Interface.convert_file_mode(mode),
+        time,
+        "FunctionWriter",
+    )

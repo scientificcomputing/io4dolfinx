@@ -1,10 +1,10 @@
-from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol, Union
 
 from mpi4py import MPI
 
 import numpy as np
+import numpy.typing as npt
 
 from adios4dolfinx.utils import FileMode
 
@@ -27,8 +27,19 @@ class IOBackend(Protocol):
 
     @staticmethod
     def read_attributes(
-        filename: Union[Path, str], comm: MPI.Intracomm, name: str | None
+        filename: Union[Path, str],
+        comm: MPI.Intracomm,
+        name: str | None,
+        backend_args: dict[str, Any] | None,
     ) -> dict[str, Any]: ...
+
+    @staticmethod
+    def read_timestamps(
+        filename: Union[Path, str],
+        comm: MPI.Intracomm,
+        function_name: str,
+        backend_args: dict[str, Any] | None,
+    ) -> npt.NDArray[np.float64]: ...
 
     # read_function
     # read_mesh

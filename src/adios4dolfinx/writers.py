@@ -13,7 +13,7 @@ from mpi4py import MPI
 import adios2
 import numpy as np
 
-from .backends.adios2.adios2_helpers import ADIOSFile, check_variable_exists, resolve_adios_scope
+from .backends.adios2.helpers import ADIOSFile, check_variable_exists, resolve_adios_scope
 from .structures import FunctionData, MeshData
 from .utils import FileMode
 

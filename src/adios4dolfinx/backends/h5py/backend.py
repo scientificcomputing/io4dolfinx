@@ -13,10 +13,9 @@ from typing import Any, Union
 from mpi4py import MPI
 
 import numpy as np
+import numpy.typing as npt
 
 from adios4dolfinx.utils import FileMode, check_file_exists
-
-_backend_default_args = None
 
 
 @contextlib.contextmanager
@@ -73,7 +72,7 @@ class H5PYInterface:
         comm: MPI.Intracomm,
         name: str,
         attributes: dict[str, np.ndarray],
-        backend_args: dict[str, Any] | None = _backend_default_args,
+        backend_args: dict[str, Any] | None = None,
     ):
         """Write attributes to file using H5PY.
 
@@ -98,7 +97,7 @@ class H5PYInterface:
         filename: Union[Path, str],
         comm: MPI.Intracomm,
         name: str,
-        backend_args: dict[str, Any] | None = _backend_default_args,
+        backend_args: dict[str, Any] | None = None,
     ):
         """Read attributes from file using H5PY.
 
@@ -115,3 +114,25 @@ class H5PYInterface:
             for key, val in h5file[name].attrs.items():
                 output_attrs[key] = val
         return output_attrs
+
+    @staticmethod
+    def read_timestamps(
+        filename: Union[Path, str],
+        comm: MPI.Intracomm,
+        function_name: str,
+        backend_args: dict[str, Any] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """
+        Read time-stamps from a checkpoint file.
+
+        Args:
+            comm: MPI communicator
+            filename: Path to file
+            function_name: Name of the function to read time-stamps for
+            backend_args: Arguments for backend, for instance file type.
+            backend: What backend to use for writing.
+        Returns:
+            The time-stamps
+        """
+        check_file_exists(filename)
+        raise NotImplementedError("Need to be able to save functions before implementing this")

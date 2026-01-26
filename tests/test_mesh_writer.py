@@ -6,7 +6,7 @@ import pytest
 import ufl
 
 from adios4dolfinx import read_mesh, write_mesh
-from adios4dolfinx.adios2_helpers import adios2
+from adios4dolfinx.backends.adios2.helpers import adios2
 
 
 @pytest.mark.parametrize("encoder, suffix", [("BP4", ".bp"), ("HDF5", ".h5"), ("BP5", ".bp")])
