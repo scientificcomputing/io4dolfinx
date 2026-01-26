@@ -5,8 +5,7 @@ import numpy as np
 import pytest
 import ufl
 
-from adios4dolfinx import read_mesh, write_mesh
-from adios4dolfinx.backends.adios2.helpers import adios2
+from adios4dolfinx import FileMode, read_mesh, write_mesh
 
 
 @pytest.mark.parametrize("encoder, suffix", [("BP4", ".bp"), ("HDF5", ".h5"), ("BP5", ".bp")])
@@ -124,14 +123,22 @@ def test_timedep_mesh(encoder, suffix, ghost_mode, tmp_path, store_partition):
     write_mesh(
         file.with_suffix(suffix),
         mesh,
-        encoder,
-        mode=adios2.Mode.Write,
+        mode=FileMode.write,
         time=0.0,
         store_partition_info=store_partition,
+        backend_args={"engine": encoder},
+        backend="adios2",
     )
     delta_x = u(mesh.geometry.x.T).T
     mesh.geometry.x[:] += delta_x
-    write_mesh(file.with_suffix(suffix), mesh, encoder, mode=adios2.Mode.Append, time=3.0)
+    write_mesh(
+        file.with_suffix(suffix),
+        mesh,
+        mode=FileMode.append,
+        time=3.0,
+        backend_args={"engine": encoder},
+        backend="adios2",
+    )
     mesh.geometry.x[:] -= delta_x
 
     mesh_first = read_mesh(

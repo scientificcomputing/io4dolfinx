@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import typing
 from pathlib import Path
+from typing import Any
 
 from mpi4py import MPI
 
@@ -20,7 +21,6 @@ from packaging.version import Version
 
 from adios4dolfinx.backends.adios2.backend import ADIOS2Interface
 
-from .backends import IOBackend
 from .backends.adios2.helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
@@ -34,9 +34,9 @@ from .comm_helpers import (
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
 )
-from .structures import FunctionData, MeshData
+from .interface import FileMode, get_backend
+from .structures import FunctionData
 from .utils import (
-    FileMode,
     check_file_exists,
     compute_dofmap_pos,
     compute_local_range,
@@ -44,6 +44,7 @@ from .utils import (
     unroll_dofmap,
     unroll_insert_position,
 )
+from .writers import prepare_meshdata_for_storage
 from .writers import write_function as _internal_function_writer
 from .writers import write_mesh as _internal_mesh_writer
 
@@ -58,19 +59,6 @@ __all__ = [
     "read_attributes",
     "write_attributes",
 ]
-
-
-def get_backend(backend: typing.Literal["h5py", "adios2"]) -> IOBackend:
-    if backend == "h5py":
-        from adios4dolfinx.backends.h5py.backend import H5PYInterface
-
-        return H5PYInterface
-    elif backend == "adios2":
-        from adios4dolfinx.backends.adios2.backend import ADIOS2Interface
-
-        return ADIOS2Interface
-    else:
-        raise NotImplementedError(f"Backend: {backend} not implemented")
 
 
 def write_attributes(
@@ -698,105 +686,31 @@ def read_mesh(
 def write_mesh(
     filename: Path,
     mesh: dolfinx.mesh.Mesh,
-    engine: str = "BP4",
     mode: FileMode = FileMode.write,
     time: float = 0.0,
     store_partition_info: bool = False,
-    backend: typing.Literal["adios2", "h5py"] = "adios",
+    backend_args: dict[str, Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
     """
-    Write a mesh to specified ADIOS2 format, see:
-    https://adios2.readthedocs.io/en/stable/engines/engines.html
-    for possible formats.
+    Write a mesh to file.
 
     Args:
         filename: Path to save mesh (without file-extension)
         mesh: The mesh to write to file
-        engine: Adios2 Engine
+
         store_partition_info: Store mesh partitioning (including ghosting) to file
     """
-    num_xdofs_local = mesh.geometry.index_map().size_local
-    num_xdofs_global = mesh.geometry.index_map().size_global
-    geometry_range = mesh.geometry.index_map().local_range
-    gdim = mesh.geometry.dim
+    mesh_data = prepare_meshdata_for_storage(mesh, store_partition_info=store_partition_info)
 
-    # Convert local connectivity to globa l connectivity
-    g_imap = mesh.geometry.index_map()
-    g_dmap = mesh.geometry.dofmap
-    num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
-    num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
-    cell_range = mesh.topology.index_map(mesh.topology.dim).local_range
-    cmap = mesh.geometry.cmap
-    geom_layout = cmap.create_dof_layout()
-    if hasattr(geom_layout, "num_entity_closure_dofs"):
-        num_dofs_per_cell = geom_layout.num_entity_closure_dofs(mesh.topology.dim)
-    else:
-        num_dofs_per_cell = len(geom_layout.entity_closure_dofs(mesh.topology.dim, 0))
-    dofs_out = np.zeros((num_cells_local, num_dofs_per_cell), dtype=np.int64)
-    assert g_dmap.shape[1] == num_dofs_per_cell
-    dofs_out[:, :] = np.asarray(
-        g_imap.local_to_global(g_dmap[:num_cells_local, :].reshape(-1))
-    ).reshape(dofs_out.shape)
-
-    if store_partition_info:
-        partition_processes = mesh.comm.size
-
-        # Get partitioning
-        if Version(dolfinx.__version__) > Version("0.9.0"):
-            consensus_tag = 1202
-            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks(consensus_tag)
-        else:
-            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks()
-        num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
-        cell_offsets = cell_map.offsets[: num_cells_local + 1]
-        if cell_offsets[-1] == 0:
-            cell_array = np.empty(0, dtype=np.int32)
-        else:
-            cell_array = cell_map.array[: cell_offsets[-1]]
-
-        # Compute adjacency with current process as first entry
-        ownership_array = np.full(num_cells_local + cell_offsets[-1], -1, dtype=np.int32)
-        ownership_offset = cell_offsets + np.arange(len(cell_offsets), dtype=np.int32)
-        ownership_array[ownership_offset[:-1]] = mesh.comm.rank
-        insert_position = np.flatnonzero(ownership_array == -1)
-        ownership_array[insert_position] = cell_array
-
-        partition_map = dolfinx.common.IndexMap(mesh.comm, ownership_array.size)
-        ownership_offset += partition_map.local_range[0]
-        partition_range = partition_map.local_range
-        partition_global = partition_map.size_global
-    else:
-        partition_processes = None
-        ownership_array = None
-        ownership_offset = None
-        partition_range = None
-        partition_global = None
-
-    mesh_data = MeshData(
-        local_geometry=mesh.geometry.x[:num_xdofs_local, :gdim].copy(),
-        local_geometry_pos=geometry_range,
-        num_nodes_global=num_xdofs_global,
-        local_topology=dofs_out,
-        local_topology_pos=cell_range,
-        num_cells_global=num_cells_global,
-        cell_type=mesh.topology.cell_name(),
-        degree=mesh.geometry.cmap.degree,
-        lagrange_variant=mesh.geometry.cmap.variant,
-        store_partition=store_partition_info,
-        partition_processes=partition_processes,
-        ownership_array=ownership_array,
-        ownership_offset=ownership_offset,
-        partition_range=partition_range,
-        partition_global=partition_global,
-    )
     _internal_mesh_writer(
         filename,
         mesh.comm,
         mesh_data,
-        engine,
-        mode=ADIOS2Interface.convert_file_mode(mode),
         time=time,
-        io_name="MeshWriter",
+        backend_args=backend_args,
+        backend=backend,
+        mode=mode,
     )
 
 

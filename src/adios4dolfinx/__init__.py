@@ -19,10 +19,10 @@ from .checkpointing import (
     write_mesh,
     write_meshtags,
 )
+from .interface import FileMode, get_backend
 from .legacy_readers import read_function_from_legacy_h5, read_mesh_from_legacy_h5
 from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
 from .snapshot import snapshot_checkpoint
-from .utils import FileMode
 
 meta = metadata("adios4dolfinx")
 __version__ = meta["Version"]
@@ -47,4 +47,5 @@ __all__ = [
     "write_attributes",
     "read_attributes",
     "read_timestamps",
+    "get_backend",
 ]

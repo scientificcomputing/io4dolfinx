@@ -11,7 +11,6 @@ Vectorized numpy operations used internally in adios4dolfinx
 from __future__ import annotations
 
 import typing
-from enum import Enum
 from pathlib import Path
 
 from mpi4py import MPI
@@ -30,12 +29,6 @@ __all__ = [
     "compute_insert_position",
     "unroll_insert_position",
 ]
-
-
-class FileMode(Enum):
-    append = 10
-    write = 20
-    read = 30
 
 
 def check_file_exists(filename: typing.Union[Path, str]):

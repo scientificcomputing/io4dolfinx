@@ -15,7 +15,8 @@ from mpi4py import MPI
 import numpy as np
 import numpy.typing as npt
 
-from adios4dolfinx.utils import FileMode, check_file_exists
+from adios4dolfinx import FileMode
+from adios4dolfinx.utils import check_file_exists
 
 
 @contextlib.contextmanager
