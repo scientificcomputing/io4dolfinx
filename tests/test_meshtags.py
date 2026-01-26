@@ -107,11 +107,12 @@ def test_checkpointing_meshtags_1D(mesh_1D, read_comm, read_mode, tmp_path):
 
     # If mesh communicator is more than a self communicator or serial write on all processes.
     # If serial or self communicator, only write on root rank
+    backend_args = {"engine": "BP4"}
     if mesh.comm.size != 1:
-        adios4dolfinx.write_mesh(filename, mesh, engine="BP4")
+        adios4dolfinx.write_mesh(filename, mesh, backend_args=backend_args)
     else:
         if MPI.COMM_WORLD.rank == root:
-            adios4dolfinx.write_mesh(filename, mesh, engine="BP4")
+            adios4dolfinx.write_mesh(filename, mesh, backend_args=backend_args)
 
     # Create meshtags labeling each entity (of each co-dimension) with a
     # unique number (their initial global index).
