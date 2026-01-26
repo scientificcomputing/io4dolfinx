@@ -239,7 +239,7 @@ def read_adjacency_list(
         # Assuming dofmap is saved in stame step
         # Get the relevant part of the dofmap
         if dofmap not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Dof offsets not found at {dofmap} in {filename}")
+            raise KeyError(f"Dofs not found at {dofmap} in {filename}")
         cell_dofs = adios_file.io.InquireVariable(dofmap)
         cell_dofs.SetSelection([[in_offsets[0]], [in_offsets[-1] - in_offsets[0]]])
         in_dofmap = np.empty(in_offsets[-1] - in_offsets[0], dtype=cell_dofs.Type().strip("_t"))

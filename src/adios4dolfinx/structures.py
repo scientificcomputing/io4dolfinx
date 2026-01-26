@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
+from dolfinx.graph import AdjacencyList
 
 """Internal library classes for storing mesh and function data"""
 __all__ = ["MeshData", "FunctionData"]
@@ -56,3 +57,13 @@ class FunctionData:
     dof_range: tuple[int, int]  # Range of local function values
     num_dofs_global: int  # Number of global function values
     name: str  # Name of function
+
+
+@dataclass
+class ReadMeshData:
+    cells: npt.NDArray[np.int64]
+    cell_type: str
+    x: npt.NDArray[np.floating]
+    lvar: int
+    degree: int
+    partition_graph: AdjacencyList | None = None

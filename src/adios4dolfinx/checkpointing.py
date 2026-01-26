@@ -23,7 +23,6 @@ from .backends import FileMode, get_backend
 from .backends.adios2 import backend as ADIOS2Interface
 from .backends.adios2.helpers import (
     ADIOSFile,
-    adios_to_numpy_dtype,
     read_adjacency_list,
     read_array,
     read_cell_perms,
@@ -48,7 +47,6 @@ from .writers import write_function as _internal_function_writer
 from .writers import write_mesh as _internal_mesh_writer
 
 __all__ = [
-    "read_mesh_data",
     "read_mesh",
     "write_function",
     "read_function",
@@ -482,149 +480,48 @@ def read_function(
     u.x.scatter_forward()
 
 
-class ReadMeshData(typing.TypedDict):
-    cells: npt.NDArray[np.int64]
-    e: typing.Union[
-        ufl.Mesh,
-        basix.finite_element.FiniteElement,
-        basix.ufl._BasixElement,
-    ]
-    x: npt.NDArray[np.floating]
-    partitioner: typing.Optional[typing.Callable]
-
-
-def read_mesh_data(
+def read_mesh(
     filename: typing.Union[Path, str],
     comm: MPI.Intracomm,
-    engine: str = "BP4",
     ghost_mode: dolfinx.mesh.GhostMode = dolfinx.mesh.GhostMode.shared_facet,
     time: float = 0.0,
-    legacy: bool = False,
     read_from_partition: bool = False,
-) -> ReadMeshData:
+    backend_args: dict[str, Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
+) -> dolfinx.mesh.Mesh:
     """
-    Read an ADIOS2 mesh data for use with DOLFINx.
+    Read an ADIOS2 mesh into DOLFINx.
 
     Args:
         filename: Path to input file
         comm: The MPI communciator to distribute the mesh over
-        engine: ADIOS engine to use for reading (BP4, BP5 or HDF5)
         ghost_mode: Ghost mode to use for mesh. If `read_from_partition`
             is set to `True` this option is ignored.
         time: Time stamp associated with mesh
-        legacy: If checkpoint was made prior to time-dependent mesh-writer set to True
         read_from_partition: Read mesh with partition from file
+        backend_args: List of arguments to reader backend
     Returns:
-        The mesh topology, geometry, UFL domain and partition function
+        The distributed mesh
     """
-
-    import adios2
-
-    adios2 = resolve_adios_scope(adios2)
-
+    # Read in data in a distributed fashin
     check_file_exists(filename)
-    adios = adios2.ADIOS(comm)
-
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Read,
-        engine=engine,
-        io_name="MeshReader",
-    ) as adios_file:
-        # Get time independent mesh variables (mesh topology and cell type info) first
-        adios_file.file.BeginStep()
-        # Get mesh topology (distributed)
-        if "Topology" not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Mesh topology not found at Topology in {filename}")
-        topology = adios_file.io.InquireVariable("Topology")
-        shape = topology.Shape()
-        local_range = compute_local_range(comm, shape[0])
-        topology.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
-        mesh_topology = np.empty((local_range[1] - local_range[0], shape[1]), dtype=np.int64)
-        adios_file.file.Get(topology, mesh_topology, adios2.Mode.Deferred)
-
-        # Check validity of partitioning information
-        if read_from_partition:
-            if "PartitionProcesses" not in adios_file.io.AvailableAttributes().keys():
-                raise KeyError(f"Partitioning information not found in {filename}")
-            par_num_procs = adios_file.io.InquireAttribute("PartitionProcesses")
-            num_procs = par_num_procs.Data()[0]
-            if num_procs != comm.size:
-                raise ValueError(f"Number of processes in file ({num_procs})!=({comm.size=})")
-
-        # Get mesh cell type
-        if "CellType" not in adios_file.io.AvailableAttributes().keys():
-            raise KeyError(f"Mesh cell type not found at CellType in {filename}")
-        celltype = adios_file.io.InquireAttribute("CellType")
-        cell_type = celltype.DataString()[0]
-
-        # Get basix info
-        if "LagrangeVariant" not in adios_file.io.AvailableAttributes().keys():
-            raise KeyError(f"Mesh LagrangeVariant not found in {filename}")
-        lvar = adios_file.io.InquireAttribute("LagrangeVariant").Data()[0]
-        if "Degree" not in adios_file.io.AvailableAttributes().keys():
-            raise KeyError(f"Mesh degree not found in {filename}")
-        degree = adios_file.io.InquireAttribute("Degree").Data()[0]
-
-        if not legacy:
-            time_name = "MeshTime"
-            for i in range(adios_file.file.Steps()):
-                if i > 0:
-                    adios_file.file.BeginStep()
-                if time_name in adios_file.io.AvailableVariables().keys():
-                    arr = adios_file.io.InquireVariable(time_name)
-                    time_shape = arr.Shape()
-                    arr.SetSelection([[0], [time_shape[0]]])
-                    times = np.empty(time_shape[0], dtype=adios_to_numpy_dtype[arr.Type()])
-                    adios_file.file.Get(arr, times, adios2.Mode.Sync)
-                    if times[0] == time:
-                        break
-                if i == adios_file.file.Steps() - 1:
-                    raise KeyError(
-                        f"No data associated with {time_name}={time} found in {filename}"
-                    )
-
-                adios_file.file.EndStep()
-
-            if time_name not in adios_file.io.AvailableVariables().keys():
-                raise KeyError(f"No data associated with {time_name}={time} found in {filename}")
-
-        # Get mesh geometry
-        if "Points" not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Mesh coordinates not found at Points in {filename}")
-        geometry = adios_file.io.InquireVariable("Points")
-        x_shape = geometry.Shape()
-        geometry_range = compute_local_range(comm, x_shape[0])
-        geometry.SetSelection(
-            [
-                [geometry_range[0], 0],
-                [geometry_range[1] - geometry_range[0], x_shape[1]],
-            ]
-        )
-        mesh_geometry = np.empty(
-            (geometry_range[1] - geometry_range[0], x_shape[1]),
-            dtype=adios_to_numpy_dtype[geometry.Type()],
-        )
-        adios_file.file.Get(geometry, mesh_geometry, adios2.Mode.Deferred)
-        adios_file.file.PerformGets()
-        adios_file.file.EndStep()
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+    dist_in_data = backend_cls.read_mesh_data(
+        filename, comm, time, read_from_partition=read_from_partition, backend_args=backend_args
+    )
 
     # Create DOLFINx mesh
     element = basix.ufl.element(
         basix.ElementFamily.P,
-        cell_type,
-        degree,
-        basix.LagrangeVariant(int(lvar)),
-        shape=(mesh_geometry.shape[1],),
-        dtype=mesh_geometry.dtype,
+        dist_in_data.cell_type,
+        dist_in_data.degree,
+        basix.LagrangeVariant(int(dist_in_data.lvar)),
+        shape=(dist_in_data.x.shape[1],),
+        dtype=dist_in_data.x.dtype,
     )
     domain = ufl.Mesh(element)
-
-    if read_from_partition:
-        partition_graph = read_adjacency_list(
-            adios, comm, filename, "PartitioningData", "PartitioningOffset", shape[0], engine
-        )
+    if (partition_graph := dist_in_data.partition_graph) is not None:
 
         def partitioner(comm: MPI.Intracomm, n, m, topo):
             assert len(topo[0]) % (len(partition_graph.offsets) - 1) == 0
@@ -634,51 +531,8 @@ def read_mesh_data(
                 return partition_graph
     else:
         partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)
-
-    return ReadMeshData(
-        cells=mesh_topology,
-        x=mesh_geometry,
-        e=domain,
-        partitioner=partitioner,
-    )
-
-
-def read_mesh(
-    filename: typing.Union[Path, str],
-    comm: MPI.Intracomm,
-    engine: str = "BP4",
-    ghost_mode: dolfinx.mesh.GhostMode = dolfinx.mesh.GhostMode.shared_facet,
-    time: float = 0.0,
-    legacy: bool = False,
-    read_from_partition: bool = False,
-) -> dolfinx.mesh.Mesh:
-    """
-    Read an ADIOS2 mesh into DOLFINx.
-
-    Args:
-        filename: Path to input file
-        comm: The MPI communciator to distribute the mesh over
-        engine: ADIOS engine to use for reading (BP4, BP5 or HDF5)
-        ghost_mode: Ghost mode to use for mesh. If `read_from_partition`
-            is set to `True` this option is ignored.
-        time: Time stamp associated with mesh
-        legacy: If checkpoint was made prior to time-dependent mesh-writer set to True
-        read_from_partition: Read mesh with partition from file
-    Returns:
-        The distributed mesh
-    """
-    check_file_exists(filename)
     return dolfinx.mesh.create_mesh(
-        comm,
-        **read_mesh_data(
-            filename,
-            comm,
-            engine=engine,
-            ghost_mode=ghost_mode,
-            time=time,
-            legacy=legacy,
-            read_from_partition=read_from_partition,
-        ),
+        comm, cells=dist_in_data.cells, x=dist_in_data.x, e=domain, partitioner=partitioner
     )
 
 

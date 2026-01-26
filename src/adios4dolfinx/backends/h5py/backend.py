@@ -14,9 +14,10 @@ from mpi4py import MPI
 
 import numpy as np
 import numpy.typing as npt
+from dolfinx.graph import adjacencylist
 
-from ...structures import MeshData
-from ...utils import check_file_exists
+from ...structures import MeshData, ReadMeshData
+from ...utils import check_file_exists, compute_local_range
 from .. import FileMode
 
 
@@ -196,15 +197,19 @@ def write_mesh(
         # Write static partitioning data
         if "PartitioningData" not in mesh_directory.keys() and mesh.store_partition:
             assert mesh.partition_range is not None
-            par_dataset = mesh_directory.create_dataset("PartitioningData", [mesh.partition_global])
-            par_dataset[mesh.partition_range[0] : mesh.partition_range[1]]
+            par_dataset = mesh_directory.create_dataset(
+                "PartitioningData", [mesh.partition_global], dtype=mesh.ownership_array.dtype
+            )
+            par_dataset[mesh.partition_range[0] : mesh.partition_range[1]] = mesh.ownership_array
 
         if "PartitioningOffset" not in mesh_directory.keys() and mesh.store_partition:
             assert mesh.ownership_offset is not None
             par_dataset = mesh_directory.create_dataset(
-                "PartitioningOffset", [mesh.num_cells_global]
+                "PartitioningOffset", [mesh.num_cells_global + 1], dtype=np.int64
             )
-            par_dataset[mesh.local_topology_pos[0] : mesh.local_topology_pos[1]]
+            par_dataset[mesh.local_topology_pos[0] : mesh.local_topology_pos[1] + 1] = (
+                mesh.ownership_offset
+            )
 
         if "PartitionProcesses" not in mesh_directory.attrs.keys() and mesh.store_partition:
             mesh_directory.attrs["PartitionProcesses"] = mesh.partition_processes
@@ -213,11 +218,95 @@ def write_mesh(
         if write_topology:
             mesh_directory.attrs["CellType"] = mesh.cell_type
             mesh_directory.attrs["Degree"] = mesh.degree
-            mesh_directory["LagrangeVariant"] = mesh.lagrange_variant
+            mesh_directory.attrs["LagrangeVariant"] = mesh.lagrange_variant
             num_dofs_per_cell = mesh.local_topology.shape[1]
             topology_dataset = mesh_directory.create_dataset(
-                "Topology", [mesh.num_cells_global, num_dofs_per_cell]
+                "Topology", [mesh.num_cells_global, num_dofs_per_cell], dtype=np.int64
             )
             topology_dataset[mesh.local_topology_pos[0] : mesh.local_topology_pos[1], :] = (
                 mesh.local_topology
             )
+
+
+def read_mesh_data(
+    filename: Union[Path, str],
+    comm: MPI.Intracomm,
+    time: float = 0.0,
+    read_from_partition: bool = False,
+    backend_args: dict[str, Any] | None = None,
+) -> ReadMeshData:
+    """
+    Read mesh data from h5py based checkpoint files.
+
+    Args:
+        filename: Path to input file
+        comm: The MPI communciator to distribute the mesh over
+        ghost_mode: Ghost mode to use for mesh. If `read_from_partition`
+            is set to `True` this option is ignored.
+        time: Time stamp associated with mesh
+        read_from_partition: Read mesh with partition from file
+    Returns:
+        The mesh topology, geometry, UFL domain and partition function
+    """
+
+    backend_args = get_default_backend_args(backend_args)
+
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        if "mesh" not in h5file.keys():
+            raise RuntimeError("Could not find mesh in file")
+        mesh_group = h5file["mesh"]
+        timestamps = mesh_group.attrs["timestamps"]
+        parent_group = np.flatnonzero(np.isclose(timestamps, time))
+        if len(parent_group) != 1:
+            raise RuntimeError(
+                f"Time step {time} not found in file, available steps is {timestamps}"
+            )
+        time_group = f"{parent_group[0]:d}"
+
+        # Get mesh topology (distributed)
+        topology = mesh_group["Topology"]
+        local_range = compute_local_range(comm, topology.shape[0])
+        mesh_topology = topology[local_range[0] : local_range[1], :]
+
+        cell_type = mesh_group.attrs["CellType"]
+        lvar = mesh_group.attrs["LagrangeVariant"]
+        degree = mesh_group.attrs["Degree"]
+
+        geometry_group = mesh_group[time_group]
+        geometry_dataset = geometry_group["Points"]
+        x_shape = geometry_dataset.shape
+
+        geometry_range = compute_local_range(comm, x_shape[0])
+        mesh_geometry = geometry_dataset[geometry_range[0] : geometry_range[1], :]
+
+        # Check validity of partitioning information
+        if read_from_partition:
+            if "PartitionProcesses" not in mesh_group.attrs.keys():
+                raise KeyError(f"Partitioning information not found in {filename}")
+            par_keys = ("PartitioningData", "PartitioningOffset")
+            for key in par_keys:
+                if key not in mesh_group.keys():
+                    raise KeyError(f"Partitioning information not found in {filename}")
+
+            par_num_procs = mesh_group.attrs["PartitionProcesses"]
+            if par_num_procs != comm.size:
+                raise ValueError(f"Number of processes in file ({par_num_procs})!=({comm.size=})")
+
+            # First read in offsets based on the number of cells [0, num_cells_local]
+            par_offsets = mesh_group["PartitioningOffset"][local_range[0] : local_range[1] + 1]
+            # Then read the data based of offsets
+            par_data = mesh_group["PartitioningData"][par_offsets[0] : par_offsets[-1]]
+            # Then make offsets local
+            par_offsets[:] -= par_offsets[0]
+            partition_graph = adjacencylist(par_data, par_offsets.astype(np.int32))
+        else:
+            partition_graph = None
+
+    return ReadMeshData(
+        cells=mesh_topology,
+        cell_type=cell_type,
+        x=mesh_geometry,
+        degree=degree,
+        lvar=lvar,
+        partition_graph=partition_graph,
+    )

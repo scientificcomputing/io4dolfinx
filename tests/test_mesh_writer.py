@@ -48,9 +48,10 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
     mesh_adios = read_mesh(
         file.with_suffix(suffix),
         MPI.COMM_WORLD,
-        engine=encoder,
         ghost_mode=ghost_mode,
         read_from_partition=store_partition,
+        backend_args=backend_args,
+        backend=backend,
     )
     mesh_adios.comm.Barrier()
     if store_partition:

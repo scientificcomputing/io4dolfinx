@@ -8,10 +8,10 @@ import adios2
 import numpy as np
 import numpy.typing as npt
 
-from ...structures import MeshData
-from ...utils import check_file_exists
+from ...structures import MeshData, ReadMeshData
+from ...utils import check_file_exists, compute_local_range
 from .. import FileMode
-from .helpers import ADIOSFile, adios_to_numpy_dtype, resolve_adios_scope
+from .helpers import ADIOSFile, adios_to_numpy_dtype, read_adjacency_list, resolve_adios_scope
 
 adios2 = resolve_adios_scope(adios2)
 
@@ -261,3 +261,138 @@ def write_mesh(
 
         adios_file.file.PerformPuts()
         adios_file.file.EndStep()
+
+
+def read_mesh_data(
+    filename: Union[Path, str],
+    comm: MPI.Intracomm,
+    time: float = 0.0,
+    read_from_partition: bool = False,
+    backend_args: dict[str, Any] | None = None,
+) -> ReadMeshData:
+    """
+    Read an ADIOS2 mesh data for use with DOLFINx.
+
+    Args:
+        filename: Path to input file
+        comm: The MPI communciator to distribute the mesh over
+        engine: ADIOS engine to use for reading (BP4, BP5 or HDF5)
+        ghost_mode: Ghost mode to use for mesh. If `read_from_partition`
+            is set to `True` this option is ignored.
+        time: Time stamp associated with mesh
+        legacy: If checkpoint was made prior to time-dependent mesh-writer set to True
+        read_from_partition: Read mesh with partition from file
+    Returns:
+        The mesh topology, geometry, UFL domain and partition function
+    """
+
+    adios = adios2.ADIOS(comm)
+    backend_args = backend_args if backend_args is not None else {}
+    legacy = backend_args.pop("legacy", False)
+    io_name = backend_args.pop("io_name", "MeshReader")
+    with ADIOSFile(
+        adios=adios,
+        filename=filename,
+        mode=adios2.Mode.Read,
+        **backend_args,
+        io_name=io_name,
+    ) as adios_file:
+        # Get time independent mesh variables (mesh topology and cell type info) first
+        adios_file.file.BeginStep()
+        # Get mesh topology (distributed)
+        if "Topology" not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"Mesh topology not found at Topology in {filename}")
+        topology = adios_file.io.InquireVariable("Topology")
+        shape = topology.Shape()
+        local_range = compute_local_range(comm, shape[0])
+        topology.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
+        mesh_topology = np.empty((local_range[1] - local_range[0], shape[1]), dtype=np.int64)
+        adios_file.file.Get(topology, mesh_topology, adios2.Mode.Deferred)
+
+        # Check validity of partitioning information
+        if read_from_partition:
+            if "PartitionProcesses" not in adios_file.io.AvailableAttributes().keys():
+                raise KeyError(f"Partitioning information not found in {filename}")
+            par_num_procs = adios_file.io.InquireAttribute("PartitionProcesses")
+            num_procs = par_num_procs.Data()[0]
+            if num_procs != comm.size:
+                raise ValueError(f"Number of processes in file ({num_procs})!=({comm.size=})")
+
+        # Get mesh cell type
+        if "CellType" not in adios_file.io.AvailableAttributes().keys():
+            raise KeyError(f"Mesh cell type not found at CellType in {filename}")
+        celltype = adios_file.io.InquireAttribute("CellType")
+        cell_type = celltype.DataString()[0]
+
+        # Get basix info
+        if "LagrangeVariant" not in adios_file.io.AvailableAttributes().keys():
+            raise KeyError(f"Mesh LagrangeVariant not found in {filename}")
+        lvar = adios_file.io.InquireAttribute("LagrangeVariant").Data()[0]
+        if "Degree" not in adios_file.io.AvailableAttributes().keys():
+            raise KeyError(f"Mesh degree not found in {filename}")
+        degree = adios_file.io.InquireAttribute("Degree").Data()[0]
+
+        if not legacy:
+            time_name = "MeshTime"
+            for i in range(adios_file.file.Steps()):
+                if i > 0:
+                    adios_file.file.BeginStep()
+                if time_name in adios_file.io.AvailableVariables().keys():
+                    arr = adios_file.io.InquireVariable(time_name)
+                    time_shape = arr.Shape()
+                    arr.SetSelection([[0], [time_shape[0]]])
+                    times = np.empty(time_shape[0], dtype=adios_to_numpy_dtype[arr.Type()])
+                    adios_file.file.Get(arr, times, adios2.Mode.Sync)
+                    if times[0] == time:
+                        break
+                if i == adios_file.file.Steps() - 1:
+                    raise KeyError(
+                        f"No data associated with {time_name}={time} found in {filename}"
+                    )
+
+                adios_file.file.EndStep()
+
+            if time_name not in adios_file.io.AvailableVariables().keys():
+                raise KeyError(f"No data associated with {time_name}={time} found in {filename}")
+
+        # Get mesh geometry
+        if "Points" not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"Mesh coordinates not found at Points in {filename}")
+        geometry = adios_file.io.InquireVariable("Points")
+        x_shape = geometry.Shape()
+        geometry_range = compute_local_range(comm, x_shape[0])
+        geometry.SetSelection(
+            [
+                [geometry_range[0], 0],
+                [geometry_range[1] - geometry_range[0], x_shape[1]],
+            ]
+        )
+        mesh_geometry = np.empty(
+            (geometry_range[1] - geometry_range[0], x_shape[1]),
+            dtype=adios_to_numpy_dtype[geometry.Type()],
+        )
+        adios_file.file.Get(geometry, mesh_geometry, adios2.Mode.Deferred)
+        adios_file.file.PerformGets()
+        adios_file.file.EndStep()
+
+    if read_from_partition:
+        partition_graph = read_adjacency_list(
+            adios,
+            comm,
+            filename,
+            "PartitioningData",
+            "PartitioningOffset",
+            shape[0],
+            backend_args["engine"],
+        )
+    else:
+        partition_graph = None
+
+    return ReadMeshData(
+        cells=mesh_topology,
+        cell_type=cell_type,
+        x=mesh_geometry,
+        degree=degree,
+        lvar=lvar,
+        partition_graph=partition_graph,
+    )
