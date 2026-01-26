@@ -171,9 +171,9 @@ class ADIOS2Interface:
             comm: MPI communicator used in storage
             mesh: Internal data structure for the mesh data to save to file
             filename: Path to file to write to
-            engine: ADIOS2 engine to use
-            mode: ADIOS2 mode to use (write or append)
-            io_name: Internal name used for the ADIOS IO object
+            backend_args: File mode and potentially the io-name.
+            mode: Mode to use (write or append)
+            time: Time stamp
         """
         if "io_name" not in backend_args.keys():
             io_name = "MeshWriter"

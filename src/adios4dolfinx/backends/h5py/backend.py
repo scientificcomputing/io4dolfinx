@@ -16,6 +16,7 @@ import numpy as np
 import numpy.typing as npt
 
 from adios4dolfinx import FileMode
+from adios4dolfinx.structures import MeshData
 from adios4dolfinx.utils import check_file_exists
 
 
@@ -137,3 +138,24 @@ class H5PYInterface:
         """
         check_file_exists(filename)
         raise NotImplementedError("Need to be able to save functions before implementing this")
+
+    @staticmethod
+    def write_mesh(
+        file: Union[Path, str],
+        comm: MPI.Intracomm,
+        mesh: MeshData,
+        backend_args: dict[str, Any] | None = None,
+        mode: FileMode = FileMode.write,
+        time: float = 0.0,
+    ):
+        """
+        Write a mesh to file using H5PY
+
+        Parameters:
+            comm: MPI communicator used in storage
+            mesh: Internal data structure for the mesh data to save to file
+            filename: Path to file to write to.
+            mode: Mode to use (write or append)
+            time: Time stamp
+        """
+        pass
