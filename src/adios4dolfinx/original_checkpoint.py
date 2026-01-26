@@ -15,6 +15,7 @@ import adios2
 import dolfinx
 import numpy as np
 
+from .backends import FileMode
 from .backends.adios2.helpers import resolve_adios_scope
 from .comm_helpers import numpy_to_mpi
 from .structures import FunctionData, MeshData
@@ -374,12 +375,24 @@ def write_function_on_input_mesh(
 
 
 def write_mesh_input_order(
-    filename: typing.Union[Path, str], mesh: dolfinx.mesh.Mesh, engine: str = "BP4"
+    filename: typing.Union[Path, str],
+    mesh: dolfinx.mesh.Mesh,
+    backend: typing.Literal["h5py", "adios2"] = "adios2",
+    backend_args: dict[str, typing.Any] | None = None,
+    mode: FileMode = FileMode.write,
 ):
     """
     Write mesh to checkpoint file in original input ordering
     """
-
+    backend_args = backend_args or {}
+    backend_args["io_name"] = "OriginalMeshWriter"
     mesh_data = create_original_mesh_data(mesh)
     fname = Path(filename)
-    write_mesh(fname, mesh.comm, mesh_data, engine, io_name="OriginalMeshWriter")
+    write_mesh(
+        fname,
+        mesh.comm,
+        mesh_data,
+        backend=backend,
+        backend_args=backend_args,
+        mode=mode,
+    )
