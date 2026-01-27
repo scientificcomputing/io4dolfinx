@@ -16,7 +16,7 @@ import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import adjacencylist
 
-from ...structures import MeshData, ReadMeshData
+from ...structures import MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import FileMode
 
@@ -190,9 +190,7 @@ def write_mesh(
         geometry_dataset = geometry_group.create_dataset(
             "Points", [mesh.num_nodes_global, gdim], dtype=mesh.local_geometry.dtype
         )
-        geometry_dataset[mesh.local_geometry_pos[0] : mesh.local_geometry_pos[1], :] = (
-            mesh.local_geometry
-        )
+        geometry_dataset[slice(*mesh.local_geometry_pos), :] = mesh.local_geometry
 
         # Write static partitioning data
         if "PartitioningData" not in mesh_directory.keys() and mesh.store_partition:
@@ -201,7 +199,7 @@ def write_mesh(
             par_dataset = mesh_directory.create_dataset(
                 "PartitioningData", [mesh.partition_global], dtype=mesh.ownership_array.dtype
             )
-            par_dataset[mesh.partition_range[0] : mesh.partition_range[1]] = mesh.ownership_array
+            par_dataset[slice(*mesh.partition_range)] = mesh.ownership_array
 
         if "PartitioningOffset" not in mesh_directory.keys() and mesh.store_partition:
             assert mesh.ownership_offset is not None
@@ -224,9 +222,7 @@ def write_mesh(
             topology_dataset = mesh_directory.create_dataset(
                 "Topology", [mesh.num_cells_global, num_dofs_per_cell], dtype=np.int64
             )
-            topology_dataset[mesh.local_topology_pos[0] : mesh.local_topology_pos[1], :] = (
-                mesh.local_topology
-            )
+            topology_dataset[slice(*mesh.local_topology_pos), :] = mesh.local_topology
 
 
 def read_mesh_data(
@@ -265,7 +261,7 @@ def read_mesh_data(
         # Get mesh topology (distributed)
         topology = mesh_group["Topology"]
         local_range = compute_local_range(comm, topology.shape[0])
-        mesh_topology = topology[local_range[0] : local_range[1], :]
+        mesh_topology = topology[slice(*local_range), :]
 
         cell_type = mesh_group.attrs["CellType"]
         lvar = mesh_group.attrs["LagrangeVariant"]
@@ -276,7 +272,7 @@ def read_mesh_data(
         x_shape = geometry_dataset.shape
 
         geometry_range = compute_local_range(comm, x_shape[0])
-        mesh_geometry = geometry_dataset[geometry_range[0] : geometry_range[1], :]
+        mesh_geometry = geometry_dataset[slice(*geometry_range), :]
 
         # Check validity of partitioning information
         if read_from_partition:
@@ -309,3 +305,68 @@ def read_mesh_data(
         lvar=lvar,
         partition_graph=partition_graph,
     )
+
+
+def write_meshtags(
+    filename: str | Path,
+    comm: MPI.Intracomm,
+    data: MeshTagsData,
+    backend_args: dict[str, Any] | None = None,
+):
+    backend_args = get_default_backend_args(backend_args)
+
+    with h5pyfile(filename, filemode="a", comm=comm, force_serial=False) as h5file:
+        if "mesh" not in h5file.keys():
+            raise RuntimeError("Could not find mesh in file")
+        mesh_group = h5file["mesh"]
+        if "tags" not in mesh_group.keys():
+            tags = mesh_group.create_group("tags")
+        else:
+            tags = mesh_group["tags"]
+        if data.name in tags.keys():
+            raise RuntimeError(f"MeshTags with {data.name=} already exists in this file")
+        tag = tags.create_group(data.name)
+
+        # Add topology
+        topology = tag.create_dataset(
+            "Topology", shape=[data.num_entities_global, data.num_dofs_per_entity], dtype=np.int64
+        )
+        topology[data.local_start : data.local_start + len(data.indices), :] = data.indices
+
+        # Add cell_type attribute
+        tag.attrs["CellType"] = data.cell_type
+
+        # Add values
+        values = tag.create_dataset(
+            "Values", shape=[data.num_entities_global], dtype=data.values.dtype
+        )
+        values[data.local_start : data.local_start + len(data.indices)] = data.values
+
+        # Add dimension
+        tag.attrs["dim"] = data.dim
+
+
+def read_meshtags_data(
+    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None = None
+) -> MeshTagsData:
+    backend_args = get_default_backend_args(backend_args)
+
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        if "mesh" not in h5file.keys():
+            raise RuntimeError("No mesh found")
+        mesh = h5file["mesh"]
+        if "tags" not in mesh.keys():
+            raise RuntimeError("Could not find 'tags' in file, are you sure this is a checkpoint?")
+        tags = mesh["tags"]
+        if name not in tags.keys():
+            raise RuntimeError(f"Could not find {name} in '/mesh/tags/' in {filename}")
+        tag = tags[name]
+
+        dim = tag.attrs["dim"]
+        topology = tag["Topology"]
+        num_entities_global = topology.shape[0]
+        topology_range = compute_local_range(comm, num_entities_global)
+        indices = topology[slice(*topology_range), :]
+        values = tag["Values"]
+        vals = values[slice(*topology_range)]
+        return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)

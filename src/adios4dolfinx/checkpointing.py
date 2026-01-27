@@ -33,7 +33,7 @@ from .comm_helpers import (
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
 )
-from .structures import FunctionData
+from .structures import FunctionData, MeshTagsData
 from .utils import (
     check_file_exists,
     compute_dofmap_pos,
@@ -133,8 +133,9 @@ def write_meshtags(
     filename: typing.Union[Path, str],
     mesh: dolfinx.mesh.Mesh,
     meshtags: dolfinx.mesh.MeshTags,
-    engine: str = "BP4",
     meshtag_name: typing.Optional[str] = None,
+    backend_args: dict[str, Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
     """
     Write meshtags associated with input mesh to file.
@@ -147,9 +148,12 @@ def write_meshtags(
         filename: Path to save meshtags (with file-extension)
         mesh: The mesh associated with the meshtags
         meshtags: The meshtags to write to file
-        engine: Adios2 Engine
         meshtag_name: Name of the meshtag. If None, the meshtag name is used.
+        backend_args: Option to IO backend.
+        backend: IO backend
     """
+
+    # Extract data from meshtags (convert to global geometry node indices for each entity)
     tag_entities = meshtags.indices
     dim = meshtags.dim
     num_tag_entities_local = mesh.topology.index_map(dim).size_local
@@ -170,55 +174,37 @@ def write_meshtags(
         mesh._cpp_object, dim, local_tag_entities, False
     )
 
-    indices = mesh.geometry.index_map().local_to_global(entities_to_geometry.reshape(-1))
-
+    indices = (
+        mesh.geometry.index_map()
+        .local_to_global(entities_to_geometry.reshape(-1))
+        .reshape(entities_to_geometry.shape)
+    )
     name = meshtag_name or meshtags.name
 
-    import adios2
+    tag_ct = dolfinx.cpp.mesh.cell_entity_type(mesh.topology.cell_type, dim, 0).name
+    tag_data = MeshTagsData(
+        values=local_values,
+        num_entities_global=global_num_tag_entities,
+        num_dofs_per_entity=num_dofs_per_entity,
+        indices=indices,
+        name=name,
+        local_start=local_start,
+        dim=meshtags.dim,
+        cell_type=tag_ct,
+    )
 
-    adios2 = resolve_adios_scope(adios2)
-    adios = adios2.ADIOS(mesh.comm)
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Append,
-        engine=engine,
-        io_name="MeshTagWriter",
-    ) as adios_file:
-        adios_file.file.BeginStep()
-
-        # Write meshtag topology
-        topology_var = adios_file.io.DefineVariable(
-            name + "_topology",
-            indices,
-            shape=[global_num_tag_entities, num_dofs_per_entity],
-            start=[local_start, 0],
-            count=[num_saved_tag_entities, num_dofs_per_entity],
-        )
-        adios_file.file.Put(topology_var, indices, adios2.Mode.Sync)
-
-        # Write meshtag topology
-        values_var = adios_file.io.DefineVariable(
-            name + "_values",
-            local_values,
-            shape=[global_num_tag_entities],
-            start=[local_start],
-            count=[num_saved_tag_entities],
-        )
-        adios_file.file.Put(values_var, local_values, adios2.Mode.Sync)
-
-        # Write meshtag dim
-        adios_file.io.DefineAttribute(name + "_dim", np.array([meshtags.dim], dtype=np.uint8))
-
-        adios_file.file.PerformPuts()
-        adios_file.file.EndStep()
+    # Get backend and default arguments
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+    return backend_cls.write_meshtags(filename, mesh.comm, tag_data, backend_args=backend_args)
 
 
 def read_meshtags(
     filename: typing.Union[Path, str],
     mesh: dolfinx.mesh.Mesh,
     meshtag_name: str,
-    engine: str = "BP4",
+    backend_args: dict[str, Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ) -> dolfinx.mesh.MeshTags:
     """
     Read meshtags from file and return a :class:`dolfinx.mesh.MeshTags` object.
@@ -232,88 +218,22 @@ def read_meshtags(
         The meshtags
     """
     check_file_exists(filename)
-
-    import adios2
-
-    adios2 = resolve_adios_scope(adios2)
-
-    adios = adios2.ADIOS(mesh.comm)
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Read,
-        engine=engine,
-        io_name="MeshTagsReader",
-    ) as adios_file:
-        # Get mesh cell type
-        dim_attr_name = f"{meshtag_name}_dim"
-        step = 0
-        for i in range(adios_file.file.Steps()):
-            adios_file.file.BeginStep()
-            if dim_attr_name in adios_file.io.AvailableAttributes().keys():
-                step = i
-                break
-            adios_file.file.EndStep()
-        if dim_attr_name not in adios_file.io.AvailableAttributes().keys():
-            raise KeyError(f"{dim_attr_name} not found in {filename}")
-
-        m_dim = adios_file.io.InquireAttribute(dim_attr_name)
-        dim = int(m_dim.Data()[0])
-
-        # Get mesh tags entites
-        topology_name = f"{meshtag_name}_topology"
-        for i in range(step, adios_file.file.Steps()):
-            if i > step:
-                adios_file.file.BeginStep()
-            if topology_name in adios_file.io.AvailableVariables().keys():
-                break
-            adios_file.file.EndStep()
-        if topology_name not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"{topology_name} not found in {filename}")
-
-        topology = adios_file.io.InquireVariable(topology_name)
-        top_shape = topology.Shape()
-        topology_range = compute_local_range(mesh.comm, top_shape[0])
-
-        topology.SetSelection(
-            [
-                [topology_range[0], 0],
-                [topology_range[1] - topology_range[0], top_shape[1]],
-            ]
-        )
-        mesh_entities = np.empty(
-            (topology_range[1] - topology_range[0], top_shape[1]), dtype=np.int64
-        )
-        adios_file.file.Get(topology, mesh_entities, adios2.Mode.Deferred)
-
-        # Get mesh tags values
-        values_name = f"{meshtag_name}_values"
-        if values_name not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"{values_name} not found")
-
-        values = adios_file.io.InquireVariable(values_name)
-        val_shape = values.Shape()
-        assert val_shape[0] == top_shape[0]
-        values.SetSelection([[topology_range[0]], [topology_range[1] - topology_range[0]]])
-        tag_values = np.empty((topology_range[1] - topology_range[0]), dtype=np.int32)
-        adios_file.file.Get(values, tag_values, adios2.Mode.Deferred)
-
-        adios_file.file.PerformGets()
-        adios_file.file.EndStep()
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+    data = backend_cls.read_meshtags_data(filename, mesh.comm, meshtag_name, backend_args)
 
     local_entities, local_values = dolfinx.io.distribute_entity_data(
-        mesh, int(dim), mesh_entities.astype(np.int32), tag_values
+        mesh, int(data.dim), data.indices, data.values
     )
-    mesh.topology.create_connectivity(dim, 0)
-    mesh.topology.create_connectivity(dim, mesh.topology.dim)
+    mesh.topology.create_connectivity(data.dim, 0)
+    mesh.topology.create_connectivity(data.dim, mesh.topology.dim)
 
     adj = dolfinx.graph.adjacencylist(local_entities)
 
     local_values = np.array(local_values, dtype=np.int32)
 
-    mt = dolfinx.mesh.meshtags_from_entities(mesh, int(dim), adj, local_values)
+    mt = dolfinx.mesh.meshtags_from_entities(mesh, int(data.dim), adj, local_values)
     mt.name = meshtag_name
-
     return mt
 
 

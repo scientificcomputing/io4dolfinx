@@ -7,7 +7,7 @@ from mpi4py import MPI
 import numpy as np
 import numpy.typing as npt
 
-from ..structures import MeshData, ReadMeshData
+from ..structures import MeshData, MeshTagsData, ReadMeshData
 
 __all__ = ["FileMode", "IOBackend", "get_backend"]
 
@@ -24,7 +24,7 @@ class IOBackend(Protocol):
 
     def write_attributes(
         self,
-        filename: Union[Path, str],
+        filename: Path | str,
         comm: MPI.Intracomm,
         name: str,
         attributes: dict[str, np.ndarray],
@@ -33,7 +33,7 @@ class IOBackend(Protocol):
 
     def read_attributes(
         self,
-        filename: Union[Path, str],
+        filename: Path | str,
         comm: MPI.Intracomm,
         name: str,
         backend_args: dict[str, Any] | None,
@@ -41,7 +41,7 @@ class IOBackend(Protocol):
 
     def read_timestamps(
         self,
-        filename: Union[Path, str],
+        filename: Path | str,
         comm: MPI.Intracomm,
         function_name: str,
         backend_args: dict[str, Any] | None,
@@ -49,12 +49,12 @@ class IOBackend(Protocol):
 
     def write_mesh(
         self,
-        filename: Union[Path, str],
+        filename: Path | str,
         comm: MPI.Intracomm,
         mesh: MeshData,
-        backend_args: dict[str, Any] | None = None,
-        mode: FileMode = FileMode.write,
-        time: float = 0.0,
+        backend_args: dict[str, Any] | None,
+        mode: FileMode,
+        time: float,
     ):
         """
         Write a mesh to file.
@@ -68,21 +68,29 @@ class IOBackend(Protocol):
         """
         ...
 
+    def write_meshtags(
+        filename: str | Path,
+        comm: MPI.Intracomm,
+        data: MeshTagsData,
+        backend_args: dict[str, Any] | None,
+    ): ...
+
     def read_mesh_data(
         self,
-        filename: Union[Path, str],
+        filename: Path | str,
         comm: MPI.Intracomm,
-        time: float = 0.0,
-        read_from_partition: bool = False,
-        backend_args: dict[str, Any] | None = None,
+        time: float,
+        read_from_partition: bool,
+        backend_args: dict[str, Any] | None,
     ) -> ReadMeshData: ...
 
+    def read_meshtags_data(
+        filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
+    ) -> MeshTagsData: ...
+
     # read_function
-    # read_mesh
-    # read_meshtags
     # read_timestamps
     # write_function
-    # write_meshtags
     # read_function_from_legacy_h5
     # read_mesh_from_legacy_h5
     # write_function_on_input_mesh

@@ -55,18 +55,19 @@ def write_function(tmp_path):
 @pytest.fixture(scope="function")
 def read_function():
     def _read_function(comm, el, f, path, dtype, name="uh"):
-        engine = "BP4"
+        backend_args = {"engine": "BP4"}
+        backend = "adios2"
         mesh = adios4dolfinx.read_mesh(
-            filename=path,
-            comm=comm,
-            backend="adios2",
-            backend_args={"engine": engine},
+            path,
+            comm,
             ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
+            backend_args=backend_args,
+            backend=backend,
         )
         V = dolfinx.fem.functionspace(mesh, el)
         v = dolfinx.fem.Function(V, dtype=dtype)
         v.name = name
-        adios4dolfinx.read_function(path, v, engine)
+        adios4dolfinx.read_function(path, v)
         v_ex = dolfinx.fem.Function(V, dtype=dtype)
         v_ex.interpolate(f)
 
@@ -137,25 +138,26 @@ def write_function_time_dep(tmp_path):
 @pytest.fixture(scope="function")
 def read_function_time_dep():
     def _read_function_time_dep(comm, el, f0, f1, t0, t1, path, dtype):
-        engine = "BP4"
+        backend_args = {"engine": "BP4"}
+        backend = "adios2"
         mesh = adios4dolfinx.read_mesh(
-            filename=path,
-            comm=comm,
-            backend="adios2",
-            backend_args={"engine": engine},
+            path,
+            comm,
             ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
+            backend_args=backend_args,
+            backend=backend,
         )
         V = dolfinx.fem.functionspace(mesh, el)
         v = dolfinx.fem.Function(V, dtype=dtype)
 
-        adios4dolfinx.read_function(path, v, engine, time=t1)
+        adios4dolfinx.read_function(path, v, time=t1, **backend_args)
         v_ex = dolfinx.fem.Function(V, dtype=dtype)
         v_ex.interpolate(f1)
 
         res = np.finfo(dtype).resolution
         assert np.allclose(v.x.array, v_ex.x.array, atol=10 * res, rtol=10 * res)
 
-        adios4dolfinx.read_function(path, v, engine, time=t0)
+        adios4dolfinx.read_function(path, v, time=t0, **backend_args)
         v_ex = dolfinx.fem.Function(V, dtype=dtype)
         v_ex.interpolate(f0)
 

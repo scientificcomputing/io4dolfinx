@@ -67,3 +67,20 @@ class ReadMeshData:
     lvar: int
     degree: int
     partition_graph: AdjacencyList | None = None
+
+
+@dataclass
+class MeshTagsData:
+    # Data used for both read/write
+    name: str
+    values: npt.NDArray
+    indices: npt.NDArray[np.int64]
+    dim: int
+
+    # Optional entries (used for writing to disk)
+    num_entities_global: int | None = None
+    num_dofs_per_entity: int | None = None
+    local_start: int | None = None
+
+    # Optional info to help visualization
+    cell_type: str | None = None

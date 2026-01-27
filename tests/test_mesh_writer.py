@@ -123,12 +123,15 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
         )
 
 
-@pytest.mark.parametrize("encoder, suffix", [("BP4", ".bp"), ("BP5", ".bp")])
+@pytest.mark.parametrize(
+    "backend, encoder, suffix",
+    [("adios2", "BP4", ".bp"), ("adios2", "BP5", ".bp"), ("h5py", None, ".h5")],
+)
 @pytest.mark.parametrize(
     "ghost_mode", [dolfinx.mesh.GhostMode.shared_facet, dolfinx.mesh.GhostMode.none]
 )
 @pytest.mark.parametrize("store_partition", [True, False])
-def test_timedep_mesh(encoder, suffix, ghost_mode, tmp_path, store_partition):
+def test_timedep_mesh(encoder, backend, suffix, ghost_mode, tmp_path, store_partition):
     # Currently unsupported, unclear why ("HDF5", ".h5"),
     N = 13
     # Consistent tmp dir across processes
@@ -139,14 +142,17 @@ def test_timedep_mesh(encoder, suffix, ghost_mode, tmp_path, store_partition):
     def u(x):
         return np.asarray([x[0] + 0.1 * np.sin(x[1]), 0.2 * np.cos(x[1]), x[2]])
 
+    backend_args = None
+    if backend == "adios2":
+        backend_args = {"engine": encoder}
     write_mesh(
         file.with_suffix(suffix),
         mesh,
         mode=FileMode.write,
         time=0.0,
         store_partition_info=store_partition,
-        backend_args={"engine": encoder},
-        backend="adios2",
+        backend_args=backend_args,
+        backend=backend,
     )
     delta_x = u(mesh.geometry.x.T).T
     mesh.geometry.x[:] += delta_x
@@ -155,19 +161,19 @@ def test_timedep_mesh(encoder, suffix, ghost_mode, tmp_path, store_partition):
         mesh,
         mode=FileMode.append,
         time=3.0,
-        backend_args={"engine": encoder},
-        backend="adios2",
+        backend_args=backend_args,
+        backend=backend,
     )
     mesh.geometry.x[:] -= delta_x
 
     mesh_first = read_mesh(
         file.with_suffix(suffix),
-        comm=MPI.COMM_WORLD,
-        backend="adios2",
-        backend_args={"engine": encoder},
-        ghost_mode=ghost_mode,
+        MPI.COMM_WORLD,
+        ghost_mode,
         time=0.0,
         read_from_partition=store_partition,
+        backend_args=backend_args,
+        backend=backend,
     )
     mesh_first.comm.Barrier()
 
@@ -186,12 +192,12 @@ def test_timedep_mesh(encoder, suffix, ghost_mode, tmp_path, store_partition):
     mesh.geometry.x[:] += delta_x
     mesh_second = read_mesh(
         file.with_suffix(suffix),
-        comm=MPI.COMM_WORLD,
-        backend="adios2",
-        backend_args={"engine": encoder},
-        ghost_mode=ghost_mode,
+        MPI.COMM_WORLD,
+        ghost_mode,
         time=3.0,
         read_from_partition=store_partition,
+        backend_args=backend_args,
+        backend=backend,
     )
     mesh_second.comm.Barrier()
     measures = [ufl.ds, ufl.dx]

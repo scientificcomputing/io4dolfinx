@@ -8,7 +8,7 @@ import adios2
 import numpy as np
 import numpy.typing as npt
 
-from ...structures import MeshData, ReadMeshData
+from ...structures import MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import FileMode
 from .helpers import ADIOSFile, adios_to_numpy_dtype, read_adjacency_list, resolve_adios_scope
@@ -394,3 +394,119 @@ def read_mesh_data(
         lvar=lvar,
         partition_graph=partition_graph,
     )
+
+
+def write_meshtags(
+    filename: str | Path,
+    comm: MPI.Intracomm,
+    data: MeshTagsData,
+    backend_args: dict[str, Any] | None = None,
+):
+    io_name = backend_args.pop("io_name", "MeshTagWriter")
+    adios = adios2.ADIOS(comm)
+    with ADIOSFile(
+        adios=adios,
+        filename=filename,
+        mode=adios2.Mode.Append,
+        **backend_args,
+        io_name=io_name,
+    ) as adios_file:
+        adios_file.file.BeginStep()
+
+        # Write meshtag topology
+        topology_var = adios_file.io.DefineVariable(
+            data.name + "_topology",
+            data.indices,
+            shape=[data.num_entities_global, data.num_dofs_per_entity],
+            start=[data.local_start, 0],
+            count=[len(data.indices), data.num_dofs_per_entity],
+        )
+        adios_file.file.Put(topology_var, data.indices, adios2.Mode.Sync)
+
+        # Write meshtag values
+        values_var = adios_file.io.DefineVariable(
+            data.name + "_values",
+            data.values,
+            shape=[data.num_entities_global],
+            start=[data.local_start],
+            count=[len(data.indices)],
+        )
+        adios_file.file.Put(values_var, data.values, adios2.Mode.Sync)
+
+        # Write meshtag dim
+        adios_file.io.DefineAttribute(data.name + "_dim", np.array([data.dim], dtype=np.uint8))
+        adios_file.file.PerformPuts()
+        adios_file.file.EndStep()
+
+
+def read_meshtags_data(
+    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None = None
+) -> MeshTagsData:
+    adios = adios2.ADIOS(comm)
+    backend_args = {} if backend_args is None else backend_args
+    io_name = backend_args.pop("io_name", "MeshTagsReader")
+    engine = backend_args["engine"]
+    with ADIOSFile(
+        adios=adios,
+        filename=filename,
+        mode=adios2.Mode.Read,
+        engine=engine,
+        io_name=io_name,
+    ) as adios_file:
+        # Get mesh cell type
+        dim_attr_name = f"{name}_dim"
+        step = 0
+        for i in range(adios_file.file.Steps()):
+            adios_file.file.BeginStep()
+            if dim_attr_name in adios_file.io.AvailableAttributes().keys():
+                step = i
+                break
+            adios_file.file.EndStep()
+        if dim_attr_name not in adios_file.io.AvailableAttributes().keys():
+            raise KeyError(f"{dim_attr_name} not found in {filename}")
+
+        m_dim = adios_file.io.InquireAttribute(dim_attr_name)
+        dim = int(m_dim.Data()[0])
+
+        # Get mesh tags entites
+        topology_name = f"{name}_topology"
+        for i in range(step, adios_file.file.Steps()):
+            if i > step:
+                adios_file.file.BeginStep()
+            if topology_name in adios_file.io.AvailableVariables().keys():
+                break
+            adios_file.file.EndStep()
+        if topology_name not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"{topology_name} not found in {filename}")
+
+        topology = adios_file.io.InquireVariable(topology_name)
+        top_shape = topology.Shape()
+        topology_range = compute_local_range(comm, top_shape[0])
+
+        topology.SetSelection(
+            [
+                [topology_range[0], 0],
+                [topology_range[1] - topology_range[0], top_shape[1]],
+            ]
+        )
+        mesh_entities = np.empty(
+            (topology_range[1] - topology_range[0], top_shape[1]), dtype=np.int64
+        )
+        adios_file.file.Get(topology, mesh_entities, adios2.Mode.Deferred)
+
+        # Get mesh tags values
+        values_name = f"{name}_values"
+        if values_name not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"{values_name} not found")
+
+        values = adios_file.io.InquireVariable(values_name)
+        val_shape = values.Shape()
+        assert val_shape[0] == top_shape[0]
+        values.SetSelection([[topology_range[0]], [topology_range[1] - topology_range[0]]])
+        tag_values = np.empty((topology_range[1] - topology_range[0]), dtype=np.int32)
+        adios_file.file.Get(values, tag_values, adios2.Mode.Deferred)
+
+        adios_file.file.PerformGets()
+        adios_file.file.EndStep()
+
+        return MeshTagsData(name=name, values=tag_values, indices=mesh_entities, dim=dim)

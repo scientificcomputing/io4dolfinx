@@ -162,7 +162,10 @@ def test_adios4dolfinx_legacy():
         pytest.skip(f"{path} does not exist")
 
     el = ("N1curl", 3)
-    mesh = read_mesh(path, comm, "BP4", dolfinx.mesh.GhostMode.shared_facet, legacy=True)
+    backend_args = {"engine": "BP4", "legacy": True}
+    mesh = read_mesh(
+        path, comm, dolfinx.mesh.GhostMode.shared_facet, backend_args=backend_args, backend="adios2"
+    )
 
     def f(x):
         values = np.zeros((2, x.shape[1]), dtype=np.float64)
@@ -172,7 +175,7 @@ def test_adios4dolfinx_legacy():
 
     V = dolfinx.fem.functionspace(mesh, el)
     u = dolfinx.fem.Function(V)
-    read_function(path, u, engine="BP4", legacy=True)
+    read_function(path, u, **backend_args)
 
     u_ex = dolfinx.fem.Function(V)
     u_ex.interpolate(f)
