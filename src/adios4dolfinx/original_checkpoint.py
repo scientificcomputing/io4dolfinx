@@ -366,8 +366,6 @@ def write_function_on_input_mesh(
 
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
-    if "io_name" not in backend_args.keys():
-        backend_args["io_name"] = "OriginalFunctionWriter"
     backend_cls.write_function(
         fname,
         mesh.comm,
@@ -394,9 +392,6 @@ def write_mesh_input_order(
 
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
-    if "io_name" not in backend_args.keys():
-        backend_args["io_name"] = "InputMeshWriter"
-
     backend_cls.write_mesh(
         fname,
         mesh.comm,

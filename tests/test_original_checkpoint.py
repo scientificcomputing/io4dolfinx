@@ -122,6 +122,7 @@ def write_function_original(
     dtype: np.dtype,
     name: str,
     path: Path,
+    backend: typing.Literal["adios2", "h5py"]
 ) -> Path:
     """Convenience function for writing function to file on the original input mesh"""
     V = dolfinx.fem.functionspace(mesh, el)
@@ -139,10 +140,17 @@ def write_function_original(
     )
 
     file_hash = f"{el_hash}_{np.dtype(dtype).name}"
-    filename = path / f"mesh_{file_hash}.bp"
+    if backend == "adios2":
+        suffix = ".bp"
+    elif backend == "h5py":
+        suffix = ".h5"
+    else:
+        raise NotImplementedError(f"Unknown backend {backend}")
+
+    filename = (path / f"mesh_{file_hash}").with_suffix(suffix)
     if write_mesh:
-        adios4dolfinx.write_mesh_input_order(filename, mesh)
-    adios4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0)
+        adios4dolfinx.write_mesh_input_order(filename, mesh, backend=backend)
+    adios4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0, backend=backend)
     return filename
 
 
@@ -154,6 +162,7 @@ def read_function_original(
     degree: int,
     f: Callable[[np.ndarray], np.ndarray],
     u_dtype: np.dtype,
+    backend: typing.Literal["adios2", "h5py"]
 ):
     """
     Convenience function for reading mesh with IPython-parallel and compare to exact solution
@@ -165,18 +174,23 @@ def read_function_original(
     import adios4dolfinx
 
     assert MPI.COMM_WORLD.size > 1
+    if backend == "adios2":
+        backend_args = {"engine": "BP4"}
+    else:
+        backend_args = None
+
     if mesh_fname.suffix == ".xdmf":
         with dolfinx.io.XDMFFile(MPI.COMM_WORLD, mesh_fname, "r") as xdmf:
             mesh = xdmf.read_mesh()
-    elif mesh_fname.suffix == ".bp":
-        backend_args = {"engine": "BP4"}
+    else:
         mesh = adios4dolfinx.read_mesh(
             mesh_fname,
             MPI.COMM_WORLD,
             ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
             backend_args=backend_args,
-            backend="adios2",
+            backend=backend,
         )
+
     el = basix.ufl.element(
         family,
         mesh.basix_cell(),
@@ -188,7 +202,7 @@ def read_function_original(
 
     V = dolfinx.fem.functionspace(mesh, el)
     u = dolfinx.fem.Function(V, name=u_name, dtype=u_dtype)
-    adios4dolfinx.read_function(u_fname, u, time=0.0)
+    adios4dolfinx.read_function(u_fname, u, time=0.0, backend_args=backend_args, backend=backend)
     MPI.COMM_WORLD.Barrier()
 
     u_ex = dolfinx.fem.Function(V, name="exact", dtype=u_dtype)
@@ -283,6 +297,7 @@ def read_function_vector(
     np.testing.assert_allclose(u.x.array, u_ex.x.array, atol=atol)  # type: ignore
 
 
+@pytest.mark.parametrize("backend", ["adios2", "h5py"])
 @pytest.mark.skipif(
     os.cpu_count() == 1, reason="Test requires that the system has more than one process"
 )
@@ -292,7 +307,8 @@ def read_function_vector(
 @pytest.mark.parametrize("degree", [1, 4])
 @pytest.mark.parametrize("write_mesh", [True, False])
 def test_read_write_P_2D(
-    write_mesh, family, degree, is_complex, create_2D_mesh, cluster, get_dtype, tmp_path
+    write_mesh, family, degree, is_complex, create_2D_mesh, cluster, get_dtype, tmp_path,
+    backend
 ):
     fname = create_2D_mesh
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, fname, "r") as xdmf:
@@ -317,14 +333,15 @@ def test_read_write_P_2D(
             values[1] += 2j * x[0]
         return values
 
-    hash = write_function_original(write_mesh, mesh, el, f, f_dtype, "u_original", tmp_path)
+    hash = write_function_original(write_mesh, mesh, el, f, f_dtype, "u_original", tmp_path,
+                                   backend)
 
     if write_mesh:
         mesh_fname = hash
     else:
         mesh_fname = fname
     query = cluster[:].apply_async(
-        read_function_original, mesh_fname, hash, "u_original", family, degree, f, f_dtype
+        read_function_original, mesh_fname, hash, "u_original", family, degree, f, f_dtype, backend
     )
     query.wait()
     assert query.successful(), query.error
