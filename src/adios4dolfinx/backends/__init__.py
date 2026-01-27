@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from mpi4py import MPI
-
+import dolfinx
 import numpy as np
 import numpy.typing as npt
 
@@ -93,7 +93,35 @@ class IOBackend(Protocol):
         backend_args: dict[str, Any] | None,
     ) -> MeshTagsData: ...
 
-    # read_function
+    def read_dofmap(self,filename: str|Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any]|None)->dolfinx.graph.AdjacencyList:
+        """Read the dofmap of a function with a given name from file"""
+        ...
+
+    def read_dofs(self, filename: str|Path, comm: MPI.Intracomm, name:str, time:float, backend_args: dict[str, Any]|None)-> tuple[npt.NDArray[np.inexact], int]:
+        """Read the dofs (values) of a function with a given name from a given timestep.
+        
+        Returns:
+            Contiguous sequence of degrees of freedom (with respect to input data)
+            and the global starting point on the process.
+            Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
+        """
+        ...
+
+    def read_cell_perms(
+        comm: MPI.Intracomm,
+        filename: Path | str,
+        backend_args: dict[str, Any]|None=None
+    ) -> npt.NDArray[np.uint32]:
+        """
+        Read cell permutation from file with given communicator,
+        Split in continuous chunks based on number of cells in the input data.
+
+        Returns:
+            Contiguous sequence of permutations (with respect to input data)
+            Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
+        """
+        ...
+
     # read_timestamps
     # write_function
     # read_function_from_legacy_h5

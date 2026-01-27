@@ -150,14 +150,14 @@ def read_function_time_dep():
         V = dolfinx.fem.functionspace(mesh, el)
         v = dolfinx.fem.Function(V, dtype=dtype)
 
-        adios4dolfinx.read_function(path, v, time=t1, **backend_args)
+        adios4dolfinx.read_function(path, v, time=t1, backend_args=backend_args, backend="adios2")
         v_ex = dolfinx.fem.Function(V, dtype=dtype)
         v_ex.interpolate(f1)
 
         res = np.finfo(dtype).resolution
         assert np.allclose(v.x.array, v_ex.x.array, atol=10 * res, rtol=10 * res)
 
-        adios4dolfinx.read_function(path, v, time=t0, **backend_args)
+        adios4dolfinx.read_function(path, v, time=t0, backend_args=backend_args, backend="adios2")
         v_ex = dolfinx.fem.Function(V, dtype=dtype)
         v_ex.interpolate(f0)
 

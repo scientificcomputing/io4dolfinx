@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from mpi4py import MPI
-
+import dolfinx
 import adios2
 import numpy as np
 import numpy.typing as npt
@@ -11,7 +11,7 @@ import numpy.typing as npt
 from ...structures import MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import FileMode
-from .helpers import ADIOSFile, adios_to_numpy_dtype, read_adjacency_list, resolve_adios_scope
+from .helpers import ADIOSFile, adios_to_numpy_dtype, read_adjacency_list, resolve_adios_scope, read_array
 
 adios2 = resolve_adios_scope(adios2)
 
@@ -380,7 +380,6 @@ def read_mesh_data(
             filename,
             "PartitioningData",
             "PartitioningOffset",
-            shape[0],
             backend_args["engine"],
         )
     else:
@@ -511,3 +510,96 @@ def read_meshtags_data(
         adios_file.file.EndStep()
 
         return MeshTagsData(name=name, values=tag_values, indices=mesh_entities, dim=dim)
+
+
+def read_dofmap(filename: str|Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any]|None=None)->dolfinx.graph.AdjacencyList:
+    backend_args = {} if backend_args is None else backend_args
+    legacy = backend_args.get("legacy", False)
+
+    adios = adios2.ADIOS(comm)
+    check_file_exists(filename)
+
+    if legacy:
+        dofmap_path = "Dofmap"
+        xdofmap_path = "XDofmap"
+    else:
+        dofmap_path = f"{name}_dofmap"
+        xdofmap_path = f"{name}_XDofmap"
+    engine = backend_args.get("engine", "BP4")
+    return read_adjacency_list(
+        adios, comm, filename, dofmap_path, xdofmap_path, engine=engine
+    )
+    
+
+def read_dofs(filename: str|Path, comm: MPI.Intracomm, name:str, time:float, backend_args: dict[str, Any]|None=None)-> tuple[npt.NDArray[np.inexact], int]:
+    backend_args = {} if backend_args is None else backend_args
+    legacy =  backend_args.get("legacy", False)
+    engine = backend_args.get("engine", "BP4")
+    io_name = backend_args.get("io_name", f"{name}_FunctionReader" )
+    # Check that file contains the function to read
+    adios = adios2.ADIOS(comm)
+    check_file_exists(filename)
+
+    if not legacy:
+        with ADIOSFile(
+            adios=adios,
+            filename=filename,
+            mode=adios2.Mode.Read,
+            engine=engine,
+            io_name=io_name,
+        ) as adios_file:
+            variables = set(
+                sorted(
+                    map(
+                        lambda x: x.split("_time")[0],
+                        filter(lambda x: x.endswith("_time"), adios_file.io.AvailableVariables()),
+                    )
+                )
+            )
+            if name not in variables:
+                raise KeyError(f"{name} not found in {filename}. Did you mean one of {variables}?")
+
+    if legacy:
+        array_path = "Values"
+    else:
+        array_path = f"{name}_values"
+ 
+    time_name = f"{name}_time"
+    return read_array(
+        adios, filename, array_path, engine, comm, time, time_name, legacy=legacy
+    )
+
+
+def read_cell_perms(
+    comm: MPI.Intracomm,
+    filename: Path | str,
+    backend_args: dict[str, Any]|None=None
+) -> npt.NDArray[np.uint32]:
+    """
+    Read cell permutation from file with given communicator,
+    Split in continuous chunks based on number of cells in the mesh (global).
+
+    Args:
+        adios: The ADIOS instance
+        comm: The MPI communicator used to read the data
+        filename: Path to input file
+        variable: Name of cell-permutation variable
+        num_cells_global: Number of cells in the mesh (global)
+        engine: Type of ADIOS engine to use for reading data
+
+    Returns:
+        Cell-permutations local to the process
+
+    .. note::
+        No MPI communication is done during this call
+    """
+    adios = adios2.ADIOS(comm)
+    check_file_exists(filename)
+
+    # Open ADIOS engine
+    backend_args = {} if backend_args is None else backend_args
+    engine = backend_args.get("engine", "BP4")
+
+    cell_perms, _ = read_array(adios, filename, "CellPermutations",
+                               engine=engine, comm=comm, legacy=True)
+    return cell_perms

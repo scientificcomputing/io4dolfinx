@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from mpi4py import MPI
+import dolfinx
 
 import numpy as np
 import numpy.typing as npt
@@ -371,3 +372,74 @@ def read_meshtags_data(
         values = tag["Values"]
         vals = values[slice(*topology_range)]
         return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
+
+
+def read_dofmap(filename: str|Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any]|None)->dolfinx.graph.AdjacencyList:
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        mesh_name = "mesh"  # Prepare for multiple meshes
+        if mesh_name not in h5file.keys():
+            raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
+        mesh = h5file[mesh_name]
+        if "functions" not in mesh.keys():
+            raise RuntimeError(f"No functions stored in '{mesh_name}' in {filename}")
+        functions = mesh["functions"]
+        if name not in functions.keys():
+            raise RuntimeError(f"No function with name '{name}' on '{mesh_name}' stored in {filename}")
+        function = functions[name]
+
+        # Get offsets
+        offset_key = "dofmap_offsets"
+        dofmap_key = "dofmap"
+        offsets = function[offset_key]
+        num_cells = offsets.shape[0] - 1
+        local_range = compute_local_range(comm, num_cells)        
+
+        # First read in offsets based on the number of cells [0, num_cells_local]
+        glob_offsets = function[offset_key][local_range[0] : local_range[1] + 1]
+
+        # Then read the data based of offsets
+        dofmap_data = function[dofmap_key][glob_offsets[0] : glob_offsets[-1]]
+ 
+    # Then make offsets local
+    loc_offsets = (glob_offsets - glob_offsets[0]).astype(np.int32)
+    return adjacencylist(dofmap_data, loc_offsets)
+
+
+
+def read_dofs(filename: str|Path, comm: MPI.Intracomm, name:str, time:float, backend_args: dict[str, Any]|None)-> tuple[npt.NDArray[np.inexact], int]:
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        mesh_name = "mesh"  # Prepare for multiple meshes
+        if mesh_name not in h5file.keys():
+            raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
+        mesh = h5file[mesh_name]
+        if "functions" not in mesh.keys():
+            raise RuntimeError(f"No functions stored in '{mesh_name}' in {filename}")
+        functions = mesh["functions"]
+        if name not in functions.keys():
+            raise RuntimeError(f"No function with name '{name}' on '{mesh_name}' stored in {filename}")
+        function = functions[name]
+        timestamps = function.attrs["Timestamps"]
+        idx = np.flatnonzero(np.isclose(timestamps, time))
+        if len(idx) != 1:
+            raise RuntimeError("Could not find {name}(t={time}) on grid {mesh_name} in {filename}.")
+        u_t = function[f"{idx[0]:d}"]
+        data_group = u_t["array"]
+        num_dofs_global = data_group.shape[0]
+        local_range = compute_local_range(comm, num_dofs_global)
+        local_array = data_group[slice(*local_range)]
+        return local_array, local_range[0]
+
+
+
+
+def read_cell_perms(filename: str|Path, comm: MPI.Intracomm, backend_args: dict[str, Any]|None)-> npt.NDArray[np.uint32]:
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        mesh_name = "mesh"  # Prepare for multiple meshes
+        if mesh_name not in h5file.keys():
+            raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
+        mesh = h5file[mesh_name]
+        data_group = mesh["CellPermutations"]
+        num_cells_global = data_group.shape[0]
+        local_range = compute_local_range(comm, num_cells_global)
+        local_array = data_group[slice(*local_range)]
+        return local_array

@@ -108,79 +108,14 @@ def check_variable_exists(
     return variable_found
 
 
-def read_cell_perms(
-    adios: adios2.ADIOS,
-    comm: MPI.Intracomm,
-    filename: Path | str,
-    variable: str,
-    num_cells_global: np.int64,
-    engine: str,
-) -> npt.NDArray[np.uint32]:
-    """
-    Read cell permutation from file with given communicator,
-    Split in continuous chunks based on number of cells in the mesh (global).
-
-    Args:
-        adios: The ADIOS instance
-        comm: The MPI communicator used to read the data
-        filename: Path to input file
-        variable: Name of cell-permutation variable
-        num_cells_global: Number of cells in the mesh (global)
-        engine: Type of ADIOS engine to use for reading data
-
-    Returns:
-        Cell-permutations local to the process
-
-    .. note::
-        No MPI communication is done during this call
-    """
-
-    # Open ADIOS engine
-    io_name = f"{variable=}_reader"
-
-    with ADIOSFile(
-        adios=adios,
-        engine=engine,
-        filename=filename,
-        mode=adios2.Mode.Read,
-        io_name=io_name,
-    ) as adios_file:
-        # Find step that has cell permutation
-        for i in range(adios_file.file.Steps()):
-            adios_file.file.BeginStep()
-            if variable in adios_file.io.AvailableVariables().keys():
-                break
-            adios_file.file.EndStep()
-        if variable not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Variable {variable} not found in '{filename}'")
-
-        # Get variable and get global shape
-        perm_var = adios_file.io.InquireVariable(variable)
-        shape = perm_var.Shape()
-        assert len(shape) == 1
-
-        # Get local selection
-        local_cell_range = compute_local_range(comm, num_cells_global)
-        perm_var.SetSelection([[local_cell_range[0]], [local_cell_range[1] - local_cell_range[0]]])
-        in_perm = np.empty(
-            local_cell_range[1] - local_cell_range[0],
-            dtype=adios_to_numpy_dtype[perm_var.Type()],
-        )
-        adios_file.file.Get(perm_var, in_perm, adios2.Mode.Sync)
-        adios_file.file.EndStep()
-
-    return in_perm
-
-
 def read_adjacency_list(
     adios: adios2.ADIOS,
     comm: MPI.Intracomm,
     filename: Path | str,
-    dofmap: str,
-    dofmap_offsets: str,
-    num_cells_global: np.int64,
+    data_name: str,
+    offsets_name: str,
     engine: str,
-) -> dolfinx.cpp.graph.AdjacencyList_int64 | dolfinx.cpp.graph.AdjacencyList_int32:
+) -> dolfinx.graph.AdjacencyList:
     """
     Read an adjacency-list from an ADIOS file with given communicator.
     The adjancency list is split in to a flat array (data) and its corresponding offset.
@@ -189,9 +124,8 @@ def read_adjacency_list(
         adios: The ADIOS instance
         comm: The MPI communicator used to read the data
         filename: Path to input file
-        dofmap: Name of variable containing dofmap
-        dofmap_offsets: Name of variable containing dofmap_offsets
-        num_cells_global: Number of cells in the mesh (global)
+        data_name: Name of variable containing the indices of the adjacencylist
+        dofmap_offsets: Name of variable containing offsets of the adjacencylist
         engine: Type of ADIOS engine to use for reading data
 
     Returns:
@@ -200,10 +134,9 @@ def read_adjacency_list(
     .. note::
         No MPI communication is done during this call
     """
-    local_cell_range = compute_local_range(comm, num_cells_global)
 
     # Open ADIOS engine
-    io_name = f"{dofmap=}_reader"
+    io_name = f"{data_name=}_reader"
 
     with ADIOSFile(
         adios=adios,
@@ -214,33 +147,36 @@ def read_adjacency_list(
     ) as adios_file:
         # First find step with dofmap offsets, to be able to read
         # in a full row of the dofmap
-        for i in range(adios_file.file.Steps()):
+        for _ in range(adios_file.file.Steps()):
             adios_file.file.BeginStep()
-            if dofmap_offsets in adios_file.io.AvailableVariables().keys():
+            if offsets_name in adios_file.io.AvailableVariables().keys():
                 break
             adios_file.file.EndStep()
-        if dofmap_offsets not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Dof offsets not found at '{dofmap_offsets}' in {filename}")
+        if offsets_name not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"Dof offsets not found at '{offsets_name}' in {filename}")
 
         # Get global shape of dofmap-offset, and read in data with an overlap
-        d_offsets = adios_file.io.InquireVariable(dofmap_offsets)
+        d_offsets = adios_file.io.InquireVariable(offsets_name)
         shape = d_offsets.Shape()
         assert len(shape) == 1
+        num_nodes = shape[0] - 1
+        local_range = compute_local_range(comm, num_nodes)
+
         # As the offsets are one longer than the number of cells, we need to read in with an overlap
         d_offsets.SetSelection(
-            [[local_cell_range[0]], [local_cell_range[1] + 1 - local_cell_range[0]]]
+            [[local_range[0]], [local_range[1] + 1 - local_range[0]]]
         )
         in_offsets = np.empty(
-            local_cell_range[1] + 1 - local_cell_range[0],
+            local_range[1] + 1 - local_range[0],
             dtype=d_offsets.Type().strip("_t"),
         )
         adios_file.file.Get(d_offsets, in_offsets, adios2.Mode.Sync)
 
         # Assuming dofmap is saved in stame step
         # Get the relevant part of the dofmap
-        if dofmap not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Dofs not found at {dofmap} in {filename}")
-        cell_dofs = adios_file.io.InquireVariable(dofmap)
+        if data_name not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"Dofs not found at {data_name} in {filename}")
+        cell_dofs = adios_file.io.InquireVariable(data_name)
         cell_dofs.SetSelection([[in_offsets[0]], [in_offsets[-1] - in_offsets[0]]])
         in_dofmap = np.empty(in_offsets[-1] - in_offsets[0], dtype=cell_dofs.Type().strip("_t"))
         adios_file.file.Get(cell_dofs, in_dofmap, adios2.Mode.Sync)

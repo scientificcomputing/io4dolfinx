@@ -1,4 +1,4 @@
-# Copyright (C) 2023 Jørgen Schartum Dokken
+# Copyright (C) 2023-2026 Jørgen Schartum Dokken
 #
 # This file is part of adios4dolfinx
 #
@@ -21,13 +21,6 @@ from packaging.version import Version
 
 from .backends import FileMode, get_backend
 from .backends.adios2 import backend as ADIOS2Interface
-from .backends.adios2.helpers import (
-    ADIOSFile,
-    read_adjacency_list,
-    read_array,
-    read_cell_perms,
-    resolve_adios_scope,
-)
 from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
@@ -240,10 +233,10 @@ def read_meshtags(
 def read_function(
     filename: Path | str,
     u: dolfinx.fem.Function,
-    engine: str = "BP4",
     time: float = 0.0,
-    legacy: bool = False,
-    name: typing.Optional[str] = None,
+    name: str | None = None,
+    backend_args: dict[str, Any]|None = None,
+    backend: typing.Literal["adios2","h5py"] = "adios2"
 ):
     """
     Read checkpoint from file and fill it into `u`.
@@ -251,42 +244,15 @@ def read_function(
     Args:
         filename: Path to checkpoint
         u: Function to fill
-        engine: ADIOS engine type used for reading
         time: Time-stamp associated with checkpoint
-        legacy: If checkpoint is from prior to time-dependent writing set to True
         name: If not provided, `u.name` is used to search through the input file for the function
     """
     check_file_exists(filename)
+    
     mesh = u.function_space.mesh
     comm = mesh.comm
-
-    import adios2
-
-    adios2 = resolve_adios_scope(adios2)
-
-    adios = adios2.ADIOS(comm)
     if name is None:
         name = u.name
-
-    # Check that file contains the function to read
-    if not legacy:
-        with ADIOSFile(
-            adios=adios,
-            filename=filename,
-            mode=adios2.Mode.Read,
-            engine=engine,
-            io_name="FunctionReader",
-        ) as adios_file:
-            variables = set(
-                sorted(
-                    map(
-                        lambda x: x.split("_time")[0],
-                        filter(lambda x: x.endswith("_time"), adios_file.io.AvailableVariables()),
-                    )
-                )
-            )
-            if name not in variables:
-                raise KeyError(f"{name} not found in {filename}. Did you mean one of {variables}?")
 
     # ----------------------Step 1---------------------------------
     # Compute index of input cells and get cell permutation
@@ -306,15 +272,12 @@ def read_function(
 
     # -------------------Step 3-----------------------------------
     # Read dofmap from file and compute dof owners
-    if legacy:
-        dofmap_path = "Dofmap"
-        xdofmap_path = "XDofmap"
-    else:
-        dofmap_path = f"{name}_dofmap"
-        xdofmap_path = f"{name}_XDofmap"
-    input_dofmap = read_adjacency_list(
-        adios, comm, filename, dofmap_path, xdofmap_path, num_cells_global, engine
-    )
+    check_file_exists(filename)
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+    
+    input_dofmap = backend_cls.read_dofmap(filename, comm, name, backend_args)
+
     # Compute owner of dofs in dofmap
     num_dofs_global = (
         u.function_space.dofmap.index_map.size_global * u.function_space.dofmap.index_map_bs
@@ -323,14 +286,8 @@ def read_function(
 
     # --------------------Step 4-----------------------------------
     # Read array from file and communicate them to input dofmap process
-    if legacy:
-        array_path = "Values"
-    else:
-        array_path = f"{name}_values"
-    time_name = f"{name}_time"
-    input_array, starting_pos = read_array(
-        adios, filename, array_path, engine, comm, time, time_name, legacy=legacy
-    )
+    input_array, starting_pos = backend_cls.read_dofs(filename, comm, name, time, backend_args)
+
     recv_array = send_dofs_and_recv_values(
         input_dofmap.array, dof_owner, comm, input_array, starting_pos
     )
@@ -345,9 +302,8 @@ def read_function(
         # Read input cell permutations on dofmap process
         local_input_range = compute_local_range(comm, num_cells_global)
         input_local_cell_index = inc_cells - local_input_range[0]
-        input_perms = read_cell_perms(
-            adios, comm, filename, "CellPermutations", num_cells_global, engine
-        )
+        input_perms = backend_cls.read_cell_perms(comm, filename, backend_args)
+
         # Start by sorting data array by cell permutation
         num_dofs_per_cell = input_dofmap.offsets[1:] - input_dofmap.offsets[:-1]
         assert np.allclose(num_dofs_per_cell, num_dofs_per_cell[0])
