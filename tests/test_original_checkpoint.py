@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import typing
 import itertools
 import os
 from collections.abc import Callable
@@ -259,7 +260,7 @@ def read_function_vector(
         with dolfinx.io.XDMFFile(MPI.COMM_WORLD, mesh_fname, "r") as xdmf:
             mesh = xdmf.read_mesh()
     elif mesh_fname.suffix == ".bp":
-        backend = "adios2"
+        backend: typing.Literal["adios2"] = "adios2"
         backend_args = {"engine": "BP4"}
         mesh = adios4dolfinx.read_mesh(
             mesh_fname,
