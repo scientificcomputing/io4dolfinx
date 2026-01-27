@@ -163,9 +163,7 @@ def read_adjacency_list(
         local_range = compute_local_range(comm, num_nodes)
 
         # As the offsets are one longer than the number of cells, we need to read in with an overlap
-        d_offsets.SetSelection(
-            [[local_range[0]], [local_range[1] + 1 - local_range[0]]]
-        )
+        d_offsets.SetSelection([[local_range[0]], [local_range[1] + 1 - local_range[0]]])
         in_offsets = np.empty(
             local_range[1] + 1 - local_range[0],
             dtype=d_offsets.Type().strip("_t"),

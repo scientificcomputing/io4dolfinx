@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import typing
 import itertools
 import os
+import typing
 from collections.abc import Callable
 from pathlib import Path
 

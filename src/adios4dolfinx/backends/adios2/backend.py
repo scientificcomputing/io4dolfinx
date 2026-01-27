@@ -3,15 +3,23 @@ from pathlib import Path
 from typing import Any
 
 from mpi4py import MPI
-import dolfinx
+
 import adios2
+import dolfinx
 import numpy as np
 import numpy.typing as npt
 
-from ...structures import MeshData, MeshTagsData, ReadMeshData
+from ...structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import FileMode
-from .helpers import ADIOSFile, adios_to_numpy_dtype, read_adjacency_list, resolve_adios_scope, read_array
+from .helpers import (
+    ADIOSFile,
+    adios_to_numpy_dtype,
+    check_variable_exists,
+    read_adjacency_list,
+    read_array,
+    resolve_adios_scope,
+)
 
 adios2 = resolve_adios_scope(adios2)
 
@@ -512,7 +520,9 @@ def read_meshtags_data(
         return MeshTagsData(name=name, values=tag_values, indices=mesh_entities, dim=dim)
 
 
-def read_dofmap(filename: str|Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any]|None=None)->dolfinx.graph.AdjacencyList:
+def read_dofmap(
+    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None = None
+) -> dolfinx.graph.AdjacencyList:
     backend_args = {} if backend_args is None else backend_args
     legacy = backend_args.get("legacy", False)
 
@@ -526,16 +536,20 @@ def read_dofmap(filename: str|Path, comm: MPI.Intracomm, name: str, backend_args
         dofmap_path = f"{name}_dofmap"
         xdofmap_path = f"{name}_XDofmap"
     engine = backend_args.get("engine", "BP4")
-    return read_adjacency_list(
-        adios, comm, filename, dofmap_path, xdofmap_path, engine=engine
-    )
-    
+    return read_adjacency_list(adios, comm, filename, dofmap_path, xdofmap_path, engine=engine)
 
-def read_dofs(filename: str|Path, comm: MPI.Intracomm, name:str, time:float, backend_args: dict[str, Any]|None=None)-> tuple[npt.NDArray[np.inexact], int]:
+
+def read_dofs(
+    filename: str | Path,
+    comm: MPI.Intracomm,
+    name: str,
+    time: float,
+    backend_args: dict[str, Any] | None = None,
+) -> tuple[npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int]:
     backend_args = {} if backend_args is None else backend_args
-    legacy =  backend_args.get("legacy", False)
+    legacy = backend_args.get("legacy", False)
     engine = backend_args.get("engine", "BP4")
-    io_name = backend_args.get("io_name", f"{name}_FunctionReader" )
+    io_name = backend_args.get("io_name", f"{name}_FunctionReader")
     # Check that file contains the function to read
     adios = adios2.ADIOS(comm)
     check_file_exists(filename)
@@ -563,17 +577,13 @@ def read_dofs(filename: str|Path, comm: MPI.Intracomm, name:str, time:float, bac
         array_path = "Values"
     else:
         array_path = f"{name}_values"
- 
+
     time_name = f"{name}_time"
-    return read_array(
-        adios, filename, array_path, engine, comm, time, time_name, legacy=legacy
-    )
+    return read_array(adios, filename, array_path, engine, comm, time, time_name, legacy=legacy)
 
 
 def read_cell_perms(
-    comm: MPI.Intracomm,
-    filename: Path | str,
-    backend_args: dict[str, Any]|None=None
+    comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None = None
 ) -> npt.NDArray[np.uint32]:
     """
     Read cell permutation from file with given communicator,
@@ -600,6 +610,105 @@ def read_cell_perms(
     backend_args = {} if backend_args is None else backend_args
     engine = backend_args.get("engine", "BP4")
 
-    cell_perms, _ = read_array(adios, filename, "CellPermutations",
-                               engine=engine, comm=comm, legacy=True)
-    return cell_perms
+    cell_perms, _ = read_array(
+        adios, filename, "CellPermutations", engine=engine, comm=comm, legacy=True
+    )
+
+    return cell_perms.astype(np.uint32)
+
+
+def write_function(
+    filename: Path,
+    comm: MPI.Intracomm,
+    u: FunctionData,
+    time: float = 0.0,
+    mode: FileMode = FileMode.append,
+    backend_args: dict[str, Any] | None = None,
+):
+    """
+    Write a function to file using ADIOS2
+
+    Parameters:
+        comm: MPI communicator used in storage
+        u: Internal data structure for the function data to save to file
+        filename: Path to file to write to
+        engine: ADIOS2 engine to use
+        mode: ADIOS2 mode to use (write or append)
+        time: Time stamp associated with function
+        io_name: Internal name used for the ADIOS IO object
+    """
+    adios_mode = convert_file_mode(mode)
+    backend_args = get_default_backend_args(backend_args)
+    engine = backend_args["engine"]
+    io_name = backend_args.get("io_name", "{name}_writer")
+
+    adios = adios2.ADIOS(comm)
+    cell_permutations_exists = False
+    dofmap_exists = False
+    XDofmap_exists = False
+    if mode == adios2.Mode.Append:
+        cell_permutations_exists = check_variable_exists(
+            adios, filename, "CellPermutations", engine=engine
+        )
+        dofmap_exists = check_variable_exists(adios, filename, f"{u.name}_dofmap", engine=engine)
+        XDofmap_exists = check_variable_exists(adios, filename, f"{u.name}_XDofmap", engine=engine)
+
+    with ADIOSFile(
+        adios=adios, filename=filename, mode=adios_mode, engine=engine, io_name=io_name, comm=comm
+    ) as adios_file:
+        adios_file.file.BeginStep()
+
+        if not cell_permutations_exists:
+            # Add mesh permutations
+            pvar = adios_file.io.DefineVariable(
+                "CellPermutations",
+                u.cell_permutations,
+                shape=[u.num_cells_global],
+                start=[u.local_cell_range[0]],
+                count=[u.local_cell_range[1] - u.local_cell_range[0]],
+            )
+            adios_file.file.Put(pvar, u.cell_permutations)
+
+        if not dofmap_exists:
+            # Add dofmap
+            dofmap_var = adios_file.io.DefineVariable(
+                f"{u.name}_dofmap",
+                u.dofmap_array,
+                shape=[u.global_dofs_in_dofmap],
+                start=[u.dofmap_range[0]],
+                count=[u.dofmap_range[1] - u.dofmap_range[0]],
+            )
+            adios_file.file.Put(dofmap_var, u.dofmap_array)
+
+        if not XDofmap_exists:
+            # Add XDofmap
+            xdofmap_var = adios_file.io.DefineVariable(
+                f"{u.name}_XDofmap",
+                u.dofmap_offsets,
+                shape=[u.num_cells_global + 1],
+                start=[u.local_cell_range[0]],
+                count=[u.local_cell_range[1] - u.local_cell_range[0] + 1],
+            )
+            adios_file.file.Put(xdofmap_var, u.dofmap_offsets)
+
+        val_var = adios_file.io.DefineVariable(
+            f"{u.name}_values",
+            u.values,
+            shape=[u.num_dofs_global],
+            start=[u.dof_range[0]],
+            count=[u.dof_range[1] - u.dof_range[0]],
+        )
+        adios_file.file.Put(val_var, u.values)
+
+        # Add time step to file
+        t_arr = np.array([time], dtype=np.float64)
+        time_var = adios_file.io.DefineVariable(
+            f"{u.name}_time",
+            t_arr,
+            shape=[1],
+            start=[0],
+            count=[1 if comm.rank == 0 else 0],
+        )
+        adios_file.file.Put(time_var, t_arr)
+        adios_file.file.PerformPuts()
+        adios_file.file.EndStep()

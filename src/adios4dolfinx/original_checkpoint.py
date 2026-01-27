@@ -15,7 +15,7 @@ import adios2
 import dolfinx
 import numpy as np
 
-from .backends import FileMode
+from .backends import FileMode, get_backend
 from .backends.adios2.helpers import resolve_adios_scope
 from .comm_helpers import numpy_to_mpi
 from .structures import FunctionData, MeshData
@@ -26,7 +26,6 @@ from .utils import (
     unroll_dofmap,
     unroll_insert_position,
 )
-from .writers import write_function, write_mesh
 
 adios2 = resolve_adios_scope(adios2)
 
@@ -344,10 +343,11 @@ def create_function_data_on_original_mesh(
 def write_function_on_input_mesh(
     filename: Path | str,
     u: dolfinx.fem.Function,
-    engine: str = "BP4",
-    mode: adios2.Mode = adios2.Mode.Append,
     time: float = 0.0,
     name: typing.Optional[str] = None,
+    mode: FileMode = FileMode.append,
+    backend_args: dict[str, typing.Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
     """
     Write function checkpoint (to be read with the input mesh).
@@ -363,20 +363,25 @@ def write_function_on_input_mesh(
     mesh = u.function_space.mesh
     function_data = create_function_data_on_original_mesh(u, name)
     fname = Path(filename)
-    write_function(
+
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+    if "io_name" not in backend_args.keys():
+        backend_args["io_name"] = "OriginalFunctionWriter"
+    backend_cls.write_function(
         fname,
         mesh.comm,
         function_data,
-        engine,
-        mode,
-        time,
-        io_name="OriginalFunctionWriter",
+        time=time,
+        mode=mode,
+        backend_args=backend_args,
     )
 
 
 def write_mesh_input_order(
     filename: Path | str,
     mesh: dolfinx.mesh.Mesh,
+    time: float = 0.0,
     backend: typing.Literal["h5py", "adios2"] = "adios2",
     backend_args: dict[str, typing.Any] | None = None,
     mode: FileMode = FileMode.write,
@@ -384,15 +389,19 @@ def write_mesh_input_order(
     """
     Write mesh to checkpoint file in original input ordering
     """
-    backend_args = backend_args or {}
-    backend_args["io_name"] = "OriginalMeshWriter"
     mesh_data = create_original_mesh_data(mesh)
     fname = Path(filename)
-    write_mesh(
+
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+    if "io_name" not in backend_args.keys():
+        backend_args["io_name"] = "InputMeshWriter"
+
+    backend_cls.write_mesh(
         fname,
         mesh.comm,
         mesh_data,
-        backend=backend,
         backend_args=backend_args,
         mode=mode,
+        time=time,
     )

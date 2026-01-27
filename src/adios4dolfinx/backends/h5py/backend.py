@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from mpi4py import MPI
-import dolfinx
 
+import dolfinx
 import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import adjacencylist
 
-from ...structures import MeshData, MeshTagsData, ReadMeshData
+from ...structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import FileMode
 
@@ -374,7 +374,9 @@ def read_meshtags_data(
         return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
 
 
-def read_dofmap(filename: str|Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any]|None)->dolfinx.graph.AdjacencyList:
+def read_dofmap(
+    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
+) -> dolfinx.graph.AdjacencyList:
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_name = "mesh"  # Prepare for multiple meshes
         if mesh_name not in h5file.keys():
@@ -384,7 +386,9 @@ def read_dofmap(filename: str|Path, comm: MPI.Intracomm, name: str, backend_args
             raise RuntimeError(f"No functions stored in '{mesh_name}' in {filename}")
         functions = mesh["functions"]
         if name not in functions.keys():
-            raise RuntimeError(f"No function with name '{name}' on '{mesh_name}' stored in {filename}")
+            raise RuntimeError(
+                f"No function with name '{name}' on '{mesh_name}' stored in {filename}"
+            )
         function = functions[name]
 
         # Get offsets
@@ -392,21 +396,26 @@ def read_dofmap(filename: str|Path, comm: MPI.Intracomm, name: str, backend_args
         dofmap_key = "dofmap"
         offsets = function[offset_key]
         num_cells = offsets.shape[0] - 1
-        local_range = compute_local_range(comm, num_cells)        
+        local_range = compute_local_range(comm, num_cells)
 
         # First read in offsets based on the number of cells [0, num_cells_local]
         glob_offsets = function[offset_key][local_range[0] : local_range[1] + 1]
 
         # Then read the data based of offsets
         dofmap_data = function[dofmap_key][glob_offsets[0] : glob_offsets[-1]]
- 
+
     # Then make offsets local
     loc_offsets = (glob_offsets - glob_offsets[0]).astype(np.int32)
     return adjacencylist(dofmap_data, loc_offsets)
 
 
-
-def read_dofs(filename: str|Path, comm: MPI.Intracomm, name:str, time:float, backend_args: dict[str, Any]|None)-> tuple[npt.NDArray[np.inexact], int]:
+def read_dofs(
+    filename: str | Path,
+    comm: MPI.Intracomm,
+    name: str,
+    time: float,
+    backend_args: dict[str, Any] | None,
+) -> tuple[npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int]:
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_name = "mesh"  # Prepare for multiple meshes
         if mesh_name not in h5file.keys():
@@ -416,7 +425,9 @@ def read_dofs(filename: str|Path, comm: MPI.Intracomm, name:str, time:float, bac
             raise RuntimeError(f"No functions stored in '{mesh_name}' in {filename}")
         functions = mesh["functions"]
         if name not in functions.keys():
-            raise RuntimeError(f"No function with name '{name}' on '{mesh_name}' stored in {filename}")
+            raise RuntimeError(
+                f"No function with name '{name}' on '{mesh_name}' stored in {filename}"
+            )
         function = functions[name]
         timestamps = function.attrs["Timestamps"]
         idx = np.flatnonzero(np.isclose(timestamps, time))
@@ -430,9 +441,9 @@ def read_dofs(filename: str|Path, comm: MPI.Intracomm, name:str, time:float, bac
         return local_array, local_range[0]
 
 
-
-
-def read_cell_perms(filename: str|Path, comm: MPI.Intracomm, backend_args: dict[str, Any]|None)-> npt.NDArray[np.uint32]:
+def read_cell_perms(
+    comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
+) -> npt.NDArray[np.uint32]:
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_name = "mesh"  # Prepare for multiple meshes
         if mesh_name not in h5file.keys():
@@ -443,3 +454,73 @@ def read_cell_perms(filename: str|Path, comm: MPI.Intracomm, backend_args: dict[
         local_range = compute_local_range(comm, num_cells_global)
         local_array = data_group[slice(*local_range)]
         return local_array
+
+
+def write_function(
+    filename: str | Path,
+    comm: MPI.Intracomm,
+    u: FunctionData,
+    time: float,
+    mode: FileMode,
+    backend_args: dict[str, Any] | None = None,
+):
+    mesh_name = "mesh"  # Prepare for multiple meshes
+    backend_args = get_default_backend_args(backend_args)
+    h5_mode = convert_file_mode(mode)
+    with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
+        cell_permutations_exist = False
+        dofmap_exists = False
+        dofmap_offsets_exists = False
+        if h5_mode == "a":
+            if mesh_name not in h5file.keys():
+                mesh = h5file.create_group(mesh_name)
+            else:
+                mesh = h5file[mesh_name]
+
+            cell_permutations_exist = "CellPermutations" in mesh.keys()
+
+            if "functions" not in mesh.keys():
+                functions = mesh.create_group("functions")
+            else:
+                functions = mesh["functions"]
+
+            if u.name not in functions.keys():
+                function = functions.create_group(u.name)
+            else:
+                function = functions[u.name]
+
+            dofmap_exists = "dofmap" in function.keys()
+            dofmap_offsets_exists = "dofmap_offsets" in function.keys()
+
+        if not cell_permutations_exist:
+            cell_perms = mesh.create_dataset(
+                "CellPermutations", shape=[u.num_cells_global], dtype=np.uint32
+            )
+            cell_perms[slice(*u.local_cell_range)] = u.cell_permutations
+
+        if not dofmap_exists:
+            dofmap = function.create_dataset(
+                "dofmap", shape=[u.global_dofs_in_dofmap], dtype=np.int64
+            )
+            dofmap[slice(*u.dofmap_range)] = u.dofmap_array
+
+        if not dofmap_offsets_exists:
+            dofmap_offsets = function.create_dataset(
+                "dofmap_offsets", shape=[u.num_cells_global + 1]
+            )
+            dofmap_offsets[u.local_cell_range[0] : u.local_cell_range[1] + 1] = u.dofmap_offsets
+
+        # Write timestamp
+        if "timestamps" in function.attrs.keys():
+            timestamps = function.attrs["timestamps"]
+            if np.isclose(time, timestamps).any():
+                raise RuntimeError("FUnction has already been stored at time={time_stamp}.")
+            else:
+                function.attrs["timestamps"] = np.append(function.attrs["timestamps"], time)
+        else:
+            function.attrs["timestamps"] = np.array([time])
+        idx = len(function.attrs["timestamps"]) - 1
+
+        data_group = function.create_group(f"{idx:d}")
+        array = data_group.create_dataset("array", shape=[u.num_dofs_global], dtype=u.values.dtype)
+        array[slice(*u.dof_range)] = u.values

@@ -3,11 +3,12 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from mpi4py import MPI
+
 import dolfinx
 import numpy as np
 import numpy.typing as npt
 
-from ..structures import MeshData, MeshTagsData, ReadMeshData
+from ..structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
 
 __all__ = ["FileMode", "IOBackend", "get_backend"]
 
@@ -93,13 +94,26 @@ class IOBackend(Protocol):
         backend_args: dict[str, Any] | None,
     ) -> MeshTagsData: ...
 
-    def read_dofmap(self,filename: str|Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any]|None)->dolfinx.graph.AdjacencyList:
+    def read_dofmap(
+        self,
+        filename: str | Path,
+        comm: MPI.Intracomm,
+        name: str,
+        backend_args: dict[str, Any] | None,
+    ) -> dolfinx.graph.AdjacencyList:
         """Read the dofmap of a function with a given name from file"""
         ...
 
-    def read_dofs(self, filename: str|Path, comm: MPI.Intracomm, name:str, time:float, backend_args: dict[str, Any]|None)-> tuple[npt.NDArray[np.inexact], int]:
+    def read_dofs(
+        self,
+        filename: str | Path,
+        comm: MPI.Intracomm,
+        name: str,
+        time: float,
+        backend_args: dict[str, Any] | None,
+    ) -> tuple[npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int]:
         """Read the dofs (values) of a function with a given name from a given timestep.
-        
+
         Returns:
             Contiguous sequence of degrees of freedom (with respect to input data)
             and the global starting point on the process.
@@ -108,9 +122,7 @@ class IOBackend(Protocol):
         ...
 
     def read_cell_perms(
-        comm: MPI.Intracomm,
-        filename: Path | str,
-        backend_args: dict[str, Any]|None=None
+        self, comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
     ) -> npt.NDArray[np.uint32]:
         """
         Read cell permutation from file with given communicator,
@@ -122,12 +134,19 @@ class IOBackend(Protocol):
         """
         ...
 
+    def write_function(
+        self,
+        filename: Path,
+        comm: MPI.Intracomm,
+        u: FunctionData,
+        time: float,
+        mode: FileMode,
+        backend_args: dict[str, Any] | None,
+    ): ...
+
     # read_timestamps
-    # write_function
     # read_function_from_legacy_h5
     # read_mesh_from_legacy_h5
-    # write_function_on_input_mesh
-    # write_mesh_input_order
     # snapshot_checkpoint
 
 

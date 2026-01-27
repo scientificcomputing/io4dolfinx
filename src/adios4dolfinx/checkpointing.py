@@ -20,7 +20,6 @@ import ufl
 from packaging.version import Version
 
 from .backends import FileMode, get_backend
-from .backends.adios2 import backend as ADIOS2Interface
 from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
@@ -235,8 +234,8 @@ def read_function(
     u: dolfinx.fem.Function,
     time: float = 0.0,
     name: str | None = None,
-    backend_args: dict[str, Any]|None = None,
-    backend: typing.Literal["adios2","h5py"] = "adios2"
+    backend_args: dict[str, Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
     """
     Read checkpoint from file and fill it into `u`.
@@ -248,7 +247,7 @@ def read_function(
         name: If not provided, `u.name` is used to search through the input file for the function
     """
     check_file_exists(filename)
-    
+
     mesh = u.function_space.mesh
     comm = mesh.comm
     if name is None:
@@ -275,21 +274,21 @@ def read_function(
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
-    
+
     input_dofmap = backend_cls.read_dofmap(filename, comm, name, backend_args)
 
     # Compute owner of dofs in dofmap
     num_dofs_global = (
         u.function_space.dofmap.index_map.size_global * u.function_space.dofmap.index_map_bs
     )
-    dof_owner = index_owner(comm, input_dofmap.array, num_dofs_global)
+    dof_owner = index_owner(comm, input_dofmap.array.astype(np.int64), num_dofs_global)
 
     # --------------------Step 4-----------------------------------
     # Read array from file and communicate them to input dofmap process
     input_array, starting_pos = backend_cls.read_dofs(filename, comm, name, time, backend_args)
 
     recv_array = send_dofs_and_recv_values(
-        input_dofmap.array, dof_owner, comm, input_array, starting_pos
+        input_dofmap.array.astype(np.int64), dof_owner, comm, input_array, starting_pos
     )
 
     # -------------------Step 5--------------------------------------
@@ -450,21 +449,23 @@ def write_mesh(
 def write_function(
     filename: Path | str,
     u: dolfinx.fem.Function,
-    engine: str = "BP4",
-    mode: FileMode = FileMode.append,
     time: float = 0.0,
-    name: typing.Optional[str] = None,
+    mode: FileMode = FileMode.append,
+    name: str | None = None,
+    backend_args: dict[str, Any] | None = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
     """
     Write function checkpoint to file.
 
     Args:
         u: Function to write to file
-        filename: Path to write to
-        engine: ADIOS2 engine
-        mode: Write or append.
         time: Time-stamp for simulation
+        filename: Path to write to
+        mode: Write or append.
         name: Name of function to write. If None, the name of the function is used.
+        backend_args: Arguments to the IO backend.
+        backend: The backend to use
     """
     dofmap = u.function_space.dofmap
     values = u.x.array
@@ -519,11 +520,5 @@ def write_function(
     # Write to file
     fname = Path(filename)
     _internal_function_writer(
-        fname,
-        comm,
-        function_data,
-        engine,
-        ADIOS2Interface.convert_file_mode(mode),
-        time,
-        "FunctionWriter",
+        fname, comm, function_data, time, backend_args=backend_args, backend=backend, mode=mode
     )

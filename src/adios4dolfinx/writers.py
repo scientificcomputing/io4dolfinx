@@ -15,7 +15,7 @@ import numpy as np
 from packaging.version import Version
 
 from .backends import FileMode, get_backend
-from .backends.adios2.helpers import ADIOSFile, check_variable_exists, resolve_adios_scope
+from .backends.adios2.helpers import resolve_adios_scope
 from .structures import FunctionData, MeshData
 
 adios2 = resolve_adios_scope(adios2)
@@ -113,8 +113,8 @@ def write_mesh(
     filename: Path,
     comm: MPI.Intracomm,
     mesh_data: MeshData,
-    mode: FileMode = FileMode.write,
     time: float = 0.0,
+    mode: FileMode = FileMode.write,
     backend_args: dict[str, Any] | None = None,
     backend: Literal["adios2", "h5py"] = "adios2",
 ):
@@ -138,10 +138,10 @@ def write_function(
     filename: Path,
     comm: MPI.Intracomm,
     u: FunctionData,
-    engine: str = "BP4",
-    mode: FileMode = FileMode.append,
     time: float = 0.0,
-    io_name: str = "FunctionWriter",
+    mode: FileMode = FileMode.append,
+    backend_args: dict[str, Any] | None = None,
+    backend: Literal["adios2", "h5py"] = "adios2",
 ):
     """
     Write a function to file using ADIOS2
@@ -155,74 +155,6 @@ def write_function(
         time: Time stamp associated with function
         io_name: Internal name used for the ADIOS IO object
     """
-    adios = adios2.ADIOS(comm)
-
-    cell_permutations_exists = False
-    dofmap_exists = False
-    XDofmap_exists = False
-    if mode == adios2.Mode.Append:
-        cell_permutations_exists = check_variable_exists(
-            adios, filename, "CellPermutations", engine=engine
-        )
-        dofmap_exists = check_variable_exists(adios, filename, f"{u.name}_dofmap", engine=engine)
-        XDofmap_exists = check_variable_exists(adios, filename, f"{u.name}_XDofmap", engine=engine)
-
-    with ADIOSFile(
-        adios=adios, filename=filename, mode=mode, engine=engine, io_name=io_name, comm=comm
-    ) as adios_file:
-        adios_file.file.BeginStep()
-
-        if not cell_permutations_exists:
-            # Add mesh permutations
-            pvar = adios_file.io.DefineVariable(
-                "CellPermutations",
-                u.cell_permutations,
-                shape=[u.num_cells_global],
-                start=[u.local_cell_range[0]],
-                count=[u.local_cell_range[1] - u.local_cell_range[0]],
-            )
-            adios_file.file.Put(pvar, u.cell_permutations)
-
-        if not dofmap_exists:
-            # Add dofmap
-            dofmap_var = adios_file.io.DefineVariable(
-                f"{u.name}_dofmap",
-                u.dofmap_array,
-                shape=[u.global_dofs_in_dofmap],
-                start=[u.dofmap_range[0]],
-                count=[u.dofmap_range[1] - u.dofmap_range[0]],
-            )
-            adios_file.file.Put(dofmap_var, u.dofmap_array)
-
-        if not XDofmap_exists:
-            # Add XDofmap
-            xdofmap_var = adios_file.io.DefineVariable(
-                f"{u.name}_XDofmap",
-                u.dofmap_offsets,
-                shape=[u.num_cells_global + 1],
-                start=[u.local_cell_range[0]],
-                count=[u.local_cell_range[1] - u.local_cell_range[0] + 1],
-            )
-            adios_file.file.Put(xdofmap_var, u.dofmap_offsets)
-
-        val_var = adios_file.io.DefineVariable(
-            f"{u.name}_values",
-            u.values,
-            shape=[u.num_dofs_global],
-            start=[u.dof_range[0]],
-            count=[u.dof_range[1] - u.dof_range[0]],
-        )
-        adios_file.file.Put(val_var, u.values)
-
-        # Add time step to file
-        t_arr = np.array([time], dtype=np.float64)
-        time_var = adios_file.io.DefineVariable(
-            f"{u.name}_time",
-            t_arr,
-            shape=[1],
-            start=[0],
-            count=[1 if comm.rank == 0 else 0],
-        )
-        adios_file.file.Put(time_var, t_arr)
-        adios_file.file.PerformPuts()
-        adios_file.file.EndStep()
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+    backend_cls.write_function(filename, comm, u=u, time=time, backend_args=backend_args, mode=mode)
