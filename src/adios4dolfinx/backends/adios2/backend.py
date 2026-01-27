@@ -1,6 +1,6 @@
 import warnings
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from mpi4py import MPI
 
@@ -36,7 +36,7 @@ def convert_file_mode(mode: FileMode) -> adios2.Mode:  # type: ignore[override]
 
 
 def write_attributes(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     name: str,
     attributes: dict[str, np.ndarray],
@@ -72,7 +72,7 @@ def write_attributes(
 
 
 def read_attributes(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     name: str,
     backend_args: dict[str, Any] | None = None,
@@ -108,7 +108,7 @@ def read_attributes(
 
 
 def read_timestamps(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, Any] | None = None,
@@ -156,7 +156,7 @@ def read_timestamps(
 
 
 def write_mesh(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     mesh: MeshData,
     backend_args: dict[str, Any] | None = None,
@@ -264,7 +264,7 @@ def write_mesh(
 
 
 def read_mesh_data(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     time: float = 0.0,
     read_from_partition: bool = False,
@@ -402,6 +402,7 @@ def write_meshtags(
     data: MeshTagsData,
     backend_args: dict[str, Any] | None = None,
 ):
+    backend_args = {} if backend_args is None else backend_args
     io_name = backend_args.pop("io_name", "MeshTagWriter")
     adios = adios2.ADIOS(comm)
     with ADIOSFile(

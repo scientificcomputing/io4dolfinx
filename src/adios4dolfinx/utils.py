@@ -10,7 +10,6 @@ Vectorized numpy operations used internally in adios4dolfinx
 
 from __future__ import annotations
 
-import typing
 from pathlib import Path
 
 from mpi4py import MPI
@@ -31,14 +30,14 @@ __all__ = [
 ]
 
 
-def check_file_exists(filename: typing.Union[Path, str]):
+def check_file_exists(filename: Path | str):
     """Check if file exists."""
     if not Path(filename).exists():
         raise FileNotFoundError(f"{filename} not found")
 
 
-valid_function_types = typing.Union[np.float32, np.float64, np.complex64, np.complex128]
-valid_real_types = typing.Union[np.float32, np.float64]
+valid_function_types = np.float32 | np.float64 | np.complex64 | np.complex128
+valid_real_types = np.float32 | np.float64
 
 
 def element_signature(V):

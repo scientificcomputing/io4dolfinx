@@ -342,7 +342,7 @@ def create_function_data_on_original_mesh(
 
 
 def write_function_on_input_mesh(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     u: dolfinx.fem.Function,
     engine: str = "BP4",
     mode: adios2.Mode = adios2.Mode.Append,
@@ -375,7 +375,7 @@ def write_function_on_input_mesh(
 
 
 def write_mesh_input_order(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     mesh: dolfinx.mesh.Mesh,
     backend: typing.Literal["h5py", "adios2"] = "adios2",
     backend_args: dict[str, typing.Any] | None = None,

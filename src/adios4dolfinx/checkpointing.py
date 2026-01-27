@@ -59,7 +59,7 @@ __all__ = [
 
 
 def write_attributes(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     name: str,
     attributes: dict[str, np.ndarray],
@@ -82,7 +82,7 @@ def write_attributes(
 
 
 def read_attributes(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     name: str,
     backend_args: dict[str, typing.Any] | None = None,
@@ -105,7 +105,7 @@ def read_attributes(
 
 
 def read_timestamps(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
@@ -130,7 +130,7 @@ def read_timestamps(
 
 
 def write_meshtags(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     mesh: dolfinx.mesh.Mesh,
     meshtags: dolfinx.mesh.MeshTags,
     meshtag_name: typing.Optional[str] = None,
@@ -200,7 +200,7 @@ def write_meshtags(
 
 
 def read_meshtags(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     mesh: dolfinx.mesh.Mesh,
     meshtag_name: str,
     backend_args: dict[str, Any] | None = None,
@@ -238,7 +238,7 @@ def read_meshtags(
 
 
 def read_function(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     u: dolfinx.fem.Function,
     engine: str = "BP4",
     time: float = 0.0,
@@ -401,7 +401,7 @@ def read_function(
 
 
 def read_mesh(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     ghost_mode: dolfinx.mesh.GhostMode = dolfinx.mesh.GhostMode.shared_facet,
     time: float = 0.0,
@@ -492,7 +492,7 @@ def write_mesh(
 
 
 def write_function(
-    filename: typing.Union[Path, str],
+    filename: Path | str,
     u: dolfinx.fem.Function,
     engine: str = "BP4",
     mode: FileMode = FileMode.append,

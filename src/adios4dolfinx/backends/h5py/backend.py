@@ -8,7 +8,7 @@ Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Simula Research Laboratory
 
 import contextlib
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 from mpi4py import MPI
 
@@ -74,7 +74,7 @@ def convert_file_mode(mode: FileMode) -> str:
 
 
 def write_attributes(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     name: str,
     attributes: dict[str, np.ndarray],
@@ -100,7 +100,7 @@ def write_attributes(
 
 
 def read_attributes(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     name: str,
     backend_args: dict[str, Any] | None = None,
@@ -123,7 +123,7 @@ def read_attributes(
 
 
 def read_timestamps(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, Any] | None = None,
@@ -145,7 +145,7 @@ def read_timestamps(
 
 
 def write_mesh(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     mesh: MeshData,
     backend_args: dict[str, Any] | None = None,
@@ -226,7 +226,7 @@ def write_mesh(
 
 
 def read_mesh_data(
-    filename: Union[Path, str],
+    filename: Path | str,
     comm: MPI.Intracomm,
     time: float = 0.0,
     read_from_partition: bool = False,
@@ -331,6 +331,7 @@ def write_meshtags(
         topology = tag.create_dataset(
             "Topology", shape=[data.num_entities_global, data.num_dofs_per_entity], dtype=np.int64
         )
+        assert data.local_start is not None
         topology[data.local_start : data.local_start + len(data.indices), :] = data.indices
 
         # Add cell_type attribute

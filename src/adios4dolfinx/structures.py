@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,7 +19,7 @@ __all__ = ["MeshData", "FunctionData"]
 @dataclass
 class MeshData:
     # 2 dimensional array of node coordinates
-    local_geometry: typing.Union[npt.NDArray[np.float32], npt.NDArray[np.float64]]
+    local_geometry: npt.NDArray[np.float32] | npt.NDArray[np.float64]
     local_geometry_pos: tuple[int, int]  # Insert range on current process for geometry nodes
     num_nodes_global: int  # Number of nodes in global geometry array
 
@@ -35,13 +34,13 @@ class MeshData:
 
     # Partitioning_information
     store_partition: bool
-    partition_processes: typing.Optional[int]  # Number of processes in partition
-    ownership_array: typing.Optional[npt.NDArray[np.int32]]  # Ownership array for cells
-    ownership_offset: typing.Optional[npt.NDArray[np.int32]]  # Ownership offset for cells
-    partition_range: typing.Optional[
-        tuple[int, int]
-    ]  # Local insert position for partitioning information
-    partition_global: typing.Optional[int]
+    partition_processes: int | None = None  # Number of processes in partition
+    ownership_array: npt.NDArray[np.int32] | None = None  # Ownership array for cells
+    ownership_offset: npt.NDArray[np.int32] | None = None  # Ownership offset for cells
+    partition_range: tuple[int, int] | None = (
+        None  # Local insert position for partitioning information
+    )
+    partition_global: int | None = None
 
 
 @dataclass

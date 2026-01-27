@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Protocol, Union
+from typing import Any, Literal, Protocol
 
 from mpi4py import MPI
 
@@ -69,6 +69,7 @@ class IOBackend(Protocol):
         ...
 
     def write_meshtags(
+        self,
         filename: str | Path,
         comm: MPI.Intracomm,
         data: MeshTagsData,
@@ -85,7 +86,11 @@ class IOBackend(Protocol):
     ) -> ReadMeshData: ...
 
     def read_meshtags_data(
-        filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
+        self,
+        filename: str | Path,
+        comm: MPI.Intracomm,
+        name: str,
+        backend_args: dict[str, Any] | None,
     ) -> MeshTagsData: ...
 
     # read_function
