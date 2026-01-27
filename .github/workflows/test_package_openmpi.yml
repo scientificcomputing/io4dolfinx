@@ -35,6 +35,7 @@ jobs:
       OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
       PRTE_MCA_rmaps_default_mapping_policy: :oversubscribe
       working-directory: ./src
+      PIP_NO_BINARY: h5py
 
     strategy:
       matrix:

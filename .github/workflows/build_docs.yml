@@ -29,6 +29,7 @@ env:
   DEFAULT_TAG: nightly
   ARTIFACT_NAME: docs
   PUBLISH_DIR: ./_build/html
+  PIP_NO_BINARY: h5py
 
 jobs:
   get_image_tag:

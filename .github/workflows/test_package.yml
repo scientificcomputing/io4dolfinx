@@ -25,6 +25,7 @@ on:
 env:
   DEB_PYTHON_INSTALL_LAYOUT: deb_system
   DEFAULT_TAG: nightly
+  PIP_NO_BINARY: h5py
 
 jobs:
   get_image_tag:
