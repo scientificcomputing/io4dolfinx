@@ -197,6 +197,7 @@ def write_mesh(
         # Write static partitioning data
         if "PartitioningData" not in mesh_directory.keys() and mesh.store_partition:
             assert mesh.partition_range is not None
+            assert mesh.ownership_array is not None
             par_dataset = mesh_directory.create_dataset(
                 "PartitioningData", [mesh.partition_global], dtype=mesh.ownership_array.dtype
             )
@@ -241,8 +242,6 @@ def read_mesh_data(
     Args:
         filename: Path to input file
         comm: The MPI communciator to distribute the mesh over
-        ghost_mode: Ghost mode to use for mesh. If `read_from_partition`
-            is set to `True` this option is ignored.
         time: Time stamp associated with mesh
         read_from_partition: Read mesh with partition from file
     Returns:
