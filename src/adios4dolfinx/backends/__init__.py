@@ -1,7 +1,8 @@
 from enum import Enum
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol
-from importlib import import_module
+
 from mpi4py import MPI
 
 import dolfinx
@@ -144,7 +145,6 @@ class IOBackend(Protocol):
         backend_args: dict[str, Any] | None,
     ): ...
 
-    # read_timestamps
     # read_function_from_legacy_h5
     # read_mesh_from_legacy_h5
     # snapshot_checkpoint

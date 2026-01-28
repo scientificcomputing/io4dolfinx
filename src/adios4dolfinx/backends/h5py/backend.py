@@ -142,7 +142,13 @@ def read_timestamps(
         The time-stamps
     """
     check_file_exists(filename)
-    raise NotImplementedError("Need to be able to save functions before implementing this")
+    mesh_name = "mesh"
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        mesh_directory = h5file[mesh_name]
+        functions = mesh_directory["functions"]
+        u = functions[function_name]
+        timestamps = u.attrs["timestamps"]
+    return timestamps
 
 
 def write_mesh(
@@ -165,13 +171,13 @@ def write_mesh(
     """
     backend_args = get_default_backend_args(backend_args)
     h5_mode = convert_file_mode(mode)
-
+    mesh_name = "mesh"
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
-        if "mesh" in h5file.keys() and h5_mode == "a":
-            mesh_directory = h5file["mesh"]
+        if mesh_name in h5file.keys() and h5_mode == "a":
+            mesh_directory = h5file[mesh_name]
             timestamps = mesh_directory.attrs["timestamps"]
             if np.isclose(time, timestamps).any():
-                raise RuntimeError("Mesh has already been stored at time={time_stamp}.")
+                raise ValueError("Mesh has already been stored at time={time_stamp}.")
             else:
                 mesh_directory.attrs["timestamps"] = np.append(
                     mesh_directory.attrs["timestamps"], time
@@ -179,7 +185,7 @@ def write_mesh(
                 idx = len(mesh_directory.attrs["timestamps"]) - 1
                 write_topology = False
         else:
-            mesh_directory = h5file.create_group("mesh")
+            mesh_directory = h5file.create_group(mesh_name)
             mesh_directory.attrs["timestamps"] = np.array([time], dtype=np.float64)
             idx = 0
             write_topology = True
@@ -249,7 +255,7 @@ def read_mesh_data(
 
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         if "mesh" not in h5file.keys():
-            raise RuntimeError("Could not find mesh in file")
+            raise KeyError("Could not find mesh in file")
         mesh_group = h5file["mesh"]
         timestamps = mesh_group.attrs["timestamps"]
         parent_group = np.flatnonzero(np.isclose(timestamps, time))
@@ -318,14 +324,14 @@ def write_meshtags(
 
     with h5pyfile(filename, filemode="a", comm=comm, force_serial=False) as h5file:
         if "mesh" not in h5file.keys():
-            raise RuntimeError("Could not find mesh in file")
+            raise KeyError("Could not find mesh in file")
         mesh_group = h5file["mesh"]
         if "tags" not in mesh_group.keys():
             tags = mesh_group.create_group("tags")
         else:
             tags = mesh_group["tags"]
         if data.name in tags.keys():
-            raise RuntimeError(f"MeshTags with {data.name=} already exists in this file")
+            raise KeyError(f"MeshTags with {data.name=} already exists in this file")
         tag = tags.create_group(data.name)
 
         # Add topology
@@ -355,13 +361,13 @@ def read_meshtags_data(
 
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         if "mesh" not in h5file.keys():
-            raise RuntimeError("No mesh found")
+            raise KeyError("No mesh found")
         mesh = h5file["mesh"]
         if "tags" not in mesh.keys():
-            raise RuntimeError("Could not find 'tags' in file, are you sure this is a checkpoint?")
+            raise KeyError("Could not find 'tags' in file, are you sure this is a checkpoint?")
         tags = mesh["tags"]
         if name not in tags.keys():
-            raise RuntimeError(f"Could not find {name} in '/mesh/tags/' in {filename}")
+            raise KeyError(f"Could not find {name} in '/mesh/tags/' in {filename}")
         tag = tags[name]
 
         dim = tag.attrs["dim"]
@@ -380,15 +386,13 @@ def read_dofmap(
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_name = "mesh"  # Prepare for multiple meshes
         if mesh_name not in h5file.keys():
-            raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
+            raise KeyError(f"No mesh '{mesh_name}' found in {filename}")
         mesh = h5file[mesh_name]
         if "functions" not in mesh.keys():
-            raise RuntimeError(f"No functions stored in '{mesh_name}' in {filename}")
+            raise KeyError(f"No functions stored in '{mesh_name}' in {filename}")
         functions = mesh["functions"]
         if name not in functions.keys():
-            raise RuntimeError(
-                f"No function with name '{name}' on '{mesh_name}' stored in {filename}"
-            )
+            raise KeyError(f"No function with name '{name}' on '{mesh_name}' stored in {filename}")
         function = functions[name]
 
         # Get offsets
