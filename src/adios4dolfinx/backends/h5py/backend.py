@@ -47,8 +47,10 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
                 "If you really want to do this, turn on the `force_serial` flag.",
             )
         h5file = h5py.File(h5name, filemode)
-    yield h5file
-    h5file.close()
+    try:
+        yield h5file
+    finally:
+        h5file.close()
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
