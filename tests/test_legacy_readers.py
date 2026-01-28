@@ -24,12 +24,12 @@ from adios4dolfinx import (
 )
 
 
-def test_legacy_mesh():
+def test_legacy_mesh(backend):
     comm = MPI.COMM_WORLD
     path = (pathlib.Path("legacy") / "mesh.h5").absolute()
     if not path.exists():
         pytest.skip(f"{path} does not exist")
-    mesh = read_mesh_from_legacy_h5(filename=path, comm=comm, group="/mesh")
+    mesh = read_mesh_from_legacy_h5(filename=path, comm=comm, group="/mesh", backend=backend)
     assert mesh.topology.dim == 3
     volume = mesh.comm.allreduce(
         dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * ufl.dx(domain=mesh))),
@@ -47,12 +47,14 @@ def test_legacy_mesh():
     assert num_facets == 18
 
 
-def test_read_legacy_mesh_from_checkpoint():
+def test_read_legacy_mesh_from_checkpoint(backend):
     comm = MPI.COMM_WORLD
     filename = (pathlib.Path("legacy") / "mesh_checkpoint.h5").absolute()
     if not filename.exists():
         pytest.skip(f"{filename} does not exist")
-    mesh = read_mesh_from_legacy_h5(filename=filename, comm=comm, group="/Mesh/mesh")
+    mesh = read_mesh_from_legacy_h5(
+        filename=filename, comm=comm, group="/Mesh/mesh", backend=backend
+    )
     assert mesh.topology.dim == 3
     volume = mesh.comm.allreduce(
         dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * ufl.dx(domain=mesh))),
@@ -70,12 +72,12 @@ def test_read_legacy_mesh_from_checkpoint():
     assert num_facets == 18
 
 
-def test_legacy_function():
+def test_legacy_function(backend):
     comm = MPI.COMM_WORLD
     path = (pathlib.Path("legacy") / "mesh.h5").absolute()
     if not path.exists():
         pytest.skip(f"{path} does not exist")
-    mesh = read_mesh_from_legacy_h5(path, comm, "/mesh")
+    mesh = read_mesh_from_legacy_h5(path, comm, "/mesh", backend=backend)
     V = dolfinx.fem.functionspace(mesh, ("DG", 2))
     u = ufl.TrialFunction(V)
     v = ufl.TestFunction(V)
@@ -95,7 +97,7 @@ def test_legacy_function():
     problem.solve()
 
     u_in = dolfinx.fem.Function(V)
-    read_function_from_legacy_h5(path, mesh.comm, u_in, group="v")
+    read_function_from_legacy_h5(path, mesh.comm, u_in, group="v", backend=backend)
     np.testing.assert_allclose(uh.x.array, u_in.x.array, atol=1e-14)
 
     W = dolfinx.fem.functionspace(mesh, ("DG", 2, (mesh.geometry.dim,)))
@@ -103,17 +105,17 @@ def test_legacy_function():
     wh.interpolate(lambda x: (x[0], 3 * x[2], 7 * x[1]))
     w_in = dolfinx.fem.Function(W)
 
-    read_function_from_legacy_h5(path, mesh.comm, w_in, group="w")
+    read_function_from_legacy_h5(path, mesh.comm, w_in, group="w", backend=backend)
 
     np.testing.assert_allclose(wh.x.array, w_in.x.array, atol=1e-14)
 
 
-def test_read_legacy_function_from_checkpoint():
+def test_read_legacy_function_from_checkpoint(backend):
     comm = MPI.COMM_WORLD
     path = (pathlib.Path("legacy") / "mesh_checkpoint.h5").absolute()
     if not path.exists():
         pytest.skip(f"{path} does not exist")
-    mesh = read_mesh_from_legacy_h5(path, comm, "/Mesh/mesh")
+    mesh = read_mesh_from_legacy_h5(path, comm, "/Mesh/mesh", backend=backend)
 
     V = dolfinx.fem.functionspace(mesh, ("DG", 2))
     u = ufl.TrialFunction(V)
@@ -134,12 +136,12 @@ def test_read_legacy_function_from_checkpoint():
     problem.solve()
 
     u_in = dolfinx.fem.Function(V)
-    read_function_from_legacy_h5(path, mesh.comm, u_in, group="v", step=0)
+    read_function_from_legacy_h5(path, mesh.comm, u_in, group="v", step=0, backend=backend)
     assert np.allclose(uh.x.array, u_in.x.array)
 
     # Check second step
     uh.interpolate(lambda x: x[0])
-    read_function_from_legacy_h5(path, mesh.comm, u_in, group="v", step=1)
+    read_function_from_legacy_h5(path, mesh.comm, u_in, group="v", step=1, backend=backend)
     assert np.allclose(uh.x.array, u_in.x.array)
 
     W = dolfinx.fem.functionspace(mesh, ("DG", 2, (mesh.geometry.dim,)))
@@ -147,11 +149,11 @@ def test_read_legacy_function_from_checkpoint():
     wh.interpolate(lambda x: (x[0], 3 * x[2], 7 * x[1]))
     w_in = dolfinx.fem.Function(W)
 
-    read_function_from_legacy_h5(path, mesh.comm, w_in, group="w", step=0)
+    read_function_from_legacy_h5(path, mesh.comm, w_in, group="w", step=0, backend=backend)
     np.testing.assert_allclose(wh.x.array, w_in.x.array, atol=1e-14)
 
     wh.interpolate(lambda x: np.vstack((x[0], 0 * x[0], x[1])))
-    read_function_from_legacy_h5(path, mesh.comm, w_in, group="w", step=1)
+    read_function_from_legacy_h5(path, mesh.comm, w_in, group="w", step=1, backend=backend)
     np.testing.assert_allclose(wh.x.array, w_in.x.array, atol=1e-14)
 
 

@@ -158,28 +158,50 @@ def read_adjacency_list(
         # Get global shape of dofmap-offset, and read in data with an overlap
         d_offsets = adios_file.io.InquireVariable(offsets_name)
         shape = d_offsets.Shape()
-        assert len(shape) == 1
         num_nodes = shape[0] - 1
         local_range = compute_local_range(comm, num_nodes)
 
         # As the offsets are one longer than the number of cells, we need to read in with an overlap
-        d_offsets.SetSelection([[local_range[0]], [local_range[1] + 1 - local_range[0]]])
-        in_offsets = np.empty(
-            local_range[1] + 1 - local_range[0],
-            dtype=d_offsets.Type().strip("_t"),
-        )
+        if len(shape) == 1:
+            d_offsets.SetSelection([[local_range[0]], [local_range[1] + 1 - local_range[0]]])
+            in_offsets = np.empty(
+                local_range[1] + 1 - local_range[0],
+                dtype=d_offsets.Type().strip("_t"),
+            )
+        else:
+            d_offsets.SetSelection(
+                [
+                    [local_range[0], 0],
+                    [local_range[1] + 1 - local_range[0], shape[1]],
+                ]
+            )
+            in_offsets = np.empty(
+                (local_range[1] + 1 - local_range[0], shape[1]),
+                dtype=d_offsets.Type().strip("_t"),
+            )
+
         adios_file.file.Get(d_offsets, in_offsets, adios2.Mode.Sync)
+        in_offsets = in_offsets.squeeze()
 
         # Assuming dofmap is saved in stame step
         # Get the relevant part of the dofmap
         if data_name not in adios_file.io.AvailableVariables().keys():
             raise KeyError(f"Dofs not found at {data_name} in {filename}")
         cell_dofs = adios_file.io.InquireVariable(data_name)
-        cell_dofs.SetSelection([[in_offsets[0]], [in_offsets[-1] - in_offsets[0]]])
+        if len(shape) == 1:
+            cell_dofs.SetSelection([[in_offsets[0]], [in_offsets[-1] - in_offsets[0]]])
+            in_dofmap = np.empty(in_offsets[-1] - in_offsets[0], dtype=cell_dofs.Type().strip("_t"))
+        else:
+            cell_dofs.SetSelection([[in_offsets[0], 0], [in_offsets[-1] - in_offsets[0], shape[1]]])
+            in_dofmap = np.empty(
+                (in_offsets[-1] - in_offsets[0], shape[1]),
+                dtype=cell_dofs.Type().strip("_t"),
+            )
+            assert shape[1] == 1
+
         in_dofmap = np.empty(in_offsets[-1] - in_offsets[0], dtype=cell_dofs.Type().strip("_t"))
         adios_file.file.Get(cell_dofs, in_dofmap, adios2.Mode.Sync)
         in_offsets -= in_offsets[0]
-
         adios_file.file.EndStep()
 
     # Return local dofmap

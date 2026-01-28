@@ -18,14 +18,13 @@ import numpy as np
 import numpy.typing as npt
 import ufl
 
+from .backends import get_backend
 from .backends.adios2.helpers import (
-    ADIOSFile,
-    adios_to_numpy_dtype,
-    read_array,
     resolve_adios_scope,
 )
 from .comm_helpers import send_dofs_and_recv_values
 from .utils import (
+    check_file_exists,
     compute_dofmap_pos,
     compute_insert_position,
     compute_local_range,
@@ -40,125 +39,27 @@ __all__ = [
 ]
 
 
-def read_dofmap_legacy(
-    comm: MPI.Intracomm,
-    filename: pathlib.Path,
-    dofmap: str,
-    dofmap_offsets: str,
-    num_cells_global: np.int64,
-    engine: str,
-    cells: npt.NDArray[np.int64],
-    dof_pos: npt.NDArray[np.int32],
-    bs: int,
-) -> npt.NDArray[np.int64]:
+def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.int64]:
     """
-    Read dofmap with given communicator, split in continuous chunks based on number of
-    cells in the mesh (global).
-
-    Args:
-        comm: MPI communicator
-        filename: Path to input file
-        dofmap: Variable name for dofmap
-        num_cells_global: Number of cells in the global mesh
-        engine: ADIOS2 engine type
-        cells: Cells (global index) that contain a degree of freedom
-        dof_pos: Each entry `dof_pos[i]` corresponds to the local position in the
-        `input_dofmap.links(cells[i])[dof_pos[i]]`
-
-    Returns:
-        The global dof index in the input data for each dof described by
-        the (cells[i], dof_pos[i]) tuples.
-
-    .. note::
-        No MPI communication is done during this call
+    Map xxxyyyzzz to xyzxyz
     """
-    local_cell_range = compute_local_range(comm, num_cells_global)
 
-    # Open ADIOS engine
-    adios = adios2.ADIOS(comm)
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Read,
-        engine=engine,
-        io_name="DofmapReader",
-    ) as adios_file:
-        for i in range(adios_file.file.Steps()):
-            adios_file.file.BeginStep()
-            if dofmap_offsets in adios_file.io.AvailableVariables().keys():
-                break
-            adios_file.file.EndStep()
+    in_dofmap = dofmap.array
+    in_offsets = dofmap.offsets
 
-        d_offsets = adios_file.io.InquireVariable(dofmap_offsets)
-        shape = d_offsets.Shape()
-
-        # As the offsets are one longer than the number of cells, we need to read in with an overlap
-        if len(shape) == 1:
-            d_offsets.SetSelection(
-                [[local_cell_range[0]], [local_cell_range[1] + 1 - local_cell_range[0]]]
-            )
-            in_offsets = np.empty(
-                local_cell_range[1] + 1 - local_cell_range[0],
-                dtype=d_offsets.Type().strip("_t"),
-            )
-        else:
-            d_offsets.SetSelection(
-                [
-                    [local_cell_range[0], 0],
-                    [local_cell_range[1] + 1 - local_cell_range[0], shape[1]],
-                ]
-            )
-            in_offsets = np.empty(
-                (local_cell_range[1] + 1 - local_cell_range[0], shape[1]),
-                dtype=d_offsets.Type().strip("_t"),
-            )
-
-        in_offsets = in_offsets.squeeze()
-        adios_file.file.Get(d_offsets, in_offsets, adios2.Mode.Sync)
-        # Get the relevant part of the dofmap
-        if dofmap not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Dof offsets not found at {dofmap}")
-        cell_dofs = adios_file.io.InquireVariable(dofmap)
-
-        if len(shape) == 1:
-            cell_dofs.SetSelection([[in_offsets[0]], [in_offsets[-1] - in_offsets[0]]])
-            in_dofmap = np.empty(in_offsets[-1] - in_offsets[0], dtype=cell_dofs.Type().strip("_t"))
-        else:
-            cell_dofs.SetSelection([[in_offsets[0], 0], [in_offsets[-1] - in_offsets[0], shape[1]]])
-            in_dofmap = np.empty(
-                (in_offsets[-1] - in_offsets[0], shape[1]),
-                dtype=cell_dofs.Type().strip("_t"),
-            )
-            assert shape[1] == 1
-
-        adios_file.file.Get(cell_dofs, in_dofmap, adios2.Mode.Sync)
-
-        in_dofmap = in_dofmap.reshape(-1).astype(np.int64)
-
-        # Map xxxyyyzzz to xyzxyz
-        mapped_dofmap = np.empty_like(in_dofmap)
-        for i in range(len(in_offsets) - 1):
-            pos_begin, pos_end = (
-                in_offsets[i] - in_offsets[0],
-                in_offsets[i + 1] - in_offsets[0],
-            )
-            dofs_i = in_dofmap[pos_begin:pos_end]
-            assert (pos_end - pos_begin) % bs == 0
-            num_dofs_local = int((pos_end - pos_begin) // bs)
-            for k in range(bs):
-                for j in range(num_dofs_local):
-                    mapped_dofmap[int(pos_begin + j * bs + k)] = dofs_i[int(num_dofs_local * k + j)]
-
-        # Extract dofmap data
-        global_dofs = np.zeros_like(cells, dtype=np.int64)
-        input_cell_positions = cells - local_cell_range[0]
-        read_pos = (in_offsets[input_cell_positions] + dof_pos - in_offsets[0]).astype(np.int32)
-        global_dofs = mapped_dofmap[read_pos]
-        del input_cell_positions, read_pos
-
-        adios_file.file.EndStep()
-
-    return global_dofs
+    mapped_dofmap = np.empty_like(in_dofmap)
+    for i in range(len(in_offsets) - 1):
+        pos_begin, pos_end = (
+            in_offsets[i] - in_offsets[0],
+            in_offsets[i + 1] - in_offsets[0],
+        )
+        dofs_i = in_dofmap[pos_begin:pos_end]
+        assert (pos_end - pos_begin) % bs == 0
+        num_dofs_local = int((pos_end - pos_begin) // bs)
+        for k in range(bs):
+            for j in range(num_dofs_local):
+                mapped_dofmap[int(pos_begin + j * bs + k)] = dofs_i[int(num_dofs_local * k + j)]
+    return mapped_dofmap
 
 
 def send_cells_and_receive_dofmap_index(
@@ -173,13 +74,14 @@ def send_cells_and_receive_dofmap_index(
     num_cells_global: np.int64,
     dofmap_path: str,
     xdofmap_path: str,
-    engine: str,
     bs: int,
+    backend: str,
 ) -> npt.NDArray[np.int64]:
     """
     Given a set of positions in input dofmap, give the global input index of this dofmap entry
     in input file.
     """
+    check_file_exists(filename)
 
     recv_size = np.zeros(len(source_ranks), dtype=np.int32)
     mesh_to_data_comm = comm.Create_dist_graph_adjacent(
@@ -212,18 +114,24 @@ def send_cells_and_receive_dofmap_index(
     r_msg = [inc_pos, recv_size, MPI.INT32_T]
     mesh_to_data_comm.Neighbor_alltoallv(s_msg, r_msg)
     mesh_to_data_comm.Free()
+
+    backend_cls = get_backend(backend)
     # Read dofmap from file
-    input_dofs = read_dofmap_legacy(
-        comm,
-        filename,
-        dofmap_path,
-        xdofmap_path,
-        num_cells_global,
-        engine,
-        inc_cells,
-        inc_pos,
-        bs,
-    )
+    backend_args = {"dofmap": dofmap_path, "offsets": xdofmap_path}
+    if backend == "adios2":
+        backend_args.update({"engine": "HDF5"})
+    input_dofs = backend_cls.read_dofmap(filename, comm, name="", backend_args=backend_args)
+    # Map to xyz
+    mapped_dofmap = map_dofmap(input_dofs, bs).astype(np.int64)
+
+    # Extract dofmap data
+    local_cell_range = compute_local_range(comm, num_cells_global)
+    input_cell_positions = inc_cells - local_cell_range[0]
+    in_offsets = input_dofs.offsets
+    read_pos = (in_offsets[input_cell_positions] + inc_pos - in_offsets[0]).astype(np.int32)
+    input_dofs = mapped_dofmap[read_pos]
+    del input_cell_positions, read_pos
+
     # Send input dofs back to owning process
     data_to_mesh_comm = comm.Create_dist_graph_adjacent(
         dest_ranks.tolist(), source_ranks.tolist(), reorder=False
@@ -242,31 +150,12 @@ def send_cells_and_receive_dofmap_index(
     return sorted_global_dofs
 
 
-def read_mesh_geometry(io: adios2.ADIOS, infile: adios2.Engine, group: str):
-    for geometry_key in [f"{group}/geometry", f"{group}/coordinates"]:
-        if geometry_key in io.AvailableVariables().keys():
-            break
-    else:
-        raise KeyError(f"Mesh coordintes not found at '{group}/coordinates'")
-
-    geometry = io.InquireVariable(geometry_key)
-    shape = geometry.Shape()
-    local_range = compute_local_range(MPI.COMM_WORLD, shape[0])
-    geometry.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
-    mesh_geometry = np.empty(
-        (local_range[1] - local_range[0], shape[1]),
-        dtype=adios_to_numpy_dtype[geometry.Type()],
-    )
-
-    infile.Get(geometry, mesh_geometry, adios2.Mode.Sync)
-    return mesh_geometry
-
-
 def read_mesh_from_legacy_h5(
     filename: pathlib.Path,
     comm: MPI.Intracomm,
     group: str,
     cell_type: str = "tetrahedron",
+    backend: str = "adios2",
 ) -> dolfinx.mesh.Mesh:
     """
     Read mesh from `h5`-file generated by legacy DOLFIN `HDF5File.write` or `XDMF.write_checkpoint`.
@@ -278,41 +167,12 @@ def read_mesh_from_legacy_h5(
         cell_type: What type of cell type, by default tetrahedron.
     """
     # Make sure we use the HDF5File and check that the file is present
-    filename = pathlib.Path(filename).with_suffix(".h5")
-    if not filename.is_file():
-        raise FileNotFoundError(f"File {filename} does not exist")
+    check_file_exists(filename)
 
-    # Create ADIOS2 reader
-    adios = adios2.ADIOS(comm)
-    with ADIOSFile(
-        adios=adios,
-        filename=filename,
-        mode=adios2.Mode.Read,
-        io_name="Mesh reader",
-        engine="HDF5",
-    ) as adios_file:
-        # Get mesh topology (distributed)
-        if f"{group}/topology" not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Mesh topology not found at '{group}/topology'")
-        topology = adios_file.io.InquireVariable(f"{group}/topology")
-        shape = topology.Shape()
-        local_range = compute_local_range(MPI.COMM_WORLD, shape[0])
-        topology.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
-
-        mesh_topology = np.empty(
-            (local_range[1] - local_range[0], shape[1]),
-            dtype=topology.Type().strip("_t"),
-        )
-        adios_file.file.Get(topology, mesh_topology, adios2.Mode.Sync)
-
-        # Get mesh cell type
-        if f"{group}/topology/celltype" in adios_file.io.AvailableAttributes().keys():
-            celltype = adios_file.io.InquireAttribute(f"{group}/topology/celltype")
-            cell_type = celltype.DataString()[0]
-
-        # Get mesh geometry
-        mesh_geometry = read_mesh_geometry(io=adios_file.io, infile=adios_file.file, group=group)
-
+    backend_cls = get_backend(backend)
+    mesh_topology, mesh_geometry, ct = backend_cls.read_legacy_mesh(filename, comm, group)
+    if ct is not None:
+        cell_type = ct
     # Create DOLFINx mesh
     element = basix.ufl.element(
         basix.ElementFamily.P,
@@ -334,6 +194,7 @@ def read_function_from_legacy_h5(
     u: dolfinx.fem.Function,
     group: str = "mesh",
     step: typing.Optional[int] = None,
+    backend: typing.Literal["adios2", "h5py"] = "adios2",
 ):
     """
     Read function from a `h5`-file generated by legacy DOLFIN `HDF5File.write`
@@ -346,7 +207,7 @@ def read_function_from_legacy_h5(
         group : Group within the `h5` file where the function is stored, by default "mesh"
         step : The time step used when saving the checkpoint. If not provided it will assume that
             the function is saved as a regular function (i.e with `HDF5File.write`)
-
+        backend: The IO backend
     """
 
     # Make sure we use the HDF5File and check that the file is present
@@ -400,8 +261,8 @@ def read_function_from_legacy_h5(
         num_cells_global,
         f"/{group}/cell_dofs",
         f"/{group}/x_cell_dofs",
-        "HDF5",
         bs,
+        backend=backend,
     )
 
     # ----------------------Step 3---------------------------------
@@ -412,9 +273,9 @@ def read_function_from_legacy_h5(
     # NOTE: USE NBX in C++
 
     # Read input data
-    adios = adios2.ADIOS(comm)
-    local_array, starting_pos = read_array(
-        adios, filename, f"/{group}/{vector_group}", "HDF5", comm, legacy=True
+    backend_cls = get_backend(backend)
+    local_array, starting_pos = backend_cls.read_hdf5_array(
+        comm, filename, f"/{group}/{vector_group}"
     )
 
     # Send global dof indices to correct input process, and receive value of given dof

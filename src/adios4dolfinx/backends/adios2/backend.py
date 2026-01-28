@@ -524,18 +524,28 @@ def read_dofmap(
     filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None = None
 ) -> dolfinx.graph.AdjacencyList:
     backend_args = {} if backend_args is None else backend_args
+
+    # Handles legacy adios4dolfinx files, modern files, and custom location of dofmap.
     legacy = backend_args.get("legacy", False)
+    if (dofmap_path := backend_args.get("dofmap", None)) is None:
+        if legacy:
+            dofmap_path = "Dofmap"
+            xdofmap_path = "XDofmap"
+        else:
+            dofmap_path = f"{name}_dofmap"
+            xdofmap_path = f"{name}_XDofmap"
+
+    if (xdofmap_path := backend_args.get("offsets", None)) is None:
+        if legacy:
+            xdofmap_path = "XDofmap"
+        else:
+            xdofmap_path = f"{name}_XDofmap"
+
+    engine = backend_args.get("engine", "BP4")
 
     adios = adios2.ADIOS(comm)
     check_file_exists(filename)
 
-    if legacy:
-        dofmap_path = "Dofmap"
-        xdofmap_path = "XDofmap"
-    else:
-        dofmap_path = f"{name}_dofmap"
-        xdofmap_path = f"{name}_XDofmap"
-    engine = backend_args.get("engine", "BP4")
     return read_adjacency_list(adios, comm, filename, dofmap_path, xdofmap_path, engine=engine)
 
 
@@ -615,6 +625,16 @@ def read_cell_perms(
     )
 
     return cell_perms.astype(np.uint32)
+
+
+def read_hdf5_array(
+    comm: MPI.Intracomm,
+    filename: Path | str,
+    group: str,
+    backend_args: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, int]:
+    adios = adios2.ADIOS(comm)
+    return read_array(adios, filename, group, engine="HDF5", comm=comm, legacy=True)
 
 
 def write_function(
@@ -712,3 +732,58 @@ def write_function(
         adios_file.file.Put(time_var, t_arr)
         adios_file.file.PerformPuts()
         adios_file.file.EndStep()
+
+
+def read_legacy_mesh(
+    filename: Path, comm: MPI.Intracomm, group: str
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
+    # Create ADIOS2 reader
+    adios = adios2.ADIOS(comm)
+    with ADIOSFile(
+        adios=adios,
+        filename=filename,
+        mode=adios2.Mode.Read,
+        io_name="Mesh reader",
+        engine="HDF5",
+    ) as adios_file:
+        # Get mesh topology (distributed)
+        if f"{group}/topology" not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"Mesh topology not found at '{group}/topology'")
+        topology = adios_file.io.InquireVariable(f"{group}/topology")
+        shape = topology.Shape()
+        local_range = compute_local_range(comm, shape[0])
+        topology.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
+
+        mesh_topology = np.empty(
+            (local_range[1] - local_range[0], shape[1]),
+            dtype=topology.Type().strip("_t"),
+        )
+        adios_file.file.Get(topology, mesh_topology, adios2.Mode.Sync)
+
+        # Get mesh cell type
+        cell_type = None
+        if f"{group}/topology/celltype" in adios_file.io.AvailableAttributes().keys():
+            celltype = adios_file.io.InquireAttribute(f"{group}/topology/celltype")
+            cell_type = celltype.DataString()[0]
+
+        # Get mesh geometry
+
+        for geometry_key in [f"{group}/geometry", f"{group}/coordinates"]:
+            if geometry_key in adios_file.io.AvailableVariables().keys():
+                break
+        else:
+            raise KeyError(
+                f"Mesh coordinates not found at '{group}/coordinates' or '{group}/geometry'"
+            )
+
+        geometry = adios_file.io.InquireVariable(geometry_key)
+        shape = geometry.Shape()
+        local_range = compute_local_range(comm, shape[0])
+        geometry.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
+        mesh_geometry = np.empty(
+            (local_range[1] - local_range[0], shape[1]),
+            dtype=adios_to_numpy_dtype[geometry.Type()],
+        )
+        adios_file.file.Get(geometry, mesh_geometry, adios2.Mode.Sync)
+
+    return mesh_topology, mesh_geometry, cell_type

@@ -384,28 +384,38 @@ def read_dofmap(
     filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
 ) -> dolfinx.graph.AdjacencyList:
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_name = "mesh"  # Prepare for multiple meshes
-        if mesh_name not in h5file.keys():
-            raise KeyError(f"No mesh '{mesh_name}' found in {filename}")
-        mesh = h5file[mesh_name]
-        if "functions" not in mesh.keys():
-            raise KeyError(f"No functions stored in '{mesh_name}' in {filename}")
-        functions = mesh["functions"]
-        if name not in functions.keys():
-            raise KeyError(f"No function with name '{name}' on '{mesh_name}' stored in {filename}")
-        function = functions[name]
+        # If dofmap is read with full path, it is passed through backend_args
+        dofmap_key = backend_args.get("dofmap", None)
+        if dofmap_key is None:
+            mesh_name = "mesh"  # Prepare for multiple meshes
+            if mesh_name not in h5file.keys():
+                raise KeyError(f"No mesh '{mesh_name}' found in {filename}")
+            mesh = h5file[mesh_name]
+            if "functions" not in mesh.keys():
+                raise KeyError(f"No functions stored in '{mesh_name}' in {filename}")
+            functions = mesh["functions"]
+            if name not in functions.keys():
+                raise KeyError(
+                    f"No function with name '{name}' on '{mesh_name}' stored in {filename}"
+                )
+            function = functions[name]
+            offset_key = "dofmap_offsets"
+            dofmap_key = "dofmap"
+            offsets = function[offset_key]
+            dofmap = function[dofmap_key]
+        else:
+            offset_key = backend_args["offsets"]
+            dofmap = h5file[dofmap_key]
+            offsets = h5file[offset_key]
 
-        # Get offsets
-        offset_key = "dofmap_offsets"
-        dofmap_key = "dofmap"
-        offsets = function[offset_key]
         num_cells = offsets.shape[0] - 1
         local_range = compute_local_range(comm, num_cells)
 
         # First read in offsets based on the number of cells [0, num_cells_local]
-        glob_offsets = function[offset_key][local_range[0] : local_range[1] + 1]
+        glob_offsets = offsets[local_range[0] : local_range[1] + 1].flatten().astype(np.int64)
+
         # Then read the data based of offsets
-        dofmap_data = function[dofmap_key][glob_offsets[0] : glob_offsets[-1]]
+        dofmap_data = dofmap[glob_offsets[0] : glob_offsets[-1]].flatten()
 
     # Then make offsets local
     loc_offsets = (glob_offsets - glob_offsets[0]).astype(np.int32)
@@ -527,3 +537,54 @@ def write_function(
         data_group = function.create_group(f"{idx:d}")
         array = data_group.create_dataset("array", shape=[u.num_dofs_global], dtype=u.values.dtype)
         array[slice(*u.dof_range)] = u.values
+
+
+def read_legacy_mesh(
+    filename: Path, comm: MPI.Intracomm, group: str
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        if group not in h5file.keys():
+            raise KeyError(f"Could not find {group}  in {filename}.")
+        mesh = h5file[group]
+        if "topology" not in mesh.keys():
+            raise KeyError(f"Could not find '{group}/topology'  in {filename}.")
+
+        topology = mesh["topology"]
+        shape = topology.shape
+        local_range = compute_local_range(comm, shape[0])
+        mesh_topology = topology[slice(*local_range)].astype(np.int64)
+
+        # Get mesh cell type
+        cell_type = None
+        if "celltype" in topology.attrs.keys():
+            cell_type = topology.attrs["celltype"]
+            if isinstance(cell_type, np.bytes_):
+                cell_type = cell_type.decode("utf-8")
+
+        for geometry_key in ["geometry", "coordinates"]:
+            if geometry_key in mesh.keys():
+                break
+        else:
+            raise KeyError(
+                f"Could not find geometry in '/mesh/geometry' or '/mesh/coordinates'  in {filename}."
+            )
+        geometry = mesh[geometry_key]
+        g_shape = geometry.shape
+        local_g_range = compute_local_range(comm, g_shape[0])
+        mesh_geometry = geometry[slice(*local_g_range)]
+
+    return mesh_topology, mesh_geometry, cell_type
+
+
+def read_hdf5_array(
+    comm: MPI.Intracomm,
+    filename: Path | str,
+    group: str,
+    backend_args: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, int]:
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        data = h5file[group]
+        shape = data.shape[0]
+        local_range = compute_local_range(comm, shape)
+        out_data = data[slice(*local_range)].flatten()
+    return out_data, local_range[0]
