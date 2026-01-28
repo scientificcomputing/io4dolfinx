@@ -51,14 +51,12 @@ def read_write_snapshot(filename: Path):
     u.interpolate(f)
     u.name = "Current_solution"
     # Next, we store the solution to file
-    adios4dolfinx.snapshot_checkpoint(u, filename, adios4dolfinx.adios2_helpers.adios2.Mode.Write)
+    adios4dolfinx.snapshot_checkpoint(u, filename, adios4dolfinx.FileMode.write)
 
     # Next, we create a new function and load the solution into it
     u_new = dolfinx.fem.Function(V)
     u_new.name = "Read_solution"
-    adios4dolfinx.snapshot_checkpoint(
-        u_new, filename, adios4dolfinx.adios2_helpers.adios2.Mode.Read
-    )
+    adios4dolfinx.snapshot_checkpoint(u_new, filename, adios4dolfinx.FileMode.read)
 
     # Next, we verify that the solution is correct
     np.testing.assert_allclose(u_new.x.array, u.x.array, atol=np.finfo(float).eps)

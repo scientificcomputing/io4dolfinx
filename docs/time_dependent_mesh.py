@@ -52,7 +52,7 @@ def write_meshes(filename: Path):
     )
 
     # Write mesh to file, associated with time stamp 1.5
-    adios4dolfinx.write_mesh(filename, mesh, engine="BP4", time=1.5)
+    adios4dolfinx.write_mesh(filename, mesh, time=1.5)
     compute_volume(mesh, 1.5)
     mesh.geometry.x[:, 0] += 0.1 * mesh.geometry.x[:, 0]
     mesh.geometry.x[:, 1] += 0.3 * mesh.geometry.x[:, 1] * np.sin(mesh.geometry.x[:, 2])
@@ -60,9 +60,7 @@ def write_meshes(filename: Path):
     # Write mesh to file, associated with time stamp 3.3
     # Note that we set the mode to append, as we have already created the file
     # and we do not want to overwrite the existing data
-    adios4dolfinx.write_mesh(
-        filename, mesh, engine="BP4", time=3.3, mode=adios4dolfinx.adios2_helpers.adios2.Mode.Append
-    )
+    adios4dolfinx.write_mesh(filename, mesh, time=3.3, mode=adios4dolfinx.FileMode.append)
 
 
 # -

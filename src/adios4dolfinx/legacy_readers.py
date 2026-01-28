@@ -11,7 +11,6 @@ import typing
 
 from mpi4py import MPI
 
-import adios2
 import basix
 import dolfinx
 import numpy as np
@@ -19,9 +18,6 @@ import numpy.typing as npt
 import ufl
 
 from .backends import get_backend
-from .backends.adios2.helpers import (
-    resolve_adios_scope,
-)
 from .comm_helpers import send_dofs_and_recv_values
 from .utils import (
     check_file_exists,
@@ -30,8 +26,6 @@ from .utils import (
     compute_local_range,
     index_owner,
 )
-
-adios2 = resolve_adios_scope(adios2)
 
 __all__ = [
     "read_mesh_from_legacy_h5",

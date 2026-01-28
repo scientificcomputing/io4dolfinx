@@ -76,7 +76,7 @@ def write_function(
     adios4dolfinx.write_function_on_input_mesh(
         function_filename.with_suffix(".bp"),
         u,
-        mode=adios4dolfinx.adios2_helpers.adios2.Mode.Write,
+        mode=adios4dolfinx.FileMode.write,
         time=0.0,
         name="Output",
     )

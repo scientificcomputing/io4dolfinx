@@ -11,12 +11,10 @@ from pathlib import Path
 
 from mpi4py import MPI
 
-import adios2
 import dolfinx
 import numpy as np
 
 from .backends import FileMode, get_backend
-from .backends.adios2.helpers import resolve_adios_scope
 from .comm_helpers import numpy_to_mpi
 from .structures import FunctionData, MeshData
 from .utils import (
@@ -26,8 +24,6 @@ from .utils import (
     unroll_dofmap,
     unroll_insert_position,
 )
-
-adios2 = resolve_adios_scope(adios2)
 
 __all__ = ["write_function_on_input_mesh", "write_mesh_input_order"]
 
