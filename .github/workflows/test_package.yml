@@ -77,7 +77,7 @@ jobs:
           path: ./legacy_checkpoint
 
       - name: Install package
-        run: python3 -m pip install --break-system-packages .[test]
+        run: python3 -m pip install --no-binary=h5py --break-system-packages .[test]
 
       - name: Run tests
         run: |
