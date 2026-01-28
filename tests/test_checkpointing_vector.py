@@ -52,7 +52,15 @@ def non_simplex_mesh_3D(request):
 @pytest.mark.parametrize("degree", [1, 4])
 @pytest.mark.parametrize("read_comm", [MPI.COMM_SELF, MPI.COMM_WORLD])
 def test_read_write_2D(
-    read_comm, family, degree, is_complex, simplex_mesh_2D, get_dtype, write_function, read_function
+    read_comm,
+    family,
+    degree,
+    is_complex,
+    simplex_mesh_2D,
+    get_dtype,
+    write_function,
+    read_function,
+    backend,
 ):
     mesh = simplex_mesh_2D
     f_dtype = get_dtype(mesh.geometry.x.dtype, is_complex)
@@ -67,9 +75,9 @@ def test_read_write_2D(
             values[1] += 2j * x[0]
         return values
 
-    fname = write_function(mesh, el, f, f_dtype)
+    fname = write_function(mesh, el, f, f_dtype, backend=backend)
     MPI.COMM_WORLD.Barrier()
-    read_function(read_comm, el, f, fname, f_dtype)
+    read_function(read_comm, el, f, fname, f_dtype, backend=backend)
 
 
 @pytest.mark.parametrize("is_complex", [True, False])
@@ -77,7 +85,15 @@ def test_read_write_2D(
 @pytest.mark.parametrize("degree", [1, 4])
 @pytest.mark.parametrize("read_comm", [MPI.COMM_SELF, MPI.COMM_WORLD])
 def test_read_write_3D(
-    read_comm, family, degree, is_complex, simplex_mesh_3D, get_dtype, write_function, read_function
+    read_comm,
+    family,
+    degree,
+    is_complex,
+    simplex_mesh_3D,
+    get_dtype,
+    write_function,
+    read_function,
+    backend,
 ):
     mesh = simplex_mesh_3D
     f_dtype = get_dtype(mesh.geometry.x.dtype, is_complex)
@@ -93,9 +109,9 @@ def test_read_write_3D(
             values[1] += 2j * np.cos(x[2])
         return values
 
-    fname = write_function(mesh, el, f, dtype=f_dtype)
+    fname = write_function(mesh, el, f, dtype=f_dtype, backend=backend)
     MPI.COMM_WORLD.Barrier()
-    read_function(read_comm, el, f, fname, dtype=f_dtype)
+    read_function(read_comm, el, f, fname, dtype=f_dtype, backend=backend)
 
 
 @pytest.mark.parametrize("is_complex", [True, False])
@@ -111,6 +127,7 @@ def test_read_write_2D_quad(
     get_dtype,
     write_function,
     read_function,
+    backend,
 ):
     mesh = non_simplex_mesh_2D
     f_dtype = get_dtype(mesh.geometry.x.dtype, is_complex)
@@ -125,9 +142,9 @@ def test_read_write_2D_quad(
             values[1] += 2j * np.cos(x[2])
         return values
 
-    hash = write_function(mesh, el, f, f_dtype)
+    hash = write_function(mesh, el, f, f_dtype, backend=backend)
     MPI.COMM_WORLD.Barrier()
-    read_function(read_comm, el, f, hash, f_dtype)
+    read_function(read_comm, el, f, hash, f_dtype, backend=backend)
 
 
 @pytest.mark.parametrize("is_complex", [True, False])
@@ -143,6 +160,7 @@ def test_read_write_hex(
     get_dtype,
     write_function,
     read_function,
+    backend,
 ):
     mesh = non_simplex_mesh_3D
     f_dtype = get_dtype(mesh.geometry.x.dtype, is_complex)
@@ -158,9 +176,9 @@ def test_read_write_hex(
             values[2] -= 1j * x[1]
         return values
 
-    hash = write_function(mesh, el, f, dtype=f_dtype)
+    hash = write_function(mesh, el, f, dtype=f_dtype, backend=backend)
     MPI.COMM_WORLD.Barrier()
-    read_function(read_comm, el, f, hash, dtype=f_dtype)
+    read_function(read_comm, el, f, hash, dtype=f_dtype, backend=backend)
 
 
 @pytest.mark.parametrize("is_complex", [True, False])
@@ -176,6 +194,7 @@ def test_read_write_multiple(
     get_dtype,
     write_function,
     read_function,
+    backend,
 ):
     mesh = non_simplex_mesh_2D
     f_dtype = get_dtype(mesh.geometry.x.dtype, is_complex)
@@ -199,10 +218,10 @@ def test_read_write_multiple(
             values[1] += 2j * x[0] * x[1]
         return values
 
-    hash_f = write_function(mesh, el, f, dtype=f_dtype, name="f", append=False)
-    hash_g = write_function(mesh, el, g, dtype=f_dtype, name="g", append=True)
+    hash_f = write_function(mesh, el, f, dtype=f_dtype, name="f", append=False, backend=backend)
+    hash_g = write_function(mesh, el, g, dtype=f_dtype, name="g", append=True, backend=backend)
     assert hash_f == hash_g
 
     MPI.COMM_WORLD.Barrier()
-    read_function(read_comm, el, f, hash_f, dtype=f_dtype, name="f")
-    read_function(read_comm, el, g, hash_g, dtype=f_dtype, name="g")
+    read_function(read_comm, el, f, hash_f, dtype=f_dtype, name="f", backend=backend)
+    read_function(read_comm, el, g, hash_g, dtype=f_dtype, name="g", backend=backend)

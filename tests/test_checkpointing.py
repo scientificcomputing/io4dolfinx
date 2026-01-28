@@ -11,23 +11,6 @@ import pytest
 
 import adios4dolfinx
 
-backends = []
-try:
-    import adios2
-
-    if adios2.is_build_with_mpi:
-        backends.append("adios2")
-except ModuleNotFoundError:
-    pass
-try:
-    import h5py
-
-    if h5py.get_config().mpi:
-        backends.append("h5py")
-except ModuleNotFoundError:
-    pass
-
-
 dtypes = [np.float64, np.float32]  # Mesh geometry dtypes
 write_comm = [MPI.COMM_SELF, MPI.COMM_WORLD]  # Communicators for creating mesh
 
@@ -59,7 +42,6 @@ def mesh_3D(request):
     return mesh
 
 
-@pytest.mark.parametrize("backend", backends)
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["Lagrange", "DG"])
 @pytest.mark.parametrize("degree", [1, 4])
@@ -101,7 +83,6 @@ def test_read_write_P_2D(
     read_function(read_comm, el, f, hash, f_dtype, backend=backend)
 
 
-@pytest.mark.parametrize("backend", backends)
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["Lagrange", "DG"])
 @pytest.mark.parametrize("degree", [1, 4])
@@ -144,7 +125,6 @@ def test_read_write_P_3D(
     read_function(read_comm, el, f, hash, f_dtype, backend=backend)
 
 
-@pytest.mark.parametrize("backend", backends)
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["Lagrange", "DG"])
 @pytest.mark.parametrize("degree", [1, 4])
@@ -197,7 +177,6 @@ def test_read_write_P_2D_time(
     read_function_time_dep(read_comm, el, f0, f1, t0, t1, hash, f_dtype, backend)
 
 
-@pytest.mark.parametrize("backend", backends)
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["Lagrange", "DG"])
 @pytest.mark.parametrize("degree", [1, 4])
@@ -252,7 +231,6 @@ def test_read_write_P_3D_time(
     read_function_time_dep(read_comm, el, g, f, t0, t1, hash, f_dtype, backend)
 
 
-@pytest.mark.parametrize("backend", backends)
 @pytest.mark.parametrize(
     "func, args",
     [
@@ -273,7 +251,6 @@ def test_read_nonexisting_file_raises_FileNotFoundError(func, args, backend):
         func(file, *args[1:])
 
 
-@pytest.mark.parametrize("backend", backends)
 def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
     if backend == "adios":
         suffix = ".bp"
@@ -295,7 +272,6 @@ def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
     # )
 
 
-@pytest.mark.parametrize("backend", backends)
 def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
     if backend == "adios":
         suffix = ".bp"

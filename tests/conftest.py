@@ -11,6 +11,30 @@ import pytest
 import adios4dolfinx
 
 
+def find_backends():
+    backends = []
+    try:
+        import adios2
+
+        if adios2.is_built_with_mpi:
+            backends.append("adios2")
+    except ModuleNotFoundError:
+        pass
+    try:
+        import h5py
+
+        if h5py.get_config().mpi:
+            backends.append("h5py")
+    except ModuleNotFoundError:
+        pass
+    return backends
+
+
+@pytest.fixture(params=find_backends(), scope="module")
+def backend(request):
+    return request.param
+
+
 @pytest.fixture(scope="module")
 def cluster():
     cluster = ipp.Cluster(engines="mpi", n=2)

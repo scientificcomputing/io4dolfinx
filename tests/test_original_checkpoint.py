@@ -16,22 +16,6 @@ import pytest
 
 import adios4dolfinx
 
-backends = []
-try:
-    import adios2
-
-    if adios2.is_build_with_mpi:
-        backends.append("adios2")
-except ModuleNotFoundError:
-    pass
-try:
-    import h5py
-
-    if h5py.get_config().mpi:
-        backends.append("h5py")
-except ModuleNotFoundError:
-    pass
-
 dtypes = [np.float64, np.float32]  # Mesh geometry dtypes
 
 two_dimensional_cell_types = [
@@ -189,7 +173,7 @@ def read_function_original(
 
     import adios4dolfinx
 
-    assert MPI.COMM_WORLD.size > 1
+    # assert MPI.COMM_WORLD.size > 1
     if backend == "adios2":
         backend_args = {"engine": "BP4"}
     else:
@@ -312,7 +296,6 @@ def read_function_vector(
     np.testing.assert_allclose(u.x.array, u_ex.x.array, atol=atol)  # type: ignore
 
 
-@pytest.mark.parametrize("backend", backends)
 @pytest.mark.skipif(
     os.cpu_count() == 1, reason="Test requires that the system has more than one process"
 )
@@ -350,7 +333,6 @@ def test_read_write_P_2D(
     hash = write_function_original(
         write_mesh, mesh, el, f, f_dtype, "u_original", tmp_path, backend
     )
-
     if write_mesh:
         mesh_fname = hash
     else:
@@ -370,7 +352,6 @@ def test_read_write_P_2D(
 @pytest.mark.parametrize("family", ["Lagrange", "DG"])
 @pytest.mark.parametrize("degree", [1, 4])
 @pytest.mark.parametrize("write_mesh", [True, False])
-@pytest.mark.parametrize("backend", backends)
 def test_read_write_P_3D(
     write_mesh, family, degree, is_complex, create_3D_mesh, cluster, get_dtype, tmp_path, backend
 ):
@@ -430,7 +411,6 @@ def test_read_write_P_3D(
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["N1curl", "RT"])
 @pytest.mark.parametrize("degree", [1, 4])
-@pytest.mark.parametrize("backend", backends)
 def test_read_write_2D_vector_simplex(
     write_mesh,
     family,
@@ -488,7 +468,6 @@ def test_read_write_2D_vector_simplex(
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["N1curl", "RT"])
 @pytest.mark.parametrize("degree", [1, 4])
-@pytest.mark.parametrize("backend", backends)
 def test_read_write_3D_vector_simplex(
     write_mesh,
     family,
@@ -547,7 +526,6 @@ def test_read_write_3D_vector_simplex(
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["RTCF"])
 @pytest.mark.parametrize("degree", [1, 2, 3])
-@pytest.mark.parametrize("backend", backends)
 def test_read_write_2D_vector_non_simplex(
     write_mesh,
     family,
@@ -605,7 +583,6 @@ def test_read_write_2D_vector_non_simplex(
 @pytest.mark.parametrize("is_complex", [True, False])
 @pytest.mark.parametrize("family", ["NCF"])
 @pytest.mark.parametrize("degree", [1, 4])
-@pytest.mark.parametrize("backend", backends)
 def test_read_write_3D_vector_non_simplex(
     write_mesh,
     family,

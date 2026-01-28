@@ -1,6 +1,5 @@
 from mpi4py import MPI
 
-import adios2
 import numpy as np
 import pytest
 from packaging.version import parse as _v
@@ -8,13 +7,14 @@ from packaging.version import parse as _v
 import adios4dolfinx
 
 
-@pytest.mark.parametrize("backend", ["h5py", "adios2"])
-@pytest.mark.skipif(
-    _v(np.__version__) >= _v("2.0.0") and _v(adios2.__version__) < _v("2.10.2"),
-    reason="Cannot use numpy>=2.0.0 and adios2<2.10.2",
-)
 @pytest.mark.parametrize("comm", [MPI.COMM_SELF, MPI.COMM_WORLD])
 def test_read_write_attributes(comm, backend, tmp_path):
+    if backend == "adios2":
+        import adios2
+
+        if _v(np.__version__) >= _v("2.0.0") and _v(adios2.__version__) < _v("2.10.2"):
+            pytest.skip(reason="Cannot use numpy>=2.0.0 and adios2<2.10.2")
+
     attributes1 = {
         "a": np.array([1, 2, 3], dtype=np.uint8),
         "b": np.array([4, 5], dtype=np.uint8),
