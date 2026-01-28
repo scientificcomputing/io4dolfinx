@@ -177,7 +177,7 @@ def test_adios4dolfinx_legacy():
 
     V = dolfinx.fem.functionspace(mesh, el)
     u = dolfinx.fem.Function(V)
-    read_function(path, u, **backend_args)
+    read_function(path, u, backend_args=backend_args, backend="adios2")
 
     u_ex = dolfinx.fem.Function(V)
     u_ex.interpolate(f)
