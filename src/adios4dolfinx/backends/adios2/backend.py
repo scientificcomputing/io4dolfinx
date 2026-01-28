@@ -527,6 +527,8 @@ def read_dofmap(
 
     # Handles legacy adios4dolfinx files, modern files, and custom location of dofmap.
     legacy = backend_args.get("legacy", False)
+    xdofmap_path: str | None
+    dofmap_path: str | None
     if (dofmap_path := backend_args.get("dofmap", None)) is None:
         if legacy:
             dofmap_path = "Dofmap"
@@ -545,7 +547,7 @@ def read_dofmap(
 
     adios = adios2.ADIOS(comm)
     check_file_exists(filename)
-
+    assert isinstance(xdofmap_path, str)
     return read_adjacency_list(adios, comm, filename, dofmap_path, xdofmap_path, engine=engine)
 
 
@@ -735,7 +737,7 @@ def write_function(
 
 
 def read_legacy_mesh(
-    filename: Path, comm: MPI.Intracomm, group: str
+    filename: Path | str, comm: MPI.Intracomm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
     # Create ADIOS2 reader
     adios = adios2.ADIOS(comm)
@@ -797,6 +799,7 @@ def snapshot_checkpoint(
 ):
     adios_mode = convert_file_mode(mode)
     adios = adios2.ADIOS(u.function_space.mesh.comm)
+    backend_args = {} if backend_args is None else backend_args
     io_name = backend_args.get("io_name", "SnapshotCheckPoint")
     engine = backend_args.get("engine", "BP4")
     with ADIOSFile(

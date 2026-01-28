@@ -53,7 +53,7 @@ def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.i
         for k in range(bs):
             for j in range(num_dofs_local):
                 mapped_dofmap[int(pos_begin + j * bs + k)] = dofs_i[int(num_dofs_local * k + j)]
-    return mapped_dofmap
+    return mapped_dofmap.astype(np.int64)
 
 
 def send_cells_and_receive_dofmap_index(
@@ -269,7 +269,7 @@ def read_function_from_legacy_h5(
     # Read input data
     backend_cls = get_backend(backend)
     local_array, starting_pos = backend_cls.read_hdf5_array(
-        comm, filename, f"/{group}/{vector_group}"
+        comm, filename, f"/{group}/{vector_group}", backend_args=None
     )
 
     # Send global dof indices to correct input process, and receive value of given dof

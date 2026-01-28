@@ -383,6 +383,7 @@ def read_meshtags_data(
 def read_dofmap(
     filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
 ) -> dolfinx.graph.AdjacencyList:
+    backend_args = {} if backend_args is None else backend_args
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         # If dofmap is read with full path, it is passed through backend_args
         dofmap_key = backend_args.get("dofmap", None)
@@ -540,7 +541,7 @@ def write_function(
 
 
 def read_legacy_mesh(
-    filename: Path, comm: MPI.Intracomm, group: str
+    filename: Path | str, comm: MPI.Intracomm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         if group not in h5file.keys():
@@ -566,7 +567,8 @@ def read_legacy_mesh(
                 break
         else:
             raise KeyError(
-                f"Could not find geometry in '/mesh/geometry' or '/mesh/coordinates'  in {filename}."
+                "Could not find geometry in '/mesh/geometry' or '/mesh/coordinates'"
+                + f" in {filename}."
             )
         geometry = mesh[geometry_key]
         g_shape = geometry.shape
