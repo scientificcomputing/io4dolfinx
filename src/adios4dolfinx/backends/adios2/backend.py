@@ -787,3 +787,41 @@ def read_legacy_mesh(
         adios_file.file.Get(geometry, mesh_geometry, adios2.Mode.Sync)
 
     return mesh_topology, mesh_geometry, cell_type
+
+
+def snapshot_checkpoint(
+    filename: Path | str,
+    mode: FileMode,
+    u: dolfinx.fem.Function,
+    backend_args: dict[str, Any] | None,
+):
+    adios_mode = convert_file_mode(mode)
+    adios = adios2.ADIOS(u.function_space.mesh.comm)
+    io_name = backend_args.get("io_name", "SnapshotCheckPoint")
+    engine = backend_args.get("engine", "BP4")
+    with ADIOSFile(
+        adios=adios,
+        filename=filename,
+        mode=adios_mode,
+        io_name=io_name,
+        engine=engine,
+    ) as adios_file:
+        if adios_mode == adios2.Mode.Write:
+            dofmap = u.function_space.dofmap
+            num_dofs_local = dofmap.index_map.size_local * dofmap.index_map_bs
+            local_dofs = u.x.array[:num_dofs_local].copy()
+
+            # Write to file
+            adios_file.file.BeginStep()
+            dofs = adios_file.io.DefineVariable("dofs", local_dofs, count=[num_dofs_local])
+            adios_file.file.Put(dofs, local_dofs, adios2.Mode.Sync)
+            adios_file.file.EndStep()
+        elif adios_mode == adios2.Mode.Read:
+            adios_file.file.BeginStep()
+            in_variable = adios_file.io.InquireVariable("dofs")
+            in_variable.SetBlockSelection(u.function_space.mesh.comm.rank)
+            adios_file.file.Get(in_variable, u.x.array, adios2.Mode.Sync)
+            adios_file.file.EndStep()
+            u.x.scatter_forward()
+        else:
+            raise NotImplementedError(f"Mode {mode} is not implemented for snapshot checkpoint")

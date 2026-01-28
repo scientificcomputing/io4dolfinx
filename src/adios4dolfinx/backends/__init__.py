@@ -146,14 +146,18 @@ class IOBackend(Protocol):
     ): ...
 
     def read_legacy_mesh(
-        self, filename: Path, comm: MPI.Intracomm, group: str
+        self, filename: Path | str, comm: MPI.Intracomm, group: str
     ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
         ...
         """Read in the mesh topology, geometry and (optionally) cell type from a legacy DOLFIN HDF5-file."""
 
-    # read_function_from_legacy_h5
-    # read_mesh_from_legacy_h5
-    # snapshot_checkpoint
+    def snapshot_checkpoint(
+        self,
+        filename: Path | str,
+        mode: FileMode,
+        u: dolfinx.fem.Function,
+        backend_args: dict[str, Any] | None,
+    ): ...
 
 
 def get_backend(backend: str) -> IOBackend:

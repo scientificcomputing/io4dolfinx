@@ -588,3 +588,29 @@ def read_hdf5_array(
         local_range = compute_local_range(comm, shape)
         out_data = data[slice(*local_range)].flatten()
     return out_data, local_range[0]
+
+
+def snapshot_checkpoint(
+    filename: Path | str,
+    mode: FileMode,
+    u: dolfinx.fem.Function,
+    backend_args: dict[str, Any] | None,
+):
+    comm = u.function_space.mesh.comm
+    dofmap = u.function_space.dofmap
+    local_range = np.array(dofmap.index_map.local_range) * dofmap.index_map_bs
+    num_dofs_local = local_range[1] - local_range[0]
+    num_dofs_global = dofmap.index_map.size_global * dofmap.index_map_bs
+    h5mode = convert_file_mode(mode)
+    if h5mode == "w":
+        with h5pyfile(filename, filemode=h5mode, comm=comm, force_serial=False) as h5file:
+            local_dofs = u.x.array[:num_dofs_local].copy()
+            data = h5file.create_group("snapshot")
+            dataset = data.create_dataset("dofs", shape=num_dofs_global, dtype=local_dofs.dtype)
+            dataset[slice(*local_range)] = local_dofs
+    elif h5mode == "r":
+        with h5pyfile(filename, filemode=h5mode, comm=comm, force_serial=False) as h5file:
+            data = h5file["snapshot"]["dofs"]
+            assert data.shape[0] == num_dofs_global
+            u.x.array[:num_dofs_local] = data[slice(*local_range)]
+            u.x.scatter_forward()

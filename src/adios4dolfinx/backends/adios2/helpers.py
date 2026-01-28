@@ -1,3 +1,7 @@
+"""
+Helpers reading/writing data with ADIOS2
+"""
+
 from __future__ import annotations
 
 import shutil
@@ -25,11 +29,15 @@ def resolve_adios_scope(adios2):
 
 adios2 = resolve_adios_scope(adios2)
 
-"""
-Helpers reading/writing data with ADIOS2
-"""
 
-__all__ = ["read_array", "read_adjacency_list", "read_cell_perms", "adios_to_numpy_dtype"]
+__all__ = [
+    "AdiosFile",
+    "ADIOSFile",
+    "check_variable_exists",
+    "read_array",
+    "read_adjacency_list",
+    "adios_to_numpy_dtype",
+]
 
 adios_to_numpy_dtype = {
     "float": np.float32,

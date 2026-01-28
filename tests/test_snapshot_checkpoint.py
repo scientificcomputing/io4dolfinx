@@ -2,16 +2,21 @@ from pathlib import Path
 
 from mpi4py import MPI
 
-import adios2
 import basix.ufl
 import dolfinx
 import numpy as np
 import pytest
 
-from adios4dolfinx import snapshot_checkpoint
-from adios4dolfinx.backends.adios2.helpers import resolve_adios_scope
+from adios4dolfinx import FileMode, snapshot_checkpoint
 
-adios2 = resolve_adios_scope(adios2)
+
+def suffix(backend: str) -> str:
+    if backend == "adios2":
+        return ".bp"
+    elif backend == "h5py":
+        return ".h5"
+    else:
+        raise NotImplementedError(f"Unsupported backend {backend}")
 
 
 triangle = dolfinx.mesh.CellType.triangle
@@ -24,7 +29,7 @@ hex = dolfinx.mesh.CellType.hexahedron
     "cell_type, family", [(triangle, "N1curl"), (triangle, "RT"), (quad, "RTCF")]
 )
 @pytest.mark.parametrize("degree", [1, 4])
-def test_read_write_2D(family, degree, cell_type, tmp_path):
+def test_read_write_2D(family, degree, cell_type, tmp_path, backend):
     mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 10, 10, cell_type=cell_type)
     el = basix.ufl.element(family, mesh.basix_cell(), degree)
 
@@ -36,17 +41,17 @@ def test_read_write_2D(family, degree, cell_type, tmp_path):
     u.interpolate(f)
 
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-    file = fname / Path("snapshot_2D_vs.bp")
-    snapshot_checkpoint(u, file, adios2.Mode.Write)
+    file = fname / Path("snapshot_2D_vs").with_suffix(suffix(backend))
+    snapshot_checkpoint(u, file, FileMode.write, backend=backend)
 
     v = dolfinx.fem.Function(V)
-    snapshot_checkpoint(v, file, adios2.Mode.Read)
+    snapshot_checkpoint(v, file, FileMode.read, backend=backend)
     assert np.allclose(u.x.array, v.x.array)
 
 
 @pytest.mark.parametrize("cell_type, family", [(tetra, "N1curl"), (tetra, "RT"), (hex, "NCF")])
 @pytest.mark.parametrize("degree", [1, 4])
-def test_read_write_3D(family, degree, cell_type, tmp_path):
+def test_read_write_3D(family, degree, cell_type, tmp_path, backend):
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, 3, 3, 3, cell_type=cell_type)
     el = basix.ufl.element(family, mesh.basix_cell(), degree)
 
@@ -58,11 +63,11 @@ def test_read_write_3D(family, degree, cell_type, tmp_path):
     u.interpolate(f)
 
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-    file = fname / Path("snapshot_3D_vs.bp")
-    snapshot_checkpoint(u, file, adios2.Mode.Write)
+    file = fname / Path("snapshot_3D_vs").with_suffix(suffix(backend))
+    snapshot_checkpoint(u, file, FileMode.write, backend=backend)
 
     v = dolfinx.fem.Function(V)
-    snapshot_checkpoint(v, file, adios2.Mode.Read)
+    snapshot_checkpoint(v, file, FileMode.read, backend=backend)
     assert np.allclose(u.x.array, v.x.array)
 
 
@@ -71,7 +76,7 @@ def test_read_write_3D(family, degree, cell_type, tmp_path):
 )
 @pytest.mark.parametrize("family", ["Lagrange", "DG"])
 @pytest.mark.parametrize("degree", [1, 4])
-def test_read_write_P_2D(family, degree, cell_type, tmp_path):
+def test_read_write_P_2D(family, degree, cell_type, tmp_path, backend):
     mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 5, 5, cell_type=cell_type)
     el = basix.ufl.element(family, mesh.basix_cell(), degree, shape=(mesh.geometry.dim,))
 
@@ -83,11 +88,11 @@ def test_read_write_P_2D(family, degree, cell_type, tmp_path):
     u.interpolate(f)
 
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-    file = fname / Path("snapshot_2D_p.bp")
-    snapshot_checkpoint(u, file, adios2.Mode.Write)
+    file = fname / Path("snapshot_2D_p").with_suffix(suffix(backend))
+    snapshot_checkpoint(u, file, FileMode.write, backend=backend)
 
     v = dolfinx.fem.Function(V)
-    snapshot_checkpoint(v, file, adios2.Mode.Read)
+    snapshot_checkpoint(v, file, FileMode.read, backend=backend)
     assert np.allclose(u.x.array, v.x.array)
 
 
@@ -96,7 +101,7 @@ def test_read_write_P_2D(family, degree, cell_type, tmp_path):
 )
 @pytest.mark.parametrize("family", ["Lagrange", "DG"])
 @pytest.mark.parametrize("degree", [1, 4])
-def test_read_write_P_3D(family, degree, cell_type, tmp_path):
+def test_read_write_P_3D(family, degree, cell_type, tmp_path, backend):
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, 5, 5, 5, cell_type=cell_type)
     el = basix.ufl.element(family, mesh.basix_cell(), degree, shape=(mesh.geometry.dim,))
 
@@ -108,9 +113,10 @@ def test_read_write_P_3D(family, degree, cell_type, tmp_path):
     u.interpolate(f)
 
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-    file = fname / Path("snapshot_3D_p.bp")
-    snapshot_checkpoint(u, file, adios2.Mode.Write)
+    file = fname / Path("snapshot_3D_p").with_suffix(suffix(backend))
+
+    snapshot_checkpoint(u, file, FileMode.write, backend=backend)
 
     v = dolfinx.fem.Function(V)
-    snapshot_checkpoint(v, file, adios2.Mode.Read)
+    snapshot_checkpoint(v, file, FileMode.read, backend=backend)
     assert np.allclose(u.x.array, v.x.array)
