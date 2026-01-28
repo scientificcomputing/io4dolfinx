@@ -38,7 +38,7 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
     if comm is None:
         comm = MPI.COMM_WORLD
 
-    if h5py.h5.get_config().mpi and comm.size > 1 and not force_serial:
+    if h5py.h5.get_config().mpi and not force_serial:
         h5file = h5py.File(h5name, filemode, driver="mpio", comm=comm)
     else:
         if comm.size > 1 and not force_serial:
@@ -90,12 +90,13 @@ def write_attributes(
         attributes: Dictionary of attributes to write to file
         engine: ADIOS2 engine to use
     """
-
-    with h5pyfile(filename, filemode="a", comm=comm, force_serial=False) as h5file:
-        if name in h5file.keys():
-            group = h5file[name]
-        else:
+    filemode = "a" if Path(filename).exists() else "w"
+    with h5pyfile(filename, filemode=filemode, comm=comm, force_serial=False) as h5file:
+        if name not in h5file.keys():
             group = h5file.create_group(name, track_order=True)
+        comm.barrier()
+        group = h5file[name]
+
         for key, val in attributes.items():
             group.attrs[key] = val
 

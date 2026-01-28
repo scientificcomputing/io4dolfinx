@@ -24,9 +24,10 @@ def test_read_write_attributes(comm, backend, tmp_path):
         "d": np.array([7, 8, 9, 10], dtype=np.float64),
     }
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-    fname = fname / "atributes"
+    fname = fname / "attributes"
     suffix = ".bp" if backend == "adios2" else ".h5"
     file = fname.with_suffix(suffix)
+    # print(comm.size)
 
     adios4dolfinx.write_attributes(
         comm=comm, filename=file, name="group1", attributes=attributes1, backend=backend
@@ -34,20 +35,19 @@ def test_read_write_attributes(comm, backend, tmp_path):
     adios4dolfinx.write_attributes(
         comm=comm, filename=file, name="group2", attributes=attributes2, backend=backend
     )
-    MPI.COMM_WORLD.Barrier()
-    # loaded_attributes1 = adios4dolfinx.read_attributes(
-    #     comm=comm, filename=file, name="group1", backend=backend
-    # )
-    # loaded_attributes2 = adios4dolfinx.read_attributes(
-    #     comm=comm, filename=file, name="group2", backend=backend
-    # )
+    loaded_attributes1 = adios4dolfinx.read_attributes(
+        comm=comm, filename=file, name="group1", backend=backend
+    )
+    loaded_attributes2 = adios4dolfinx.read_attributes(
+        comm=comm, filename=file, name="group2", backend=backend
+    )
 
-    # for k, v in loaded_attributes1.items():
-    #     assert np.allclose(v, attributes1[k])
-    # for k, v in attributes1.items():
-    #     assert np.allclose(v, loaded_attributes1[k])
+    for k, v in loaded_attributes1.items():
+        assert np.allclose(v, attributes1[k])
+    for k, v in attributes1.items():
+        assert np.allclose(v, loaded_attributes1[k])
 
-    # for k, v in loaded_attributes2.items():
-    #     assert np.allclose(v, attributes2[k])
-    # for k, v in attributes2.items():
-    #     assert np.allclose(v, loaded_attributes2[k])
+    for k, v in loaded_attributes2.items():
+        assert np.allclose(v, attributes2[k])
+    for k, v in attributes2.items():
+        assert np.allclose(v, loaded_attributes2[k])
