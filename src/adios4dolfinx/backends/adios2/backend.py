@@ -293,14 +293,15 @@ def read_mesh_data(
     """
 
     adios = adios2.ADIOS(comm)
-    backend_args = backend_args if backend_args is not None else {}
-    legacy = backend_args.pop("legacy", False)
-    io_name = backend_args.pop("io_name", "MeshReader")
+    backend_args = get_default_backend_args(backend_args)
+    legacy = backend_args.get("legacy", False)
+    io_name = backend_args.get("io_name", "MeshReader")
+    engine = backend_args["engine"]
     with ADIOSFile(
         adios=adios,
         filename=filename,
         mode=adios2.Mode.Read,
-        **backend_args,
+        engine=engine,
         io_name=io_name,
     ) as adios_file:
         # Get time independent mesh variables (mesh topology and cell type info) first
@@ -410,13 +411,14 @@ def write_meshtags(
     backend_args: dict[str, Any] | None = None,
 ):
     backend_args = {} if backend_args is None else backend_args
-    io_name = backend_args.pop("io_name", "MeshTagWriter")
+    io_name = backend_args.get("io_name", "MeshTagWriter")
+    engine = backend_args.get("engine", "BP4")
     adios = adios2.ADIOS(comm)
     with ADIOSFile(
         adios=adios,
         filename=filename,
         mode=adios2.Mode.Append,
-        **backend_args,
+        engine=engine,
         io_name=io_name,
     ) as adios_file:
         adios_file.file.BeginStep()
@@ -452,8 +454,8 @@ def read_meshtags_data(
 ) -> MeshTagsData:
     adios = adios2.ADIOS(comm)
     backend_args = {} if backend_args is None else backend_args
-    io_name = backend_args.pop("io_name", "MeshTagsReader")
-    engine = backend_args["engine"]
+    io_name = backend_args.get("io_name", "MeshTagsReader")
+    engine = backend_args.get("engine", "BP4")
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -532,10 +534,8 @@ def read_dofmap(
     if (dofmap_path := backend_args.get("dofmap", None)) is None:
         if legacy:
             dofmap_path = "Dofmap"
-            xdofmap_path = "XDofmap"
         else:
             dofmap_path = f"{name}_dofmap"
-            xdofmap_path = f"{name}_XDofmap"
 
     if (xdofmap_path := backend_args.get("offsets", None)) is None:
         if legacy:
