@@ -73,7 +73,9 @@ jobs:
           path: ./legacy_checkpoint
 
       - name: Install package
-        run: python3 -m pip install --no-binary=h5py --break-system-packages .[test]
+        run: |
+          HDF5_MPI=ON HDF5_PKGCONFIG_NAME="hdf5" python3 -m pip install h5py --break-system-packages --no-build-isolation --no-binary=h5py
+          python3 -m pip install --break-system-packages .[test]
 
       - name: Run tests
         run: |
