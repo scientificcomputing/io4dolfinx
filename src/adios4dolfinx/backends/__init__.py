@@ -1,7 +1,7 @@
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Protocol
-
+from typing import Any, Protocol
+from importlib import import_module
 from mpi4py import MPI
 
 import dolfinx
@@ -150,7 +150,7 @@ class IOBackend(Protocol):
     # snapshot_checkpoint
 
 
-def get_backend(backend: Literal["h5py", "adios2"]) -> IOBackend:
+def get_backend(backend: str) -> IOBackend:
     if backend == "h5py":
         from .h5py import backend as H5PYInterface
 
@@ -160,4 +160,4 @@ def get_backend(backend: Literal["h5py", "adios2"]) -> IOBackend:
 
         return ADIOS2Interface
     else:
-        raise NotImplementedError(f"Backend: {backend} not implemented")
+        return import_module(backend)

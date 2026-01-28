@@ -9,16 +9,13 @@ from typing import Any, Literal
 
 from mpi4py import MPI
 
-import adios2
 import dolfinx
 import numpy as np
 from packaging.version import Version
 
 from .backends import FileMode, get_backend
-from .backends.adios2.helpers import resolve_adios_scope
 from .structures import FunctionData, MeshData
 
-adios2 = resolve_adios_scope(adios2)
 
 
 def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: bool) -> MeshData:

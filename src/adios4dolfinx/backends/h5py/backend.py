@@ -400,7 +400,6 @@ def read_dofmap(
 
         # First read in offsets based on the number of cells [0, num_cells_local]
         glob_offsets = function[offset_key][local_range[0] : local_range[1] + 1]
-
         # Then read the data based of offsets
         dofmap_data = function[dofmap_key][glob_offsets[0] : glob_offsets[-1]]
 
@@ -429,7 +428,7 @@ def read_dofs(
                 f"No function with name '{name}' on '{mesh_name}' stored in {filename}"
             )
         function = functions[name]
-        timestamps = function.attrs["Timestamps"]
+        timestamps = function.attrs["timestamps"]
         idx = np.flatnonzero(np.isclose(timestamps, time))
         if len(idx) != 1:
             raise RuntimeError("Could not find {name}(t={time}) on grid {mesh_name} in {filename}.")
@@ -506,7 +505,7 @@ def write_function(
 
         if not dofmap_offsets_exists:
             dofmap_offsets = function.create_dataset(
-                "dofmap_offsets", shape=[u.num_cells_global + 1]
+                "dofmap_offsets", shape=[u.num_cells_global + 1], dtype=np.int64
             )
             dofmap_offsets[u.local_cell_range[0] : u.local_cell_range[1] + 1] = u.dofmap_offsets
 
