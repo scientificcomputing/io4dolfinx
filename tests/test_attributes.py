@@ -23,7 +23,7 @@ def test_read_write_attributes(comm, backend, tmp_path):
         "c": np.array([6], dtype=np.uint8),
         "d": np.array([7, 8, 9, 10], dtype=np.float64),
     }
-    fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
+    fname = comm.bcast(tmp_path, root=0)
     fname = fname / "attributes"
     suffix = ".bp" if backend == "adios2" else ".h5"
     file = fname.with_suffix(suffix)

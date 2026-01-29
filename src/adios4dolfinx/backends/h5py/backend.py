@@ -47,10 +47,12 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
                 "If you really want to do this, turn on the `force_serial` flag.",
             )
         h5file = h5py.File(h5name, filemode)
+
     try:
         yield h5file
     finally:
-        h5file.close()
+        if h5file.id:
+            h5file.close()
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -95,8 +97,7 @@ def write_attributes(
     filemode = "a" if Path(filename).exists() else "w"
     with h5pyfile(filename, filemode=filemode, comm=comm, force_serial=False) as h5file:
         if name not in h5file.keys():
-            group = h5file.create_group(name, track_order=True)
-        comm.barrier()
+            h5file.create_group(name, track_order=True)
         group = h5file[name]
 
         for key, val in attributes.items():
