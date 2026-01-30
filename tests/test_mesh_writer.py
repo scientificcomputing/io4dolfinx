@@ -121,6 +121,7 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
         [ufl.ds, ufl.dx] if ghost_mode is dolfinx.mesh.GhostMode.none else [ufl.ds, ufl.dS, ufl.dx]
     )
     for measure in measures:
+        print(mesh_adios, mesh_adios.ufl_domain().ufl_coordinate_element())
         c_adios = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_adios)))
         c_ref = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh)))
         c_xdmf = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_xdmf)))
