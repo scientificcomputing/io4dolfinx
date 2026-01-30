@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import ufl
 
-from adios4dolfinx import FileMode, read_mesh, write_mesh
+from adios4dolfinx import FileMode, read_mesh, utils, write_mesh
 
 
 @pytest.mark.parametrize(
@@ -23,10 +23,14 @@ from adios4dolfinx import FileMode, read_mesh, write_mesh
 @pytest.mark.parametrize("store_partition", [True, False])
 def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_partition):
     N = 7
+
+    if backend == "adios2" and encoder == "HDF5" and utils.get_hdf5_version().major >= 2:
+        pytest.skip("HDF5 version >= 2 is not supported due to ADIOS2 limitations.")
     # Consistent tmp dir across processes
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
     file = fname / f"{backend}_mesh_{encoder}_{store_partition}"
-    xdmf_file = fname / "xdmf_mesh_{encode}_{ghost_mode}_{store_partition}"
+    xdmf_file = fname / f"xdmf_mesh_{encoder}_{ghost_mode}_{store_partition}"
+
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, N, N, N, ghost_mode=ghost_mode)
 
     backend_args = None
