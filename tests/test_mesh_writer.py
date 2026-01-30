@@ -1,3 +1,5 @@
+import importlib
+
 from mpi4py import MPI
 
 import dolfinx
@@ -26,6 +28,11 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
 
     if backend == "adios2" and encoder == "HDF5" and utils.get_hdf5_version().major >= 2:
         pytest.skip("HDF5 version >= 2 is not supported due to ADIOS2 limitations.")
+    try:
+        importlib.import_module(backend)
+    except ModuleNotFoundError:
+        pytest.skip(f"{backend} not installed")
+
     # Consistent tmp dir across processes
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
     file = fname / f"{backend}_mesh_{encoder}_{store_partition}"
@@ -114,12 +121,7 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
         [ufl.ds, ufl.dx] if ghost_mode is dolfinx.mesh.GhostMode.none else [ufl.ds, ufl.dS, ufl.dx]
     )
     for measure in measures:
-        try:
-            c_adios = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_adios)))
-        except RuntimeError as e:
-            print(f"Assembly failed with error: {e}")
-            # Some failure in ffx - that I don't fully understand
-            pytest.skip("Skipping test as assembly failed. Should probably be fixed in the future?")
+        c_adios = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_adios)))
         c_ref = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh)))
         c_xdmf = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_xdmf)))
         assert np.isclose(
@@ -141,6 +143,11 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
 )
 @pytest.mark.parametrize("store_partition", [True, False])
 def test_timedep_mesh(encoder, backend, suffix, ghost_mode, tmp_path, store_partition):
+    try:
+        importlib.import_module(backend)
+    except ModuleNotFoundError:
+        pytest.skip(f"{backend} not installed")
+
     # Currently unsupported, unclear why ("HDF5", ".h5"),
     N = 13
     # Consistent tmp dir across processes
@@ -191,12 +198,8 @@ def test_timedep_mesh(encoder, backend, suffix, ghost_mode, tmp_path, store_part
     if ghost_mode == dolfinx.mesh.GhostMode.shared_facet:
         measures.append(ufl.dx)
     for measure in measures:
-        try:
-            c_adios = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_first)))
-        except RuntimeError as e:
-            print(f"Assembly failed with error: {e}")
-            # Some failure in ffx - that I don't fully understand
-            pytest.skip("Skipping test as assembly failed. Should probably be fixed in the future?")
+        # try:
+        c_adios = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_first)))
         c_ref = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh)))
         assert np.isclose(
             mesh_first.comm.allreduce(c_adios, MPI.SUM),
