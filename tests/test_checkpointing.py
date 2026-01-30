@@ -248,7 +248,7 @@ def test_read_nonexisting_file_raises_FileNotFoundError(func, args, backend):
         suffix = ".h5"
     file = Path(args[0]).with_suffix(suffix)
     with pytest.raises(FileNotFoundError):
-        func(file, *args[1:])
+        func(file, *args[1:], backend=backend)
 
 
 def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
