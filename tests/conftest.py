@@ -32,7 +32,7 @@ def find_backends():
     return backends
 
 
-@pytest.fixture(params=find_backends(), scope="module")
+@pytest.fixture(params=find_backends(), scope="function")
 def backend(request):
     value = request.param
     if value == "adios2":
