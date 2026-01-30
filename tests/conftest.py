@@ -1,4 +1,6 @@
+import sys
 import typing
+from unittest.mock import patch
 
 from mpi4py import MPI
 
@@ -32,7 +34,15 @@ def find_backends():
 
 @pytest.fixture(params=find_backends(), scope="module")
 def backend(request):
-    return request.param
+    value = request.param
+    if value == "adios2":
+        # Mock h5py to test adios2 only
+        with patch.dict(sys.modules, {"h5py": None}):
+            yield value
+    else:
+        # Mock adios2 to test h5py only
+        with patch.dict(sys.modules, {"adios2": None}):
+            yield value
 
 
 @pytest.fixture(scope="module")
