@@ -19,7 +19,9 @@ from dolfinx.graph import adjacencylist
 
 from ...structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
-from .. import FileMode
+from .. import FileMode, ReadMode
+
+read_mode = ReadMode.parallel
 
 
 @contextlib.contextmanager
@@ -620,3 +622,20 @@ def snapshot_checkpoint(
             assert data.shape[0] == num_dofs_global
             u.x.array[:num_dofs_local] = data[slice(*local_range)]
             u.x.scatter_forward()
+
+
+def read_point_data(
+    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
+) -> dolfinx.fem.Function:
+    """Read data from te nodes of a mesh.
+
+    Parameters:
+        filename: Path to file
+        name: Name of point data
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+
+    Returns:
+        A function in the space equivalent to the mesh
+        coordinate element (up to shape).
+    """
+    raise NotImplementedError("The h5py backend cannot read point data.")

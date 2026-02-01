@@ -11,7 +11,7 @@ import numpy.typing as npt
 
 from ...structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
-from .. import FileMode
+from .. import FileMode, ReadMode
 from .helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
@@ -22,6 +22,8 @@ from .helpers import (
 )
 
 adios2 = resolve_adios_scope(adios2)
+
+read_mode = ReadMode.parallel
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -828,3 +830,20 @@ def snapshot_checkpoint(
             u.x.scatter_forward()
         else:
             raise NotImplementedError(f"Mode {mode} is not implemented for snapshot checkpoint")
+
+
+def read_point_data(
+    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
+) -> dolfinx.fem.Function:
+    """Read data from te nodes of a mesh.
+
+    Parameters:
+        filename: Path to file
+        name: Name of point data
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+
+    Returns:
+        A function in the space equivalent to the mesh
+        coordinate element (up to shape).
+    """
+    raise NotImplementedError("The ADIOS2 backend cannot read point data.")

@@ -14,6 +14,24 @@ from ..structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
 __all__ = ["FileMode", "IOBackend", "get_backend"]
 
 
+class ReadMode(Enum):
+    serial = 10  # This means that all data is read in on root rank
+
+    # Total number of data P, num processes = i + 1.
+    # All processes reads at least `P // (i+1)` items
+    # The first j=P%(i+1) processes reads `P // (i+1) + 1` items
+    # ```python
+    # def compute_partitioning(P, J):
+    #     min_num = P // J
+    #     num_per_proc = np.full(J, min_num)
+    #     rem = P % J
+    #     num_per_proc[:int(rem)] += 1
+    #     assert(sum(num_per_proc)) == P
+    #     return num_per_proc
+    # ```
+    parallel = 20
+
+
 class FileMode(Enum):
     """Filen mode used for opening files."""
 
@@ -24,6 +42,8 @@ class FileMode(Enum):
 
 # See https://peps.python.org/pep-0544/#modules-as-implementations-of-protocols
 class IOBackend(Protocol):
+    read_mode: ReadMode
+
     def get_default_backend_args(self, arguments: dict[str, Any] | None) -> dict[str, Any]:
         """Get default backend arguments given a set of input arguments.
 
@@ -303,6 +323,22 @@ class IOBackend(Protocol):
                   Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
         """
 
+    def read_point_data(
+        filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
+    ) -> dolfinx.fem.Function:
+        """Read data from te nodes of a mesh.
+
+        Parameters:
+            filename: Path to file
+            name: Name of point data
+            mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+
+        Returns:
+            A function in the space equivalent to the mesh
+            coordinate element (up to shape).
+        """
+        ...
+
 
 def get_backend(backend: str) -> IOBackend:
     """Get backend class from backend name.
@@ -321,5 +357,13 @@ def get_backend(backend: str) -> IOBackend:
         from .adios2 import backend as ADIOS2Interface
 
         return ADIOS2Interface
+    elif backend == "pyvista":
+        from .pyvista import backend as PYVISTAInterface
+
+        return PYVISTAInterface
+    elif backend == "xdmf":
+        from .xdmf import backend as XDMFInterface
+
+        return XDMFInterface
     else:
         return import_module(backend)
