@@ -47,10 +47,10 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Update pip
-        run: python3 -m pip install --break-system-packages --upgrade pip
+        run: python3 -m pip install  --upgrade pip
 
       - name: Install build requirements
-        run: python3 -m pip install --break-system-packages -r build-requirements.txt
+        run: python3 -m pip install  -r build-requirements.txt
 
       - name: Install DOLFINx
         uses: jorgensd/actions/install-dolfinx@v0.4
@@ -77,9 +77,8 @@ jobs:
 
       - name: Install package
         run: |
-          HDF5_MPI=ON HDF5_PKGCONFIG_NAME="hdf5" python3 -m pip install h5py --break-system-packages --no-build-isolation --no-binary=h5py
-          python3 -m pip install --break-system-packages .[test]
-
+          HDF5_MPI=ON HDF5_PKGCONFIG_NAME="hdf5" python3 -m pip install h5py  --no-build-isolation --no-binary=h5py
+          python3 -m pip install  .[test,xdmf,pyvista]
       - name: Run tests
         run: |
           coverage run --rcfile=.coveragerc -m mpi4py -m pytest -xvs ./tests/
