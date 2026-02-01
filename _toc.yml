@@ -27,5 +27,7 @@ parts:
     chapters:
     - file: "docs/api"
     - file: "docs/backend"
-    - file: "docs/adios2"
-    - file: "docs/h5py"
+    - file: "docs/backends/adios2"
+    - file: "docs/backends/h5py"
+    - file: "docs/backends/pyvista"
+    - file: "docs/backends/xdmf"

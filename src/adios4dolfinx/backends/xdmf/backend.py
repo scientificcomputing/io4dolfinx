@@ -71,6 +71,17 @@ def read_mesh_data(
 def read_point_data(
     filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
 ) -> dolfinx.fem.Function:
+    """Read data from te nodes of a mesh.
+
+    Args:
+        filename: Path to file
+        name: Name of point data
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+
+    Returns:
+        A function in the space equivalent to the mesh
+        coordinate element (up to shape).
+    """
     # Find function with name u in xml tree
     filename = Path(filename)
     tree = ElementTree.parse(filename)
