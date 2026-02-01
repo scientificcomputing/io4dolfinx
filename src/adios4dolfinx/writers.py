@@ -5,7 +5,7 @@
 # SPDX-License-Identifier:    MIT
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from mpi4py import MPI
 
@@ -112,12 +112,12 @@ def write_mesh(
     time: float = 0.0,
     mode: FileMode = FileMode.write,
     backend_args: dict[str, Any] | None = None,
-    backend: Literal["adios2", "h5py"] = "adios2",
+    backend: str = "adios2",
 ):
     """
     Write a mesh to file using ADIOS2
 
-    Parameters:
+    Args:
         comm: MPI communicator used in storage
         mesh: Internal data structure for the mesh data to save to file
         filename: Path to file to write to
@@ -137,12 +137,12 @@ def write_function(
     time: float = 0.0,
     mode: FileMode = FileMode.append,
     backend_args: dict[str, Any] | None = None,
-    backend: Literal["adios2", "h5py"] = "adios2",
+    backend: str = "adios2",
 ):
     """
     Write a function to file using ADIOS2
 
-    Parameters:
+    Args:
         comm: MPI communicator used in storage
         u: Internal data structure for the function data to save to file
         filename: Path to file to write to

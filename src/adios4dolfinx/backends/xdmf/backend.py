@@ -25,7 +25,7 @@ read_mode = ReadMode.parallel
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
     """Get default backend arguments given a set of input arguments.
 
-    Parameters:
+    Args:
         arguments: Input backend arguments
 
     Returns:
@@ -44,7 +44,7 @@ def read_mesh_data(
 ) -> ReadMeshData:
     """Read mesh data from file.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         time: Time stamp associated with the mesh to read
@@ -72,12 +72,16 @@ def read_point_data(
     filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
 ) -> dolfinx.fem.Function:
     # Find function with name u in xml tree
+    filename = Path(filename)
     tree = ElementTree.parse(filename)
     root = tree.getroot()
     func_node = root.find(".//Attribute[@Name='u']")
+    assert isinstance(func_node, ElementTree.Element)
     data_node = func_node.find(".//DataItem")
+    assert isinstance(data_node, ElementTree.Element)
     global_shape = data_node.attrib["Dimensions"].split(" ")
     func_path = data_node.text
+    assert isinstance(func_path, str)
     data_file, data_loc = func_path.split(":")
     data_path = filename.parent / data_file
     import h5py
@@ -97,6 +101,7 @@ def read_point_data(
     # NOTE: THe below should be moved out of backend.
 
     # Create appropriate function space (based on coordinate map)
+    shape: tuple[int, ...]
     if num_components == 1:
         shape = ()
     else:
@@ -105,7 +110,7 @@ def read_point_data(
         basix.ElementFamily.P,
         mesh.topology.cell_name(),
         mesh.geometry.cmap.degree,
-        mesh.geometry.cmap.variant,
+        basix.LagrangeVariant(mesh.geometry.cmap.variant),
         shape=shape,
         dtype=mesh.geometry.x.dtype,
     )
@@ -146,7 +151,6 @@ def read_point_data(
 
 
 def read_attributes(
-    self,
     filename: Path | str,
     comm: MPI.Intracomm,
     name: str,
@@ -154,7 +158,7 @@ def read_attributes(
 ) -> dict[str, Any]:
     """Read attributes from file.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         name: Name of the attribute group
@@ -167,7 +171,6 @@ def read_attributes(
 
 
 def read_timestamps(
-    self,
     filename: Path | str,
     comm: MPI.Intracomm,
     function_name: str,
@@ -175,7 +178,7 @@ def read_timestamps(
 ) -> npt.NDArray[np.float64]:
     """Read timestamps from file.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         function_name: Name of the function to read timestamps for
@@ -187,8 +190,26 @@ def read_timestamps(
     raise NotImplementedError("The XDMF backend cannot read timestamps.")
 
 
+def write_attributes(
+    filename: Path | str,
+    comm: MPI.Intracomm,
+    name: str,
+    attributes: dict[str, np.ndarray],
+    backend_args: dict[str, Any] | None,
+):
+    """Write attributes to file.
+
+    Args:
+        filename: Path to file to write to
+        comm: MPI communicator used in storage
+        name: Name of the attribute group
+        attributes: Dictionary of attributes to write
+        backend_args: Arguments to backend
+    """
+    raise NotImplementedError("The XDMF backend cannot write attributes.")
+
+
 def write_mesh(
-    self,
     filename: Path | str,
     comm: MPI.Intracomm,
     mesh: MeshData,
@@ -199,7 +220,7 @@ def write_mesh(
     """
     Write a mesh to file.
 
-    Parameters:
+    Args:
         comm: MPI communicator used in storage
         mesh: Internal data structure for the mesh data to save to file
         filename: Path to file to write to
@@ -211,7 +232,6 @@ def write_mesh(
 
 
 def write_meshtags(
-    self,
     filename: str | Path,
     comm: MPI.Intracomm,
     data: MeshTagsData,
@@ -219,7 +239,7 @@ def write_meshtags(
 ):
     """Write mesh tags to file.
 
-    Parameters:
+    Args:
         filename: Path to file to write to
         comm: MPI communicator used in storage
         data: Internal data structure for the mesh tags to save to file
@@ -236,7 +256,7 @@ def read_meshtags_data(
 ) -> MeshTagsData:
     """Read mesh tags from file.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         name: Name of the mesh tags to read
@@ -256,7 +276,7 @@ def read_dofmap(
 ) -> dolfinx.graph.AdjacencyList:
     """Read the dofmap of a function with a given name.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         name: Name of the function to read the dofmap for
@@ -277,7 +297,7 @@ def read_dofs(
 ) -> tuple[npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int]:
     """Read the dofs (values) of a function with a given name from a given timestep.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         name: Name of the function to read the dofs for
@@ -299,7 +319,7 @@ def read_cell_perms(
     Read cell permutation from file with given communicator,
     Split in continuous chunks based on number of cells in the input data.
 
-    Parameters:
+    Args:
         comm: MPI communicator used in storage
         filename: Path to file to read from
         backend_args: Arguments to backend
@@ -322,7 +342,7 @@ def write_function(
     """
     Write a function to file.
 
-    Parameters:
+    Args:
         comm: MPI communicator used in storage
         u: Internal data structure for the function data to save to file
         filename: Path to file to write to
@@ -339,7 +359,7 @@ def read_legacy_mesh(
     """Read in the mesh topology, geometry and (optionally) cell type from a
     legacy DOLFIN HDF5-file.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         group: Group in HDF5 file where mesh is stored
@@ -361,7 +381,7 @@ def snapshot_checkpoint(
 ):
     """Create a snapshot checkpoint of a dolfinx function.
 
-    Parameters:
+    Args:
         filename: Path to file to read from
         mode: File-mode to store the function
         u: dolfinx function to create a snapshot checkpoint for
@@ -378,7 +398,7 @@ def read_hdf5_array(
 ) -> tuple[np.ndarray, int]:
     """Read an array from an HDF5 file.
 
-    Parameters:
+    Args:
         comm: MPI communicator used in storage
         filename: Path to file to read from
         group: Group in HDF5 file where array is stored

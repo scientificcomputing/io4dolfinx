@@ -224,6 +224,7 @@ def read_function_from_legacy_h5(
     # 1.1 Compute mesh->input communicator
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
     backend_cls = get_backend(backend)
+    owners: npt.NDArray[np.int32]
     if backend_cls.read_mode == ReadMode.serial:
         owners = np.zeros(len(input_cells), dtype=np.int32)
     elif backend_cls.read_mode == ReadMode.parallel:
@@ -267,7 +268,7 @@ def read_function_from_legacy_h5(
     )
 
     # ----------------------Step 3---------------------------------
-
+    dof_owner: npt.NDArray[np.int32]
     if backend_cls.read_mode == ReadMode.serial:
         dof_owner = np.zeros(len(dofmap_indices), dtype=np.int32)
     elif backend_cls.read_mode == ReadMode.parallel:

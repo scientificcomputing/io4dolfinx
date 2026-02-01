@@ -47,7 +47,7 @@ class IOBackend(Protocol):
     def get_default_backend_args(self, arguments: dict[str, Any] | None) -> dict[str, Any]:
         """Get default backend arguments given a set of input arguments.
 
-        Parameters:
+        Args:
             arguments: Input backend arguments
 
         Returns:
@@ -64,7 +64,7 @@ class IOBackend(Protocol):
     ):
         """Write attributes to file.
 
-        Parameters:
+        Args:
             filename: Path to file to write to
             comm: MPI communicator used in storage
             name: Name of the attribute group
@@ -81,7 +81,7 @@ class IOBackend(Protocol):
     ) -> dict[str, Any]:
         """Read attributes from file.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             comm: MPI communicator used in storage
             name: Name of the attribute group
@@ -100,7 +100,7 @@ class IOBackend(Protocol):
     ) -> npt.NDArray[np.float64]:
         """Read timestamps from file.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             comm: MPI communicator used in storage
             function_name: Name of the function to read timestamps for
@@ -122,7 +122,7 @@ class IOBackend(Protocol):
         """
         Write a mesh to file.
 
-        Parameters:
+        Args:
             comm: MPI communicator used in storage
             mesh: Internal data structure for the mesh data to save to file
             filename: Path to file to write to
@@ -140,7 +140,7 @@ class IOBackend(Protocol):
     ):
         """Write mesh tags to file.
 
-        Parameters:
+        Args:
             filename: Path to file to write to
             comm: MPI communicator used in storage
             data: Internal data structure for the mesh tags to save to file
@@ -157,7 +157,7 @@ class IOBackend(Protocol):
     ) -> ReadMeshData:
         """Read mesh data from file.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             comm: MPI communicator used in storage
             time: Time stamp associated with the mesh to read
@@ -177,7 +177,7 @@ class IOBackend(Protocol):
     ) -> MeshTagsData:
         """Read mesh tags from file.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             comm: MPI communicator used in storage
             name: Name of the mesh tags to read
@@ -196,14 +196,14 @@ class IOBackend(Protocol):
     ) -> dolfinx.graph.AdjacencyList:
         """Read the dofmap of a function with a given name.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             comm: MPI communicator used in storage
             name: Name of the function to read the dofmap for
             backend_args: Arguments to backend
 
         Returns:
-            Dofmap as an AdjacencyList
+            Dofmap as an {py:class}`dolfinx.graph.AdjacencyList`
         """
 
     def read_dofs(
@@ -216,7 +216,7 @@ class IOBackend(Protocol):
     ) -> tuple[npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int]:
         """Read the dofs (values) of a function with a given name from a given timestep.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             comm: MPI communicator used in storage
             name: Name of the function to read the dofs for
@@ -236,7 +236,7 @@ class IOBackend(Protocol):
         Read cell permutation from file with given communicator,
         Split in continuous chunks based on number of cells in the input data.
 
-        Parameters:
+        Args:
             comm: MPI communicator used in storage
             filename: Path to file to read from
             backend_args: Arguments to backend
@@ -255,10 +255,9 @@ class IOBackend(Protocol):
         mode: FileMode,
         backend_args: dict[str, Any] | None,
     ):
-        """
-        Write a function to file.
+        """Write a function to file.
 
-        Parameters:
+        Args:
             comm: MPI communicator used in storage
             u: Internal data structure for the function data to save to file
             filename: Path to file to write to
@@ -273,7 +272,7 @@ class IOBackend(Protocol):
         """Read in the mesh topology, geometry and (optionally) cell type from a
         legacy DOLFIN HDF5-file.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             comm: MPI communicator used in storage
             group: Group in HDF5 file where mesh is stored
@@ -294,7 +293,7 @@ class IOBackend(Protocol):
     ):
         """Create a snapshot checkpoint of a dolfinx function.
 
-        Parameters:
+        Args:
             filename: Path to file to read from
             mode: File-mode to store the function
             u: dolfinx function to create a snapshot checkpoint for
@@ -310,7 +309,7 @@ class IOBackend(Protocol):
     ) -> tuple[np.ndarray, int]:
         """Read an array from an HDF5 file.
 
-        Parameters:
+        Args:
             comm: MPI communicator used in storage
             filename: Path to file to read from
             group: Group in HDF5 file where array is stored
@@ -324,11 +323,11 @@ class IOBackend(Protocol):
         """
 
     def read_point_data(
-        filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
+        self, filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
     ) -> dolfinx.fem.Function:
         """Read data from te nodes of a mesh.
 
-        Parameters:
+        Args:
             filename: Path to file
             name: Name of point data
             mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
@@ -343,7 +342,7 @@ class IOBackend(Protocol):
 def get_backend(backend: str) -> IOBackend:
     """Get backend class from backend name.
 
-    Parameters:
+    Args:
         backend: Name of the backend to get
 
     Returns:

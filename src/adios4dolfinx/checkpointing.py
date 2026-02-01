@@ -263,6 +263,7 @@ def read_function(
     # Compute mesh->input communicator
     # 1.1 Compute mesh->input communicator
     backend_cls = get_backend(backend)
+    owners: npt.NDArray[np.int32]
     if backend_cls.read_mode == ReadMode.serial:
         owners = np.zeros(input_cells, dtype=np.int32)
     elif backend_cls.read_mode == ReadMode.parallel:
@@ -283,6 +284,7 @@ def read_function(
     input_dofmap = backend_cls.read_dofmap(filename, comm, name, backend_args)
 
     # Compute owner of dofs in dofmap
+    dof_owner: npt.NDArray[np.int32]
     if backend_cls.read_mode == ReadMode.serial:
         dof_owner = np.zeros(len(input_dofmap.array), dtype=np.int32)
     elif backend_cls.read_mode == ReadMode.parallel:

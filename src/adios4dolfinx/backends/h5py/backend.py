@@ -135,8 +135,7 @@ def read_timestamps(
     function_name: str,
     backend_args: dict[str, Any] | None = None,
 ) -> npt.NDArray[np.float64]:
-    """
-    Read time-stamps from a checkpoint file.
+    """Read time-stamps from a checkpoint file.
 
     Args:
         comm: MPI communicator
@@ -165,10 +164,9 @@ def write_mesh(
     mode: FileMode = FileMode.write,
     time: float = 0.0,
 ):
-    """
-    Write a mesh to file using H5PY
+    """Write a mesh to file using H5PY
 
-    Parameters:
+    Args:
         comm: MPI communicator used in storage
         mesh: Internal data structure for the mesh data to save to file
         filename: Path to file to write to.
@@ -245,8 +243,7 @@ def read_mesh_data(
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
 ) -> ReadMeshData:
-    """
-    Read mesh data from h5py based checkpoint files.
+    """Read mesh data from h5py based checkpoint files.
 
     Args:
         filename: Path to input file
@@ -326,6 +323,14 @@ def write_meshtags(
     data: MeshTagsData,
     backend_args: dict[str, Any] | None = None,
 ):
+    """Write mesh tags to file.
+
+    Args:
+        filename: Path to file to write to
+        comm: MPI communicator used in storage
+        data: Internal data structure for the mesh tags to save to file
+        backend_args: Arguments to backend
+    """
     backend_args = get_default_backend_args(backend_args)
 
     with h5pyfile(filename, filemode="a", comm=comm, force_serial=False) as h5file:
@@ -363,6 +368,17 @@ def write_meshtags(
 def read_meshtags_data(
     filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None = None
 ) -> MeshTagsData:
+    """Read mesh tags from file.
+
+    Args:
+        filename: Path to file to read from
+        comm: MPI communicator used in storage
+        name: Name of the mesh tags to read
+        backend_args: Arguments to backend
+
+    Returns:
+        Internal data structure for the mesh tags read from file
+    """
     backend_args = get_default_backend_args(backend_args)
 
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
@@ -389,6 +405,17 @@ def read_meshtags_data(
 def read_dofmap(
     filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
 ) -> dolfinx.graph.AdjacencyList:
+    """Read the dofmap of a function with a given name.
+
+    Args:
+        filename: Path to file to read from
+        comm: MPI communicator used in storage
+        name: Name of the function to read the dofmap for
+        backend_args: Arguments to backend
+
+    Returns:
+        Dofmap as an {py:class}`dolfinx.graph.AdjacencyList`
+    """
     backend_args = {} if backend_args is None else backend_args
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         # If dofmap is read with full path, it is passed through backend_args
@@ -436,6 +463,20 @@ def read_dofs(
     time: float,
     backend_args: dict[str, Any] | None,
 ) -> tuple[npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int]:
+    """Read the dofs (values) of a function with a given name from a given timestep.
+
+    Args:
+        filename: Path to file to read from
+        comm: MPI communicator used in storage
+        name: Name of the function to read the dofs for
+        time: Time stamp associated with the function to read
+        backend_args: Arguments to backend
+
+    Returns:
+        Contiguous sequence of degrees of freedom (with respect to input data)
+        and the global starting point on the process.
+        Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
+    """
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_name = "mesh"  # Prepare for multiple meshes
         if mesh_name not in h5file.keys():
@@ -464,6 +505,20 @@ def read_dofs(
 def read_cell_perms(
     comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
 ) -> npt.NDArray[np.uint32]:
+    """
+    Read cell permutation from file with given communicator,
+    Split in continuous chunks based on number of cells in the input data.
+
+    Args:
+        comm: MPI communicator used in storage
+        filename: Path to file to read from
+        backend_args: Arguments to backend
+
+    Returns:
+        Contiguous sequence of permutations (with respect to input data)
+        Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
+    """
+
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_name = "mesh"  # Prepare for multiple meshes
         if mesh_name not in h5file.keys():
@@ -484,6 +539,17 @@ def write_function(
     mode: FileMode,
     backend_args: dict[str, Any] | None = None,
 ):
+    """Write a function to file.
+
+    Args:
+        comm: MPI communicator used in storage
+        u: Internal data structure for the function data to save to file
+        filename: Path to file to write to
+        time: Time stamp associated with function
+        mode: File-mode to store the function
+        backend_args: Arguments to backend
+    """
+
     mesh_name = "mesh"  # Prepare for multiple meshes
     backend_args = get_default_backend_args(backend_args)
     h5_mode = convert_file_mode(mode)
@@ -549,6 +615,20 @@ def write_function(
 def read_legacy_mesh(
     filename: Path | str, comm: MPI.Intracomm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
+    """Read in the mesh topology, geometry and (optionally) cell type from a
+    legacy DOLFIN HDF5-file.
+
+    Args:
+        filename: Path to file to read from
+        comm: MPI communicator used in storage
+        group: Group in HDF5 file where mesh is stored
+
+    Returns:
+        Tuple containing:
+            - Topology as a (num_cells, num_vertices_per_cell) array of global vertex indices
+            - Geometry as a (num_vertices, geometric_dimension) array of vertex coordinates
+            - Cell type as a string (e.g. "tetrahedron") or None if not found
+    """
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         if group not in h5file.keys():
             raise KeyError(f"Could not find {group}  in {filename}.")
@@ -590,6 +670,20 @@ def read_hdf5_array(
     group: str,
     backend_args: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, int]:
+    """Read an array from an HDF5 file.
+
+    Args:
+        comm: MPI communicator used in storage
+        filename: Path to file to read from
+        group: Group in HDF5 file where array is stored
+        backend_args: Arguments to backend
+
+    Returns:
+        Tuple containing:
+            - Numpy array read from file
+            - Global starting point on the process.
+                Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
+    """
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         data = h5file[group]
         shape = data.shape[0]
@@ -604,6 +698,14 @@ def snapshot_checkpoint(
     u: dolfinx.fem.Function,
     backend_args: dict[str, Any] | None,
 ):
+    """Create a snapshot checkpoint of a dolfinx function.
+
+    Args:
+        filename: Path to file to read from
+        mode: File-mode to store the function
+        u: dolfinx function to create a snapshot checkpoint for
+        backend_args: Arguments to backend
+    """
     comm = u.function_space.mesh.comm
     dofmap = u.function_space.dofmap
     local_range = np.array(dofmap.index_map.local_range) * dofmap.index_map_bs
@@ -629,7 +731,7 @@ def read_point_data(
 ) -> dolfinx.fem.Function:
     """Read data from te nodes of a mesh.
 
-    Parameters:
+    Args:
         filename: Path to file
         name: Name of point data
         mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.

@@ -348,7 +348,7 @@ def write_function_on_input_mesh(
     """
     Write function checkpoint (to be read with the input mesh).
 
-    Parameters:
+    Args:
         u: The function to checkpoint
         filename: The filename to write to
         engine: The ADIOS2 engine to use
@@ -376,7 +376,7 @@ def write_mesh_input_order(
     filename: Path | str,
     mesh: dolfinx.mesh.Mesh,
     time: float = 0.0,
-    backend: typing.Literal["h5py", "adios2"] = "adios2",
+    backend: str = "adios2",
     backend_args: dict[str, typing.Any] | None = None,
     mode: FileMode = FileMode.write,
 ):

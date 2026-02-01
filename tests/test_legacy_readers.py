@@ -191,6 +191,7 @@ def test_legacy_vtu_mesh():
     if not path.exists():
         pytest.skip(f"{path} does not exist")
 
+    pytest.importorskip("pyvista")
     mesh = read_mesh(path, comm, backend="pyvista")
 
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
@@ -208,6 +209,7 @@ def test_legacy_pvd():
     if not path.exists():
         pytest.skip(f"{path} does not exist")
 
+    pytest.importorskip("pyvista")
     mesh = read_mesh(path, comm, backend="pyvista")
 
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
