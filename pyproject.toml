@@ -15,7 +15,7 @@ test = ["pytest", "coverage", "ipyparallel", "adios4dolfinx[h5py]"]
 dev = ["pdbpp", "ipython", "mypy", "ruff"]
 h5py = ["h5py"]
 pyvista = ["pyvista"]
-xdmf = ["h5py]
+xdmf = ["h5py"]
 docs = [
     "jupyter-book<2.0.0",
     "ipyparallel",
