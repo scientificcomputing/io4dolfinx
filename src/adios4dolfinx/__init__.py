@@ -20,7 +20,7 @@ from .checkpointing import (
     write_mesh,
     write_meshtags,
 )
-from .legacy_readers import read_function_from_legacy_h5, read_mesh_from_legacy_h5
+from .legacy_readers import read_function_from_legacy_h5, read_mesh_from_legacy_h5, read_point_data
 from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
 from .snapshot import snapshot_checkpoint
 
@@ -46,6 +46,7 @@ __all__ = [
     "write_mesh_input_order",
     "write_attributes",
     "read_attributes",
+    "read_point_data",
     "read_timestamps",
     "get_backend",
 ]

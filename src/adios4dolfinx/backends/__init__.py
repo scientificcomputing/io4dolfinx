@@ -326,19 +326,20 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         name: str,
-        mesh: dolfinx.mesh.Mesh,
+        comm: MPI.Intracomm,
+        time: str | float | None,
         backend_args: dict[str, Any] | None,
-    ) -> dolfinx.fem.Function:
+    ) -> tuple[np.ndarray, npt.int32]:
         """Read data from te nodes of a mesh.
 
         Args:
             filename: Path to file
             name: Name of point data
-            mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
-
+            comm: Communicator to launch IO on.
+            time: The time stamp
+            backend_args: The backend arguments
         Returns:
-            A function in the space equivalent to the mesh
-            coordinate element (up to shape).
+            Data local to process (contiguous, no mpi comm) and local start range
         """
         ...
 

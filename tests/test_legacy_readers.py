@@ -21,6 +21,7 @@ from adios4dolfinx import (
     read_function_from_legacy_h5,
     read_mesh,
     read_mesh_from_legacy_h5,
+    read_point_data,
 )
 
 
@@ -220,9 +221,7 @@ def test_legacy_pvd():
     )
     assert np.isclose(area, 1.9 * 2.8)
 
-    from adios4dolfinx.backends.pyvista.backend import read_point_data
-
-    u = read_point_data(path, "w", mesh)
+    u = read_point_data(path, "w", mesh, backend="pyvista")
     u_ref = dolfinx.fem.Function(u.function_space)
     u_ref.interpolate(lambda x: (x[0], x[1] - x[0], np.zeros_like(x[0])))
 

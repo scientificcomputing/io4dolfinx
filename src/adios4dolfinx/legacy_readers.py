@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pathlib
 import typing
+from pathlib import Path
+from typing import Any
 
 from mpi4py import MPI
 
@@ -27,10 +29,7 @@ from .utils import (
     index_owner,
 )
 
-__all__ = [
-    "read_mesh_from_legacy_h5",
-    "read_function_from_legacy_h5",
-]
+__all__ = ["read_mesh_from_legacy_h5", "read_function_from_legacy_h5", "read_point_data"]
 
 
 def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.int64]:
@@ -295,3 +294,81 @@ def read_function_from_legacy_h5(
     # Populate local part of array and scatter forward
     u.x.array[: len(local_values)] = local_values
     u.x.scatter_forward()
+
+
+def read_point_data(
+    filename: Path | str,
+    name: str,
+    mesh: dolfinx.mesh.Mesh,
+    time: float | None = None,
+    backend_args: dict[str, Any] | None = None,
+    backend: str = "xdmf",
+) -> dolfinx.fem.Function:
+    """Read data from te nodes of a mesh.
+
+    Args:
+        filename: Path to file
+        name: Name of point data
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+        time: Time-step to read from.
+
+    Returns:
+        A function in the space equivalent to the mesh
+        coordinate element (up to shape).
+    """
+
+    backend_cls = get_backend(backend)
+    dataset, local_range_start = backend_cls.read_point_data(
+        filename=filename, name=name, comm=mesh.comm, time=time, backend_args=backend_args
+    )
+
+    num_components = dataset.shape[1]
+
+    # Create appropriate function space (based on coordinate map)
+    shape: tuple[int, ...]
+    if num_components == 1:
+        shape = ()
+    else:
+        shape = (num_components,)
+    element = basix.ufl.element(
+        basix.ElementFamily.P,
+        mesh.topology.cell_name(),
+        mesh.geometry.cmap.degree,
+        basix.LagrangeVariant(mesh.geometry.cmap.variant),
+        shape=shape,
+        dtype=mesh.geometry.x.dtype,
+    )
+
+    # Assumption: Same doflayout for geometry and function space, cannot test in python
+    V = dolfinx.fem.functionspace(mesh, element)
+    uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
+    # Assume that mesh is first order for now
+    x_dofmap = mesh.geometry.dofmap
+    igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
+
+    # This is dependent on how the data is read in. If distributed equally this is correct
+    global_geom_input = igi[x_dofmap]
+    from adios4dolfinx.backends import get_backend
+
+    backend_cls = get_backend("xdmf")
+    if backend_cls.read_mode == ReadMode.parallel:
+        num_nodes_global = mesh.geometry.index_map().size_global
+        global_geom_owner = index_owner(mesh.comm, global_geom_input.reshape(-1), num_nodes_global)
+    elif backend_cls.read_mode == ReadMode.serial:
+        # This is correct if everything is read in on rank 0
+        global_geom_owner = np.zeros(len(global_geom_input.flatten()), dtype=np.int32)
+    else:
+        raise NotImplementedError(f"{backend_cls.read_mode} not implemented")
+
+    for i in range(num_components):
+        arr_i = send_dofs_and_recv_values(
+            global_geom_input.reshape(-1),
+            global_geom_owner,
+            mesh.comm,
+            dataset[:, i],
+            local_range_start,
+        )
+        dof_pos = x_dofmap.reshape(-1) * num_components + i
+        uh.x.array[dof_pos] = arr_i
+
+    return uh

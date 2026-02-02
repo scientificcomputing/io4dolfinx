@@ -13,9 +13,8 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 
-from adios4dolfinx.comm_helpers import send_dofs_and_recv_values
 from adios4dolfinx.structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
-from adios4dolfinx.utils import check_file_exists, compute_local_range, index_owner
+from adios4dolfinx.utils import check_file_exists, compute_local_range
 
 from .. import FileMode, ReadMode
 
@@ -91,18 +90,23 @@ def read_mesh_data(
 
 
 def read_point_data(
-    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh, backend_args: dict[str, Any] | None
-) -> dolfinx.fem.Function:
+    filename: Path | str,
+    name: str,
+    comm: MPI.Intracomm,
+    time: float | str | None,
+    backend_args: dict[str, Any] | None,
+) -> tuple[np.ndarray, npt.int32]:
     """Read data from te nodes of a mesh.
 
     Args:
         filename: Path to file
         name: Name of point data
-        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+        comm: Communicator to launch IO on.
+        time: The time stamp
+        backend_args: The backend arguments
 
     Returns:
-        A function in the space equivalent to the mesh
-        coordinate element (up to shape).
+       Data local to process (contiguous, no mpi comm) and local start range
     """
     # Find function with name u in xml tree
     check_file_exists(filename)
@@ -111,8 +115,7 @@ def read_point_data(
     tree = ElementTree.parse(filename)
     root = tree.getroot()
     backend_args = get_default_backend_args(backend_args)
-    if "time" in backend_args.keys():
-        time = backend_args["time"]
+    if time is not None:
         time_steps = root.findall(f".//Grid[@Name='{name}']")
         time_found = False
         for time_node in time_steps:
@@ -137,67 +140,17 @@ def read_point_data(
     import h5py
 
     if h5py.h5.get_config().mpi:
-        h5file = h5py.File(data_path, "r", driver="mpio", comm=mesh.comm)
+        h5file = h5py.File(data_path, "r", driver="mpio", comm=comm)
     data = h5file[data_loc]
 
     for s1, s2 in zip(data.shape, global_shape, strict=True):
         assert int(s1) == int(s2)
-    lr = compute_local_range(mesh.comm, data.shape[0])
+    lr = compute_local_range(comm, data.shape[0])
     local_range_start = lr[0]
     dataset = data[slice(*lr), :]
-    num_components = dataset.shape[1]
     h5file.close()
 
-    # NOTE: THe below should be moved out of backend.
-
-    # Create appropriate function space (based on coordinate map)
-    shape: tuple[int, ...]
-    if num_components == 1:
-        shape = ()
-    else:
-        shape = (num_components,)
-    element = basix.ufl.element(
-        basix.ElementFamily.P,
-        mesh.topology.cell_name(),
-        mesh.geometry.cmap.degree,
-        basix.LagrangeVariant(mesh.geometry.cmap.variant),
-        shape=shape,
-        dtype=mesh.geometry.x.dtype,
-    )
-
-    # Assumption: Same doflayout for geometry and function space, cannot test in python
-    V = dolfinx.fem.functionspace(mesh, element)
-    uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
-    # Assume that mesh is first order for now
-    x_dofmap = mesh.geometry.dofmap
-    igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
-
-    # This is dependent on how the data is read in. If distributed equally this is correct
-    global_geom_input = igi[x_dofmap]
-    from adios4dolfinx.backends import get_backend
-
-    backend_cls = get_backend("xdmf")
-    if backend_cls.read_mode == ReadMode.parallel:
-        num_nodes_global = mesh.geometry.index_map().size_global
-        global_geom_owner = index_owner(mesh.comm, global_geom_input.reshape(-1), num_nodes_global)
-    elif backend_cls.read_mode == ReadMode.serial:
-        # This is correct if everything is read in on rank 0
-        global_geom_owner = np.zeros(len(global_geom_input.flatten()), dtype=np.int32)
-    else:
-        raise NotImplementedError(f"{backend_cls.read_mode} not implemented")
-
-    for i in range(num_components):
-        arr_i = send_dofs_and_recv_values(
-            global_geom_input.reshape(-1),
-            global_geom_owner,
-            mesh.comm,
-            dataset[:, i],
-            local_range_start,
-        )
-        dof_pos = x_dofmap.reshape(-1) * num_components + i
-        uh.x.array[dof_pos] = arr_i
-
-    return uh
+    return dataset, local_range_start
 
 
 def read_attributes(
