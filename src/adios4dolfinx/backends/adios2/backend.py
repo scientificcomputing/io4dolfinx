@@ -918,7 +918,7 @@ def read_point_data(
     comm: MPI.Intracomm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
-) -> tuple[np.ndarray, npt.int32]:
+) -> tuple[np.ndarray, np.int32]:
     """Read data from te nodes of a mesh.
 
     Args:

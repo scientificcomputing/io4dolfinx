@@ -329,7 +329,7 @@ class IOBackend(Protocol):
         comm: MPI.Intracomm,
         time: str | float | None,
         backend_args: dict[str, Any] | None,
-    ) -> tuple[np.ndarray, npt.int32]:
+    ) -> tuple[np.ndarray, np.int32]:
         """Read data from te nodes of a mesh.
 
         Args:
