@@ -348,9 +348,7 @@ def read_point_data(
 
     # This is dependent on how the data is read in. If distributed equally this is correct
     global_geom_input = igi[x_dofmap]
-    from adios4dolfinx.backends import get_backend
 
-    backend_cls = get_backend("xdmf")
     if backend_cls.read_mode == ReadMode.parallel:
         num_nodes_global = mesh.geometry.index_map().size_global
         global_geom_owner = index_owner(mesh.comm, global_geom_input.reshape(-1), num_nodes_global)
