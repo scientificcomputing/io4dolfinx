@@ -913,7 +913,8 @@ def snapshot_checkpoint(
 
 
 def read_point_data(
-    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
+    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh,
+    backend_args: dict[str, Any] | None
 ) -> dolfinx.fem.Function:
     """Read data from te nodes of a mesh.
 

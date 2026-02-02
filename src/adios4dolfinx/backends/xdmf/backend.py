@@ -69,7 +69,9 @@ def read_mesh_data(
 
 
 def read_point_data(
-    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh
+    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh,
+    backend_args: dict[str, Any] | None
+
 ) -> dolfinx.fem.Function:
     """Read data from te nodes of a mesh.
 
@@ -86,7 +88,7 @@ def read_point_data(
     filename = Path(filename)
     tree = ElementTree.parse(filename)
     root = tree.getroot()
-    func_node = root.find(".//Attribute[@Name='u']")
+    func_node = root.find(f".//Attribute[@Name='{name}']")
     assert isinstance(func_node, ElementTree.Element)
     data_node = func_node.find(".//DataItem")
     assert isinstance(data_node, ElementTree.Element)
