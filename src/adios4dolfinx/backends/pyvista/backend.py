@@ -174,9 +174,7 @@ def read_mesh_data(
 
 
 def read_point_data(
-    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh,
-    backend_args: dict[str, Any] | None
-
+    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh, backend_args: dict[str, Any] | None
 ) -> dolfinx.fem.Function:
     dataset: np.ndarray
     if MPI.COMM_WORLD.rank == 0:

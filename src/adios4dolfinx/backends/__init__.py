@@ -323,8 +323,11 @@ class IOBackend(Protocol):
         """
 
     def read_point_data(
-        self, filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh,
-        backend_args: dict[str, Any] | None
+        self,
+        filename: Path | str,
+        name: str,
+        mesh: dolfinx.mesh.Mesh,
+        backend_args: dict[str, Any] | None,
     ) -> dolfinx.fem.Function:
         """Read data from te nodes of a mesh.
 

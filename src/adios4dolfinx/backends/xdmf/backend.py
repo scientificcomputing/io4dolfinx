@@ -22,6 +22,28 @@ from .. import FileMode, ReadMode
 read_mode = ReadMode.parallel
 
 
+def extract_function_names_and_timesteps(filename: Path | str) -> dict[str, list[str]]:
+    tree = ElementTree.parse(filename)
+    root = tree.getroot()
+    mesh_nodes = root.findall(".//Grid[@CollectionType='Temporal']")
+    function_names = []
+    for mesh in mesh_nodes:
+        function_names.append(mesh.attrib["Name"])
+
+    time_stamps: dict[str, list[str]] = {name: [] for name in function_names}
+    for name in function_names:
+        time_steps = root.findall(f".//Grid[@Name='{name}']")
+        for time in time_steps:
+            step = time.find(".//Time")
+            if step is not None:
+                val = step.attrib["Value"]
+                time_stamps[name].append(val)
+    for name in function_names:
+        float_steps = np.argsort(np.array(list(set(time_stamps[name])), dtype=np.float64))
+        time_stamps[name] = np.array(list(set(time_stamps[name])), dtype=str)[float_steps].tolist()
+    return time_stamps
+
+
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
     """Get default backend arguments given a set of input arguments.
 
@@ -69,9 +91,7 @@ def read_mesh_data(
 
 
 def read_point_data(
-    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh,
-    backend_args: dict[str, Any] | None
-
+    filename: Path | str, name: str, mesh: dolfinx.mesh.Mesh, backend_args: dict[str, Any] | None
 ) -> dolfinx.fem.Function:
     """Read data from te nodes of a mesh.
 
@@ -85,10 +105,27 @@ def read_point_data(
         coordinate element (up to shape).
     """
     # Find function with name u in xml tree
+    check_file_exists(filename)
     filename = Path(filename)
+
     tree = ElementTree.parse(filename)
     root = tree.getroot()
-    func_node = root.find(f".//Attribute[@Name='{name}']")
+    backend_args = get_default_backend_args(backend_args)
+    if "time" in backend_args.keys():
+        time = backend_args["time"]
+        time_steps = root.findall(f".//Grid[@Name='{name}']")
+        time_found = False
+        for time_node in time_steps:
+            step_node = time_node.find(".//Time")
+            assert isinstance(step_node, ElementTree.Element)
+            if step_node.attrib["Value"] == time:
+                time_found = True
+                break
+        func_node = time_node.find(f".//Attribute[@Name='{name}']")
+        if not time_found:
+            raise RuntimeError(f"Function {name} at time={time} not found in {filename}")
+    else:
+        func_node = root.find(f".//Attribute[@Name='{name}']")
     assert isinstance(func_node, ElementTree.Element)
     data_node = func_node.find(".//DataItem")
     assert isinstance(data_node, ElementTree.Element)
