@@ -102,7 +102,7 @@ def read_timestamps(
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
     backend: str = "adios2",
-) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.float64|str]:  # type: ignore[type-var]
     """
     Read time-stamps from a checkpoint file.
 
@@ -541,3 +541,23 @@ def write_function(
     _internal_function_writer(
         fname, comm, function_data, time, backend_args=backend_args, backend=backend, mode=mode
     )
+
+
+def read_function_names(
+    filename: Path | str,
+    comm: MPI.Intracomm,
+    backend_args: dict[str, Any] | None,
+    backend: str = "h5py",
+) -> list[str]:
+    """Read all function names from a file.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator to launch IO on.
+        backend_args: Arguments to backend
+
+    Returns:
+        A list of function names.
+    """
+    backend_cls = get_backend(backend)
+    return backend_cls.read_function_names(filename, comm, backend_args=backend_args)

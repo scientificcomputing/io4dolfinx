@@ -95,8 +95,8 @@ def read_point_data(
     comm: MPI.Intracomm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
-) -> tuple[np.ndarray, np.int32]:
-    """Read data from te nodes of a mesh.
+) -> tuple[np.ndarray, int]:
+    """Read data from the nodes of a mesh.
 
     Args:
         filename: Path to file
@@ -178,7 +178,7 @@ def read_timestamps(
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, Any] | None,
-) -> npt.NDArray[np.float64]:
+) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
     """Read timestamps from file.
 
     Args:
@@ -190,7 +190,17 @@ def read_timestamps(
     Returns:
         Numpy array of timestamps read from file
     """
-    raise NotImplementedError("The XDMF backend cannot read timestamps.")
+    tree = ElementTree.parse(filename)
+    root = tree.getroot()
+    time_stamps = []
+    time_steps = root.findall(f".//Grid[@Name='{function_name}']")
+    for time in time_steps:
+        step = time.find(".//Time")
+        if step is not None:
+            val = step.attrib["Value"]
+            time_stamps.append(val)
+    float_steps = np.argsort(np.array(list(set(time_stamps)), dtype=np.float64))
+    return np.array(list(set(time_stamps)), dtype=str)[float_steps].tolist()
 
 
 def write_attributes(

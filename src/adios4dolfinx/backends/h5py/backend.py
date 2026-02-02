@@ -134,7 +134,7 @@ def read_timestamps(
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, Any] | None = None,
-) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.float64|str]:  # type: ignore[type-var]
     """Read time-stamps from a checkpoint file.
 
     Args:
@@ -726,14 +726,40 @@ def snapshot_checkpoint(
             u.x.scatter_forward()
 
 
+def read_function_names(
+    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+) -> list[str]:
+    """Read all function names from a file.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator to launch IO on.
+        backend_args: Arguments to backend
+
+    Returns:
+        A list of function names.
+    """
+    check_file_exists(filename)
+    backend_args = get_default_backend_args(backend_args)
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        mesh_name = "mesh"  # Prepare for multiple meshes
+        if mesh_name not in h5file.keys():
+            raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
+        mesh = h5file[mesh_name]
+        if "functions" not in mesh.keys():
+            return []
+        else:
+            return list(mesh["functions"].keys())
+
+
 def read_point_data(
     filename: Path | str,
     name: str,
     comm: MPI.Intracomm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
-) -> tuple[np.ndarray, np.int32]:
-    """Read data from te nodes of a mesh.
+) -> tuple[np.ndarray, int]:
+    """Read data from the nodes of a mesh.
 
     Args:
         filename: Path to file

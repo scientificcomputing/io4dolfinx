@@ -97,7 +97,7 @@ class IOBackend(Protocol):
         comm: MPI.Intracomm,
         function_name: str,
         backend_args: dict[str, Any] | None,
-    ) -> npt.NDArray[np.float64]:
+        ) -> npt.NDArray[np.float64|str]:  # type: ignore[type-var]
         """Read timestamps from file.
 
         Args:
@@ -329,8 +329,8 @@ class IOBackend(Protocol):
         comm: MPI.Intracomm,
         time: str | float | None,
         backend_args: dict[str, Any] | None,
-    ) -> tuple[np.ndarray, np.int32]:
-        """Read data from te nodes of a mesh.
+    ) -> tuple[np.ndarray, int]:
+        """Read data from the nodes of a mesh.
 
         Args:
             filename: Path to file
@@ -340,6 +340,21 @@ class IOBackend(Protocol):
             backend_args: The backend arguments
         Returns:
             Data local to process (contiguous, no mpi comm) and local start range
+        """
+        ...
+
+    def read_function_names(
+        self, filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+    ) -> list[str]:
+        """Read all function names from a file.
+
+        Args:
+            filename: Path to file
+            comm: MPI communicator to launch IO on.
+            backend_args: Arguments to backend
+
+        Returns:
+            A list of function names.
         """
         ...
 

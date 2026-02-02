@@ -304,7 +304,7 @@ def read_point_data(
     backend_args: dict[str, Any] | None = None,
     backend: str = "xdmf",
 ) -> dolfinx.fem.Function:
-    """Read data from te nodes of a mesh.
+    """Read data from the nodes of a mesh.
 
     Args:
         filename: Path to file

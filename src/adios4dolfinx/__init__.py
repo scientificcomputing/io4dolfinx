@@ -12,6 +12,7 @@ from .backends import FileMode, get_backend
 from .checkpointing import (
     read_attributes,
     read_function,
+    read_function_names,
     read_mesh,
     read_meshtags,
     read_timestamps,
@@ -46,6 +47,7 @@ __all__ = [
     "write_mesh_input_order",
     "write_attributes",
     "read_attributes",
+    "read_function_names",
     "read_point_data",
     "read_timestamps",
     "get_backend",

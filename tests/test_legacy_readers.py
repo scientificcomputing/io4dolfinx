@@ -19,6 +19,7 @@ from dolfinx.fem.petsc import LinearProblem
 from adios4dolfinx import (
     read_function,
     read_function_from_legacy_h5,
+    read_function_names,
     read_mesh,
     read_mesh_from_legacy_h5,
     read_point_data,
@@ -222,6 +223,10 @@ def test_legacy_pvd():
     assert np.isclose(area, 1.9 * 2.8)
 
     u = read_point_data(path, "w", mesh, backend="pyvista")
+    names = read_function_names(path, mesh.comm, {}, backend="pyvista")
+    assert len(names) == 1
+    assert names[0] == "w"
+
     u_ref = dolfinx.fem.Function(u.function_space)
     u_ref.interpolate(lambda x: (x[0], x[1] - x[0], np.zeros_like(x[0])))
 

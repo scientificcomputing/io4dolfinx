@@ -178,8 +178,8 @@ def read_point_data(
     comm: MPI.Intracomm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
-) -> tuple[np.ndarray, np.int32]:
-    """Read data from te nodes of a mesh.
+) -> tuple[np.ndarray, int]:
+    """Read data from the nodes of a mesh.
 
     Args:
         filename: Path to file
@@ -218,7 +218,7 @@ def read_point_data(
         dataset = np.zeros((0, num_components), dtype=gtype)
         local_range_start = 0
 
-    return dataset, local_range_start
+    return dataset, int(local_range_start)
 
 
 def write_attributes(
@@ -265,7 +265,7 @@ def read_timestamps(
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, Any] | None,
-) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.float64|str]:  # type: ignore[type-var]
     """Read timestamps from file.
 
     Args:
@@ -278,6 +278,34 @@ def read_timestamps(
         Numpy array of timestamps read from file
     """
     raise NotImplementedError("The Pyvista backend cannot read timestamps.")
+
+
+def read_function_names(
+    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+) -> list[str]:
+    """Read all function names from a file.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator to launch IO on.
+        backend_args: Arguments to backend
+
+    Returns:
+        A list of function names.
+    """
+    in_data = pyvista.read(filename)
+    if isinstance(in_data, pyvista.UnstructuredGrid):
+        grid = in_data
+    elif isinstance(in_data, pyvista.core.composite.MultiBlock):
+        # To handle multiblock like pvd
+        pyvista._VTK_SNAKE_CASE_STATE = "allow"
+        number_of_blocks = in_data.number_of_blocks
+        assert number_of_blocks == 1
+        b0 = in_data.get_block(0)
+        assert isinstance(b0, pyvista.UnstructuredGrid)
+        grid = b0
+
+    return list(grid.point_data.keys())
 
 
 def write_mesh(

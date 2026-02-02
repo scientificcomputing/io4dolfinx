@@ -123,7 +123,7 @@ def read_timestamps(
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, Any] | None = None,
-) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.float64|str]:  # type: ignore[type-var]
     """Read time-stamps from a checkpoint file.
 
     Args:
@@ -912,14 +912,30 @@ def snapshot_checkpoint(
             raise NotImplementedError(f"Mode {mode} is not implemented for snapshot checkpoint")
 
 
+def read_function_names(
+    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+) -> list[str]:
+    """Read all function names from a file.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator to launch IO on.
+        backend_args: Arguments to backend
+
+    Returns:
+        A list of function names.
+    """
+    raise NotImplementedError("Reading function names are not implemented with ADIOS2")
+
+
 def read_point_data(
     filename: Path | str,
     name: str,
     comm: MPI.Intracomm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
-) -> tuple[np.ndarray, np.int32]:
-    """Read data from te nodes of a mesh.
+) -> tuple[np.ndarray, int]:
+    """Read data from the nodes of a mesh.
 
     Args:
         filename: Path to file
