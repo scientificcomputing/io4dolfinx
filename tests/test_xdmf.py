@@ -55,8 +55,13 @@ def test_xdmf_function(tmp_path):
     MPI.COMM_WORLD.barrier()
 
     in_grid = adios4dolfinx.read_mesh(tmp_file, MPI.COMM_WORLD, backend="xdmf")
-    u = adios4dolfinx.read_point_data(tmp_file, "u", in_grid, backend="xdmf")
+    names = adios4dolfinx.read_function_names(
+        tmp_file, MPI.COMM_WORLD, backend_args={}, backend="xdmf"
+    )
+    assert len(names) == 1
+    assert names[0] == "u"
 
+    u = adios4dolfinx.read_point_data(tmp_file, "u", in_grid, backend="xdmf")
     u_ref = dolfinx.fem.Function(u.function_space)
     u_ref.interpolate(f)
     eps = np.finfo(mesh.geometry.x.dtype).eps

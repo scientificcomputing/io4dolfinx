@@ -424,3 +424,33 @@ def read_hdf5_array(
                 Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
     """
     raise NotImplementedError("The XDMF backend cannot read HDF5 arrays")
+
+
+def read_function_names(
+    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+) -> list[str]:
+    """Read all function names from a file.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator to launch IO on.
+        backend_args: Arguments to backend
+
+    Returns:
+        A list of function names.
+    """
+    # Find all functions in xml tree
+    check_file_exists(filename)
+    filename = Path(filename)
+
+    tree = ElementTree.parse(filename)
+    root = tree.getroot()
+    backend_args = get_default_backend_args(backend_args)
+    # Functions in checkpoint format
+    checkpoint_funcs = root.findall(".//Attribute[@ItemType='FiniteElementFunction']")
+    names = [func.attrib["Name"] for func in checkpoint_funcs]
+    # Temporal funcs
+    temporal_funcs = root.findall(".//Grid[@GridType='Collection']")
+    for func in temporal_funcs:
+        names.append(func.attrib["Name"])
+    return list(set(names))
