@@ -546,7 +546,7 @@ def write_function(
 def read_function_names(
     filename: Path | str,
     comm: MPI.Intracomm,
-    backend_args: dict[str, Any] | None,
+    backend_args: dict[str, Any] | None = None,
     backend: str = "h5py",
 ) -> list[str]:
     """Read all function names from a file.

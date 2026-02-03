@@ -275,7 +275,7 @@ def write_mesh(
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Intracomm,
-    time: float = 0.0,
+    time: float | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
 ) -> ReadMeshData:
@@ -948,3 +948,26 @@ def read_point_data(
        Data local to process (contiguous, no mpi comm) and local start range
     """
     raise NotImplementedError("The ADIOS2 backend cannot read point data.")
+
+
+def read_cell_data(
+    filename: Path | str,
+    name: str,
+    comm: MPI.Intracomm,
+    time: str | float | None,
+    backend_args: dict[str, Any] | None,
+) -> tuple[npt.NDArray[np.int64], np.ndarray]:
+    """Read data from the cells of a mesh.
+
+    Args:
+        filename: Path to file
+        name: Name of point data
+        comm: Communicator to launch IO on.
+        time: The time stamp
+        backend_args: The backend arguments
+    Returns:
+        A tuple (topology, dofs) where topology contains the
+        vertex indices of the cells, dofs the degrees of
+        freedom within that cell.
+    """
+    raise NotImplementedError("The ADIOS2 backend does not support reading cell data.")

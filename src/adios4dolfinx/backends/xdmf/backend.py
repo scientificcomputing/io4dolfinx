@@ -2,6 +2,7 @@
 Module that uses DOLFINx/H%py to import XDMF files.
 """
 
+import contextlib
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -19,6 +20,39 @@ from adios4dolfinx.utils import check_file_exists, compute_local_range
 from .. import FileMode, ReadMode
 
 read_mode = ReadMode.parallel
+
+
+@contextlib.contextmanager
+def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
+    """Context manager for opening an HDF5 file with h5py.
+
+    Args:
+        h5name: The name of the HDF5 file.
+        filemode: The file mode.
+        force_serial: Force serial access to the file.
+        comm: The MPI communicator
+
+    """
+    import h5py
+
+    if comm is None:
+        comm = MPI.COMM_WORLD
+
+    if h5py.h5.get_config().mpi and not force_serial:
+        h5file = h5py.File(h5name, filemode, driver="mpio", comm=comm)
+    else:
+        if comm.size > 1 and not force_serial:
+            raise ValueError(
+                f"h5py is not installed with MPI support, while using {comm.size} processes.",
+                "If you really want to do this, turn on the `force_serial` flag.",
+            )
+        h5file = h5py.File(h5name, filemode)
+
+    try:
+        yield h5file
+    finally:
+        if h5file.id:
+            h5file.close()
 
 
 def extract_function_names_and_timesteps(filename: Path | str) -> dict[str, list[str]]:
@@ -59,7 +93,7 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Intracomm,
-    time: float,
+    time: float | None,
     read_from_partition: bool,
     backend_args: dict[str, Any] | None,
 ) -> ReadMeshData:
@@ -137,19 +171,13 @@ def read_point_data(
     assert isinstance(func_path, str)
     data_file, data_loc = func_path.split(":")
     data_path = filename.parent / data_file
-    import h5py
-
-    if h5py.h5.get_config().mpi:
-        h5file = h5py.File(data_path, "r", driver="mpio", comm=comm)
-    data = h5file[data_loc]
-
-    for s1, s2 in zip(data.shape, global_shape, strict=True):
-        assert int(s1) == int(s2)
-    lr = compute_local_range(comm, data.shape[0])
-    local_range_start = lr[0]
-    dataset = data[slice(*lr), :]
-    h5file.close()
-
+    with h5pyfile(data_path, "r", comm=comm) as h5file:
+        data = h5file[data_loc]
+        for s1, s2 in zip(data.shape, global_shape, strict=True):
+            assert int(s1) == int(s2)
+        lr = compute_local_range(comm, data.shape[0])
+        local_range_start = lr[0]
+        dataset = data[slice(*lr), :]
     return dataset, local_range_start
 
 
@@ -454,3 +482,93 @@ def read_function_names(
     for func in temporal_funcs:
         names.append(func.attrib["Name"])
     return list(set(names))
+
+
+def read_cell_data(
+    filename: Path | str,
+    name: str,
+    comm: MPI.Intracomm,
+    time: str | float | None,
+    backend_args: dict[str, Any] | None,
+) -> tuple[npt.NDArray[np.int64], np.ndarray]:
+    """Read data from the cells of a mesh.
+
+    Args:
+        filename: Path to file
+        name: Name of point data
+        comm: Communicator to launch IO on.
+        time: The time stamp
+        backend_args: The backend arguments
+    Returns:
+        A tuple (topology, dofs) where topology contains the
+        vertex indices of the cells, dofs the degrees of
+        freedom within that cell.
+    """
+    # Find function with name u in xml tree
+    check_file_exists(filename)
+    filename = Path(filename)
+
+    tree = ElementTree.parse(filename)
+    root = tree.getroot()
+    backend_args = get_default_backend_args(backend_args)
+    if time is not None:
+        time_steps = root.findall(f".//Grid[@Name='{name}']")
+        time_found = False
+        for time_node in time_steps:
+            step_node = time_node.find(".//Time")
+            assert isinstance(step_node, ElementTree.Element)
+            if np.isclose(float(step_node.attrib["Value"]), time):
+                time_found = True
+                break
+        func_node = time_node.find(f".//Attribute[@Name='{name}']")
+        if not time_found:
+            raise RuntimeError(f"Function {name} at time={time} not found in {filename}")
+    else:
+        func_node = root.find(f".//Attribute[@Name='{name}']")
+    assert func_node is not None
+    if func_node.attrib["ItemType"] == "FiniteElementFunction":
+        if (family := func_node.attrib["ElementFamily"]) != "DG" or (
+            degree := int(func_node.attrib["ElementDegree"])
+        ) != 0:
+            raise ValueError(
+                f"Cannot read in finite element function ({family}, {degree}) as cell data."
+            )
+        # Get vector sub-element
+        vec_el = None
+        for node in func_node.iter():
+            comp = node.text
+            assert comp is not None
+            if "vector" in comp:
+                vec_el = node
+                break
+        assert vec_el is not None
+        dof_dimensions = np.array(vec_el.attrib["Dimensions"].split(" "), dtype=np.int32)
+        vtxt = vec_el.text
+        assert vtxt is not None
+        vector_file, vector_h5path = vtxt.split(":")
+
+        grid_node = root.find(f".//Attribute[@Name='{name}']/..")
+        assert grid_node is not None
+        topology = grid_node.find("./Topology")
+        assert topology is not None
+        ttext = topology[0].text
+        assert ttext is not None
+        topology_file, topology_h5path = ttext.split(":")
+
+        with h5pyfile(filename.parent / vector_file, "r", comm=comm) as h5_mesh:
+            data_loc = h5_mesh[vector_h5path]
+            data_shape = data_loc.shape[0]
+            assert int(np.prod(data_shape)) == int(np.prod(dof_dimensions))
+            local_range = compute_local_range(comm, data_shape)
+            vec_dofs = data_loc[slice(*local_range)]
+
+        with h5pyfile(filename.parent / topology_file, "r", comm=comm) as h5_top:
+            data_loc = h5_top[topology_h5path]
+            top_data_shape = data_loc.shape[0]
+            assert dof_dimensions[0] == top_data_shape
+            local_range = compute_local_range(comm, data_shape)
+            top_dofs = data_loc[slice(*local_range)].astype(np.int64)
+
+        return top_dofs, vec_dofs
+    else:
+        raise NotImplementedError("Not implemented yet.")

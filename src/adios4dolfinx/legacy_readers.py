@@ -340,6 +340,7 @@ def read_point_data(
     )
 
     # Assumption: Same doflayout for geometry and function space, cannot test in python
+    # NOTE: Should probably reuse the geometry dofmap.
     V = dolfinx.fem.functionspace(mesh, element)
     uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
     # Assume that mesh is first order for now
@@ -370,3 +371,45 @@ def read_point_data(
         uh.x.array[dof_pos] = arr_i
 
     return uh
+
+
+def read_cell_data(
+    filename: Path | str,
+    name: str,
+    mesh: dolfinx.mesh.Mesh,
+    time: float | None = None,
+    backend_args: dict[str, Any] | None = None,
+    backend: str = "xdmf",
+) -> dolfinx.fem.Function:
+    """Read data from the nodes of a mesh.
+
+    Args:
+        filename: Path to file
+        name: Name of point data
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+        time: Time-step to read from.
+
+    Returns:
+        A function in a DG-0 space on the mesh. The cells not found in input is set to zero.
+    """
+
+    backend_cls = get_backend(backend)
+
+    topology, dofs = backend_cls.read_cell_data(
+        filename=filename, name=name, comm=mesh.comm, time=time, backend_args=backend_args
+    )
+    num_components = dofs.shape[1]
+    V = dolfinx.fem.functionspace(mesh, ("DG", 0, (num_components,)))
+    u = dolfinx.fem.Function(V)
+    data_array = u.x.array.reshape(-1, num_components)
+    for i in range(dofs.shape[1]):
+        local_entities, local_values = dolfinx.io.distribute_entity_data(
+            mesh, mesh.topology.dim, topology, dofs[:, i].copy()
+        )
+        adj = dolfinx.graph.adjacencylist(local_entities)
+
+        order = np.arange(len(local_values), dtype=np.int32)
+        mt = dolfinx.mesh.meshtags_from_entities(mesh, mesh.topology.dim, adj, order)
+        data_array[mt.indices, i] = local_values[mt.values]
+    u.x.scatter_forward()
+    return u

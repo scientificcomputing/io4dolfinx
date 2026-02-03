@@ -17,6 +17,7 @@ import ufl
 from dolfinx.fem.petsc import LinearProblem
 
 from adios4dolfinx import (
+    read_cell_data,
     read_function,
     read_function_from_legacy_h5,
     read_function_names,
@@ -108,7 +109,6 @@ def test_legacy_function(backend):
     w_in = dolfinx.fem.Function(W)
 
     read_function_from_legacy_h5(path, mesh.comm, w_in, group="w", backend=backend)
-
     np.testing.assert_allclose(wh.x.array, w_in.x.array, atol=1e-14)
 
 
@@ -117,6 +117,7 @@ def test_read_legacy_function_from_checkpoint(backend):
     path = (pathlib.Path("legacy") / "mesh_checkpoint.h5").absolute()
     if not path.exists():
         pytest.skip(f"{path} does not exist")
+
     mesh = read_mesh_from_legacy_h5(path, comm, "/Mesh/mesh", backend=backend)
 
     V = dolfinx.fem.functionspace(mesh, ("DG", 2))
@@ -138,6 +139,7 @@ def test_read_legacy_function_from_checkpoint(backend):
     problem.solve()
 
     u_in = dolfinx.fem.Function(V)
+
     read_function_from_legacy_h5(path, mesh.comm, u_in, group="v", step=0, backend=backend)
     assert np.allclose(uh.x.array, u_in.x.array)
 
@@ -157,6 +159,18 @@ def test_read_legacy_function_from_checkpoint(backend):
     wh.interpolate(lambda x: np.vstack((x[0], 0 * x[0], x[1])))
     read_function_from_legacy_h5(path, mesh.comm, w_in, group="w", step=1, backend=backend)
     np.testing.assert_allclose(wh.x.array, w_in.x.array, atol=1e-14)
+
+    if backend == "h5py":
+        qh = read_cell_data(
+            path.with_suffix(".xdmf"), "vDG_checkpoint", mesh, 0.5, backend_args={}, backend="xdmf"
+        )
+        cell_map = mesh.topology.index_map(mesh.topology.dim)
+        num_cells_local = cell_map.size_local + cell_map.num_ghosts
+        midpoints = dolfinx.mesh.compute_midpoints(
+            mesh, mesh.topology.dim, np.arange(num_cells_local, dtype=np.int32)
+        )
+        ref_val = midpoints[:, 0] + midpoints[:, 1]
+        np.testing.assert_allclose(qh.x.array, ref_val)
 
 
 def test_adios4dolfinx_legacy():

@@ -109,7 +109,7 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Intracomm,
-    time: float,
+    time: float | None,
     read_from_partition: bool,
     backend_args: dict[str, Any] | None,
 ) -> ReadMeshData:
@@ -211,7 +211,12 @@ def read_point_data(
             dataset = dataset.reshape(-1, num_components)
         else:
             num_components = dataset.shape[1]
-        num_components, gtype = comm.bcast((num_components, dataset.dtype), root=0)
+        if np.issubdtype(dataset.dtype, np.integer):
+            gtype = in_data.points.dtype
+            dataset = dataset.astype(gtype)
+        else:
+            gtype = in_data.dtype
+        num_components, gtype = comm.bcast((num_components, gtype), root=0)
         local_range_start = 0
     else:
         num_components, gtype = comm.bcast(None, root=0)
@@ -219,6 +224,48 @@ def read_point_data(
         local_range_start = 0
 
     return dataset, int(local_range_start)
+
+
+def read_cell_data(
+    filename: Path | str,
+    name: str,
+    comm: MPI.Intracomm,
+    time: str | float | None,
+    backend_args: dict[str, Any] | None,
+) -> tuple[npt.NDArray[np.int64], np.ndarray]:
+    dataset: np.ndarray
+    topology: np.ndarray
+    if MPI.COMM_WORLD.rank == 0:
+        in_data = pyvista.read(filename)
+        if isinstance(in_data, pyvista.UnstructuredGrid):
+            grid = in_data
+        elif isinstance(in_data, pyvista.core.composite.MultiBlock):
+            # To handle multiblock like pvd
+            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            number_of_blocks = in_data.number_of_blocks
+            assert number_of_blocks == 1
+            b0 = in_data.get_block(0)
+            assert isinstance(b0, pyvista.UnstructuredGrid)
+            grid = b0
+
+        dataset = grid.cell_data[name]
+        if len(dataset.shape) == 1:
+            num_components = 1
+            dataset = dataset.reshape(-1, num_components)
+        else:
+            num_components = dataset.shape[1]
+        if np.issubdtype(dataset.dtype, np.integer):
+            gtype = in_data.points.dtype
+            dataset = dataset.astype(gtype)
+        else:
+            gtype = in_data.dtype
+        num_components, gtype = comm.bcast((num_components, gtype), root=0)
+    else:
+        num_components, gtype = comm.bcast(None, root=0)
+        dataset = np.zeros((0, num_components), dtype=gtype)
+    _time = float(time) if time is not None else None
+    topology = read_mesh_data(filename, comm, _time, False, backend_args=None).cells
+    return topology, dataset
 
 
 def write_attributes(
@@ -305,7 +352,9 @@ def read_function_names(
         assert isinstance(b0, pyvista.UnstructuredGrid)
         grid = b0
 
-    return list(grid.point_data.keys())
+    point_data = list(grid.point_data.keys())
+    cell_data = list(grid.cell_data.keys())
+    return point_data + cell_data
 
 
 def write_mesh(

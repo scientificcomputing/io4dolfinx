@@ -239,7 +239,7 @@ def write_mesh(
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Intracomm,
-    time: float = 0.0,
+    time: float | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
 ) -> ReadMeshData:
@@ -261,6 +261,7 @@ def read_mesh_data(
             raise KeyError("Could not find mesh in file")
         mesh_group = h5file["mesh"]
         timestamps = mesh_group.attrs["timestamps"]
+        assert time is not None
         parent_group = np.flatnonzero(np.isclose(timestamps, time))
         if len(parent_group) != 1:
             raise RuntimeError(
@@ -374,13 +375,13 @@ def read_meshtags_data(
         filename: Path to file to read from
         comm: MPI communicator used in storage
         name: Name of the mesh tags to read
-        backend_args: Arguments to backend
+        backend_args: Arguments to backend. If "legacy_dolfin" is supplied as argument
+            the HDF5 file is assumed to have been made with DOLFIN
 
     Returns:
         Internal data structure for the mesh tags read from file
     """
     backend_args = get_default_backend_args(backend_args)
-
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         if "mesh" not in h5file.keys():
             raise KeyError("No mesh found")
@@ -394,11 +395,11 @@ def read_meshtags_data(
 
         dim = tag.attrs["dim"]
         topology = tag["Topology"]
+        values = tag["Values"]
         num_entities_global = topology.shape[0]
         topology_range = compute_local_range(comm, num_entities_global)
-        indices = topology[slice(*topology_range), :]
-        values = tag["Values"]
-        vals = values[slice(*topology_range)]
+        indices = topology[slice(*topology_range), :].astype(np.int64)
+        vals = values[slice(*topology_range)].astype(np.int32)
         return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
 
 
@@ -772,3 +773,26 @@ def read_point_data(
        Data local to process (contiguous, no mpi comm) and local start range
     """
     raise NotImplementedError("The h5py backend cannot read point data.")
+
+
+def read_cell_data(
+    filename: Path | str,
+    name: str,
+    comm: MPI.Intracomm,
+    time: str | float | None,
+    backend_args: dict[str, Any] | None,
+) -> tuple[npt.NDArray[np.int64], np.ndarray]:
+    """Read data from the cells of a mesh.
+
+    Args:
+        filename: Path to file
+        name: Name of point data
+        comm: Communicator to launch IO on.
+        time: The time stamp
+        backend_args: The backend arguments
+    Returns:
+        A tuple (topology, dofs) where topology contains the
+        vertex indices of the cells, dofs the degrees of
+        freedom within that cell.
+    """
+    raise NotImplementedError("The h5py backend does not support reading cell data.")

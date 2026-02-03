@@ -38,10 +38,13 @@ def create_reference_data(
     v1 = dolfin.interpolate(dolfin.Expression("x[0]", degree=1), V)
     w1 = dolfin.interpolate(dolfin.Expression(("x[0]", "0", "x[1]"), degree=1), W)
 
+    tt = dolfin.Function(dolfin.FunctionSpace(mesh, "DG", 0))
+    tt.interpolate(dolfin.Expression(("x[0]+x[1]"), degree=0))
     with dolfin.HDF5File(mesh.mpi_comm(), str(h5_file), "w") as hdf:
         hdf.write(mesh, mesh_name)
         hdf.write(v0, function_name)
         hdf.write(w0, function_name_vec)
+        hdf.write(tt, function_name + "DG")
 
     with dolfin.XDMFFile(mesh.mpi_comm(), str(xdmf_file)) as xdmf:
         xdmf.write(mesh)
@@ -49,9 +52,11 @@ def create_reference_data(
         xdmf.write_checkpoint(w0, function_name_vec, 0, dolfin.XDMFFile.Encoding.HDF5, append=True)
         xdmf.write_checkpoint(v1, function_name, 1, dolfin.XDMFFile.Encoding.HDF5, append=True)
         xdmf.write_checkpoint(w1, function_name_vec, 1, dolfin.XDMFFile.Encoding.HDF5, append=True)
+        # Legacy DG-0 checkpoint has to be scalar
+        xdmf.write_checkpoint(
+            tt, function_name + "DG_checkpoint", 0.5, dolfin.XDMFFile.Encoding.HDF5, append=True
+        )
 
-    with dolfin.XDMFFile(mesh.mpi_comm(), "test.xdmf") as xdmf:
-        xdmf.write(mesh)
     return v0, w0, v1, w1
 
 

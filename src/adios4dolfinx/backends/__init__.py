@@ -151,7 +151,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         comm: MPI.Intracomm,
-        time: float,
+        time: float | None,
         read_from_partition: bool,
         backend_args: dict[str, Any] | None,
     ) -> ReadMeshData:
@@ -355,6 +355,29 @@ class IOBackend(Protocol):
 
         Returns:
             A list of function names.
+        """
+        ...
+
+    def read_cell_data(
+        self,
+        filename: Path | str,
+        name: str,
+        comm: MPI.Intracomm,
+        time: str | float | None,
+        backend_args: dict[str, Any] | None,
+    ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
+        """Read data from the cells of a mesh.
+
+        Args:
+            filename: Path to file
+            name: Name of point data
+            comm: Communicator to launch IO on.
+            time: The time stamp
+            backend_args: The backend arguments
+        Returns:
+            A tuple (topology, dofs) where topology contains the
+            vertex indices of the cells, dofs the degrees of
+            freedom within that cell.
         """
         ...
 
