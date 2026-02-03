@@ -102,7 +102,7 @@ def read_timestamps(
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
     backend: str = "adios2",
-    ) -> npt.NDArray[np.float64|str]:  # type: ignore[type-var]
+) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
     """
     Read time-stamps from a checkpoint file.
 

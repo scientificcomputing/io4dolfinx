@@ -265,7 +265,7 @@ def read_timestamps(
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, Any] | None,
-    ) -> npt.NDArray[np.float64|str]:  # type: ignore[type-var]
+) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
     """Read timestamps from file.
 
     Args:
