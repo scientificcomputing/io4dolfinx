@@ -7,10 +7,6 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-try:
-    import h5py
-except ImportError:
-    raise ModuleNotFoundError("This module requires h5py")
 from pathlib import Path
 
 from mpi4py import MPI
