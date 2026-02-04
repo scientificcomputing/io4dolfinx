@@ -407,5 +407,9 @@ def get_backend(backend: str) -> IOBackend:
         from .xdmf import backend as XDMFInterface
 
         return XDMFInterface
+    elif backend == "vtkhdf":
+        from .vtkhdf import backend as VTKDHFInterface
+
+        return VTKDHFInterface
     else:
         return import_module(backend)

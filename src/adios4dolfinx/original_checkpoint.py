@@ -348,13 +348,17 @@ def write_function_on_input_mesh(
     """
     Write function checkpoint (to be read with the input mesh).
 
+    Note:
+        Requires backend to implement {py:class}`adios4dolfinx.backends.write_function`.
+
     Args:
-        u: The function to checkpoint
         filename: The filename to write to
-        engine: The ADIOS2 engine to use
-        mode: The ADIOS2 mode to use (write or append)
+        u: The function to checkpoint
         time: Time-stamp associated with function at current write step
+        mode: The mode to use (write or append)
         name: Name of function. If None, the name of the function is used.
+        backend_args: Arguments to backend
+        backend: Choice of backend module
     """
     mesh = u.function_space.mesh
     function_data = create_function_data_on_original_mesh(u, name)
@@ -376,12 +380,24 @@ def write_mesh_input_order(
     filename: Path | str,
     mesh: dolfinx.mesh.Mesh,
     time: float = 0.0,
+    mode: FileMode = FileMode.write,
     backend: str = "adios2",
     backend_args: dict[str, typing.Any] | None = None,
-    mode: FileMode = FileMode.write,
 ):
     """
-    Write mesh to checkpoint file in original input ordering
+    Write mesh to checkpoint file in original input ordering.
+
+    Note:
+        Requires backend to implement {py:class}`adios4dolfinx.backends.write_mesh`.
+
+    Args:
+        filename: The filename to write to
+        mesh: Mesh to checkpoint
+        time: Time-stamp associated with function at current write step
+        mode: The mode to use (write or append)
+        name: Name of function. If None, the name of the function is used.
+        backend_args: Arguments to backend
+        backend: Choice of backend module
     """
     mesh_data = create_original_mesh_data(mesh)
     fname = Path(filename)
