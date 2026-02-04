@@ -109,7 +109,7 @@ def read_mesh_data(
     Returns:
         Internal data structure for the mesh data read from file
     """
-    assert read_from_partition == False
+    assert not read_from_partition
     check_file_exists(filename)
     with dolfinx.io.XDMFFile(comm, filename, "r") as file:
         cell_shape, cell_degree = file.read_cell_type()
