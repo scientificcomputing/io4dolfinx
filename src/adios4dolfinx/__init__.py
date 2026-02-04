@@ -21,13 +21,13 @@ from .checkpointing import (
     write_mesh,
     write_meshtags,
 )
-from .legacy_readers import (
+from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
+from .readers import (
     read_cell_data,
     read_function_from_legacy_h5,
     read_mesh_from_legacy_h5,
     read_point_data,
 )
-from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
 from .snapshot import snapshot_checkpoint
 
 meta = metadata("adios4dolfinx")

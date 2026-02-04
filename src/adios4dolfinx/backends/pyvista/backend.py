@@ -125,6 +125,7 @@ def read_mesh_data(
     Returns:
         Internal data structure for the mesh data read from file
     """
+    backend_args = get_default_backend_args(backend_args)
     check_file_exists(filename)
     if read_from_partition:
         raise RuntimeError("Cannot read partition data with Pyvista")
@@ -161,15 +162,18 @@ def read_mesh_data(
         perm = dolfinx.cpp.io.perm_vtk(dolfinx.mesh.to_type(cell_type), cells.shape[1])
         cells = cells[:, perm]
         lvar = int(basix.LagrangeVariant.equispaced)
+        gtype = backend_args.get("dtype", geom.dtype)
         order, lvar, nodes_per_cell, cell_type, gtype, gdim = comm.bcast(
-            (order, lvar, cells.shape[1], cell_type, geom.dtype, geom.shape[1]), root=0
+            (order, lvar, cells.shape[1], cell_type, gtype, geom.shape[1]), root=0
         )
     else:
         order, lvar, nodes_per_cell, cell_type, gtype, gdim = comm.bcast(None, root=0)
         geom = np.zeros((0, gdim), dtype=gtype)
         cells = np.zeros((0, nodes_per_cell), dtype=np.int64)
 
-    return ReadMeshData(cells=cells, cell_type=cell_type, x=geom, lvar=lvar, degree=order)
+    return ReadMeshData(
+        cells=cells, cell_type=cell_type, x=geom.astype(gtype), lvar=lvar, degree=order
+    )
 
 
 def read_point_data(
@@ -254,11 +258,12 @@ def read_cell_data(
             dataset = dataset.reshape(-1, num_components)
         else:
             num_components = dataset.shape[1]
+
         if np.issubdtype(dataset.dtype, np.integer):
             gtype = in_data.points.dtype
             dataset = dataset.astype(gtype)
         else:
-            gtype = in_data.dtype
+            gtype = dataset.dtype
         num_components, gtype = comm.bcast((num_components, gtype), root=0)
     else:
         num_components, gtype = comm.bcast(None, root=0)
