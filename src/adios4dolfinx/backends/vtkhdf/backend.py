@@ -2,17 +2,15 @@
 Module that can read the VTKHDF format using h5py.
 """
 
-from typing import Any
-
-import numpy as np
-import numpy.typing as npt
-
 from pathlib import Path
+from typing import Any
 
 from mpi4py import MPI
 
 import basix
 import dolfinx
+import numpy as np
+import numpy.typing as npt
 
 from adios4dolfinx.structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
 from adios4dolfinx.utils import check_file_exists, compute_local_range
@@ -148,7 +146,40 @@ def read_point_data(
     Returns:
        Data local to process (contiguous, no mpi comm) and local start range
     """
-    raise NotImplementedError("This is not implemented in VTKHDF yet.")
+    backend_args = get_default_backend_args(backend_args)
+    check_file_exists(filename)
+    with h5pyfile(filename, "r", comm=comm) as h5file:
+        hdf = h5file["VTKHDF"]
+        if "PointData" not in hdf.keys():
+            raise ValueError(f"No point data found in {filename}.")
+        point_data = hdf["PointData"]
+        assert point_data is not None
+        if name not in point_data.keys():
+            raise ValueError(f"No point data named {name} in {filename}.")
+        func_node = point_data[name]
+
+        if time is None:
+            data_shape = func_node.shape[0]
+            lr = compute_local_range(comm, data_shape)
+            data = func_node[slice(*lr)]
+            return data, lr[0]
+        else:
+            if "Steps" not in hdf.keys():
+                raise RuntimeError(f"No timestepping information found in {filename}.")
+            stamps = hdf["Steps"]["Values"][:]
+            pos = np.flatnonzero(np.isclose(stamps, time))
+            if len(pos) == 0:
+                raise RuntimeError(f"Could not find {name}(t={time}) in {filename}.")
+            elif len(pos) > 1:
+                raise RuntimeError(f"Multiple time steps for {name}(t={time}) in {filename}")
+            pd_offsets = hdf["Steps"]["PointDataOffsets"][name][:]
+            pd_offsets = np.hstack([pd_offsets, [func_node.shape[0]]])
+
+            step_start = pd_offsets[pos[0]]
+            step_end = pd_offsets[pos[0] + 1]
+            global_size = step_end - step_start
+            lr = compute_local_range(comm, global_size)
+            return func_node[step_start + lr[0] : step_start + lr[1]], lr[0]
 
 
 def read_cell_data(
@@ -162,10 +193,13 @@ def read_cell_data(
     check_file_exists(filename)
     with h5pyfile(filename, "r", comm=comm) as h5file:
         hdf = h5file["VTKHDF"]
-        num_cells_global = hdf["Types"].size
+        if "CellData" not in hdf.keys():
+            raise RuntimeError(f"No cell data found in {filename}.")
         cell_data = hdf["CellData"]
+        assert cell_data is not None
         cell_data_node = cell_data[name]
         cell_data_shape = cell_data_node.shape
+        num_cells_global = hdf["Types"].size
         assert num_cells_global == cell_data_shape[0]
         local_cell_range = compute_local_range(comm, num_cells_global)
         data = cell_data_node[slice(*local_cell_range)]
@@ -233,7 +267,31 @@ def read_timestamps(
     Returns:
         Numpy array of timestamps read from file
     """
-    raise NotImplementedError("The Pyvista backend cannot read timestamps.")
+    backend_args = get_default_backend_args(backend_args)
+    check_file_exists(filename)
+    # Temporal data storage as described in
+    # https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/vtkhdf_specifications.html#temporal-data
+    with h5pyfile(filename, "r", comm=comm) as h5file:
+        hdf = h5file["VTKHDF"]
+        if "Steps" in hdf.keys():
+            timestamps = hdf["Steps"]["Values"][:]
+            # For either point data or cell data, check if function exists,
+            # and check if offsets in time are changing between steps.
+            if "CellData" in hdf.keys() and function_name in hdf["CellData"].keys():
+                offsets = hdf["Steps"]["CellDataOffsets"][function_name]
+                step_offsets = offsets[:]
+                step_diff = np.flatnonzero(step_offsets[1:] - step_offsets[:-1])
+                return timestamps[step_diff]
+            elif "PointData" in hdf.keys() and function_name in hdf["PointData"].keys():
+                offsets = hdf["Steps"]["PointDataOffsets"][function_name]
+                step_offsets = offsets[:]
+                step_diff = np.flatnonzero(step_offsets[1:] - step_offsets[:-1])
+                # This only finds when the offset changes, does not capture first step
+                return np.hstack([[timestamps[0]], timestamps[step_diff]])
+            else:
+                raise RuntimeError(f"Function {function_name} is not assoicated with a time-stamp.")
+        else:
+            raise RuntimeError(f"{filename} does not contain time-stepping information.")
 
 
 def read_function_names(

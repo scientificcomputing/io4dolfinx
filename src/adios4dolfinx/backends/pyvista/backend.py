@@ -47,23 +47,23 @@ _arbitrary_lagrange_vtk = {
 read_mode = ReadMode.serial
 
 
-def _cell_degree(ct: str, num_nodes: int):
+def _cell_degree(ct: str, num_nodes: int) -> int:
     if ct == "point":
         return 1
     elif ct == "interval":
-        return num_nodes - 1
+        return int(num_nodes - 1)
     elif ct == "triangle":
         n = (np.sqrt(1 + 8 * num_nodes) - 1) / 2
         if 2 * num_nodes != n * (n + 1):
             raise ValueError(f"Unknown triangle layout. Number of nodes: {num_nodes}")
-        return n - 1
+        return int(n - 1)
     elif ct == "tetrahedron":
         n = 0
         while n * (n + 1) * (n + 2) < 6 * num_nodes:
             n += 1
         if n * (n + 1) * (n + 2) != 6 * num_nodes:
             raise ValueError(f"Unknown tetrahedron layout. Number of nodes: {num_nodes}")
-        return n - 1
+        return int(n - 1)
 
     elif ct == "quadrilateral":
         n = np.sqrt(num_nodes)

@@ -372,7 +372,7 @@ def read_point_data(
         )
         dof_pos = x_dofmap.reshape(-1) * num_components + i
         uh.x.array[dof_pos] = arr_i
-
+    uh.x.scatter_forward()
     return uh
 
 
