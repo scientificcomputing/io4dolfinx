@@ -89,20 +89,71 @@ def read_mesh_data(
 
     with h5pyfile(filename, "r", comm=comm) as h5file:
         hdf = h5file["VTKHDF"]
-        num_cells_global = hdf["Types"].size
 
-        local_cell_range = compute_local_range(comm, num_cells_global)
-        cell_types_local = hdf["Types"][local_cell_range[0] : local_cell_range[1]]
+        if time is None:
+            num_cells_global = hdf["Types"].size
+            local_cell_range = compute_local_range(comm, num_cells_global)
+            cell_types_local = hdf["Types"][slice(*local_cell_range)]
 
-        num_points_global = hdf["NumberOfPoints"][0]
-        local_point_range = compute_local_range(comm, num_points_global)
-        points_local = hdf["Points"][local_point_range[0] : local_point_range[1]]
+            num_points_global = hdf["NumberOfPoints"][0]
+            local_point_range = compute_local_range(comm, num_points_global)
+            points_local = hdf["Points"][slice(*local_point_range)]
 
-        # Connectivity read
-        offsets = hdf["Offsets"]
-        local_connectivity_offset = offsets[local_cell_range[0] : local_cell_range[1] + 1]
-        topology = hdf["Connectivity"][local_connectivity_offset[0] : local_connectivity_offset[-1]]
-    offset = local_connectivity_offset - local_connectivity_offset[0]
+            # Connectivity read
+            offsets = hdf["Offsets"]
+            local_connectivity_offset = offsets[local_cell_range[0] : local_cell_range[1] + 1]
+            topology = hdf["Connectivity"][
+                local_connectivity_offset[0] : local_connectivity_offset[-1]
+            ]
+            offset = local_connectivity_offset - local_connectivity_offset[0]
+        else:
+            if "Steps" not in hdf.keys():
+                raise RuntimeError(f"No timestepping information found in {filename}.")
+            stamps = hdf["Steps"]["Values"][:]
+            pos = np.flatnonzero(np.isclose(stamps, time))
+            if len(pos) == 0:
+                raise RuntimeError(f"Could not find mesh at t={time} in {filename}.")
+            elif len(pos) > 1:
+                raise RuntimeError(f"Multiple time steps for mesh at t={time} in {filename}")
+
+            # Get number of points
+            point_node = hdf["Points"]
+            step_start = hdf["Steps"]["PointOffsets"][pos[0]]
+
+            # NOTE: currently, it doesn't seem like we follow:
+            # https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/vtkhdf_specifications.html#temporal-unstructuredgrid-and-polydata
+            # As only one num_points is stored irregardless of time steps added.
+            if hdf["NumberOfPoints"].shape[0] != len(stamps):
+                num_pts = hdf["NumberOfPoints"][0]
+            else:
+                num_pts = hdf["NumberOfPoints"][pos[0]]
+            lr = compute_local_range(comm, num_pts)
+            points_local = point_node[step_start + lr[0] : step_start + lr[1]]
+
+            # Get cell-types in step
+            cell_start = hdf["Steps"]["CellOffsets"][pos[0]]
+            if hdf["NumberOfCells"].shape[0] != len(stamps):
+                num_cells = hdf["NumberOfCells"][0]
+            else:
+                num_cells = hdf["NumberOfCells"][pos[0]]
+            local_cell_range = compute_local_range(comm, num_cells)
+            cell_types_local = hdf["Types"][
+                cell_start + local_cell_range[0] : cell_start + local_cell_range[1]
+            ]
+
+            # Get connectivity in step
+            connectivity_start = hdf["Steps"]["ConnectivityIdOffsets"][pos[0]]
+            # Connectivity read
+            offsets = hdf["Offsets"]
+            local_connectivity_offset = offsets[
+                connectivity_start + local_cell_range[0] : connectivity_start
+                + local_cell_range[1]
+                + 1
+            ]
+            topology = hdf["Connectivity"][
+                local_connectivity_offset[0] : local_connectivity_offset[-1]
+            ]
+            offset = local_connectivity_offset - local_connectivity_offset[0]
 
     # NOTE: Currently we limit ourselfs to a single celltype, as it makes life easier,
     # other things have to change in `MeshReadData` to support this.
@@ -172,13 +223,15 @@ def read_point_data(
                 raise RuntimeError(f"Could not find {name}(t={time}) in {filename}.")
             elif len(pos) > 1:
                 raise RuntimeError(f"Multiple time steps for {name}(t={time}) in {filename}")
-            pd_offsets = hdf["Steps"]["PointDataOffsets"][name][:]
-            pd_offsets = np.hstack([pd_offsets, [func_node.shape[0]]])
-
-            step_start = pd_offsets[pos[0]]
-            step_end = pd_offsets[pos[0] + 1]
-            global_size = step_end - step_start
-            lr = compute_local_range(comm, global_size)
+            step_start = hdf["Steps"]["PointDataOffsets"][name][pos[0]]
+            # NOTE: currently, it doesn't seem like we follow:
+            # https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/vtkhdf_specifications.html#temporal-unstructuredgrid-and-polydata
+            # As only one num_points is stored irregardless of time steps added.
+            if hdf["NumberOfPoints"].shape[0] != len(stamps):
+                num_pts = hdf["NumberOfPoints"][0]
+            else:
+                num_pts = hdf["NumberOfPoints"][pos[0]]
+            lr = compute_local_range(comm, num_pts)
             return func_node[step_start + lr[0] : step_start + lr[1]], lr[0]
 
 
@@ -197,12 +250,37 @@ def read_cell_data(
             raise RuntimeError(f"No cell data found in {filename}.")
         cell_data = hdf["CellData"]
         assert cell_data is not None
+        if name not in cell_data.keys():
+            raise ValueError(f"No cell data with name {name} in {filename}")
         cell_data_node = cell_data[name]
-        cell_data_shape = cell_data_node.shape
-        num_cells_global = hdf["Types"].size
-        assert num_cells_global == cell_data_shape[0]
-        local_cell_range = compute_local_range(comm, num_cells_global)
-        data = cell_data_node[slice(*local_cell_range)]
+        assert cell_data_node is not None
+        if time is None:
+            cell_data_shape = cell_data_node.shape
+            num_cells_global = hdf["Types"].size
+            assert num_cells_global == cell_data_shape[0]
+            local_cell_range = compute_local_range(comm, num_cells_global)
+            data = cell_data_node[slice(*local_cell_range)]
+        else:
+            if "Steps" not in hdf.keys():
+                raise RuntimeError(f"No timestepping information found in {filename}.")
+            stamps = hdf["Steps"]["Values"][:]
+            pos = np.flatnonzero(np.isclose(stamps, time))
+            if len(pos) == 0:
+                raise RuntimeError(f"Could not find {name}(t={time}) in {filename}.")
+            elif len(pos) > 1:
+                raise RuntimeError(f"Multiple time steps for {name}(t={time}) in {filename}")
+            cd_start = hdf["Steps"]["CellDataOffsets"][name][pos[0]]
+
+            # NOTE: currently, it doesn't seem like we follow:
+            # https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/vtkhdf_specifications.html#temporal-unstructuredgrid-and-polydata
+            # As only one num_points is stored irregardless of time steps added.
+            if hdf["NumberOfCells"].shape[0] != len(stamps):
+                number_of_cells = hdf["NumberOfCells"][0]
+            else:
+                number_of_cells = hdf["NumberOfCells"][pos[0]]
+            lr = compute_local_range(comm, number_of_cells)
+            data = cell_data_node[cd_start + lr[0] : cd_start + lr[1]]
+
     # NOTE: THis could be optimized by hand-coding some communication in
     # `read_cell_data` on the frontend side
     md = read_mesh_data(filename, comm, time=time, read_from_partition=False, backend_args=None)

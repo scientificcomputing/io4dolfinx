@@ -275,7 +275,7 @@ def write_mesh(
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Intracomm,
-    time: float | None = 0.0,
+    time: str | float | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
 ) -> ReadMeshData:

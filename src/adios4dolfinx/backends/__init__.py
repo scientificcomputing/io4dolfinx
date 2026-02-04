@@ -151,7 +151,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         comm: MPI.Intracomm,
-        time: float | None,
+        time: str | float | None,
         read_from_partition: bool,
         backend_args: dict[str, Any] | None,
     ) -> ReadMeshData:

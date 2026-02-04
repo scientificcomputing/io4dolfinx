@@ -109,7 +109,7 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Intracomm,
-    time: float | None,
+    time: str | float | None,
     read_from_partition: bool,
     backend_args: dict[str, Any] | None,
 ) -> ReadMeshData:
