@@ -4,6 +4,7 @@ root: README
 parts:
   - caption: How to guides
     chapters:
+    - file: "docs/installation"
     - file: "docs/adding_backend"
     - file: "docs/migration_guide"
     
@@ -31,3 +32,4 @@ parts:
     - file: "docs/backends/h5py"
     - file: "docs/backends/pyvista"
     - file: "docs/backends/xdmf"
+    - file: "docs/backends/vtkhdf"

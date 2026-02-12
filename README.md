@@ -1,122 +1,57 @@
-# ADIOS4DOLFINx - A framework for checkpointing in DOLFINx
+# io4dolfinx - A framework for reading and writing data to various mesh formats
 
-![MIT](https://img.shields.io/github/license/jorgensd/adios4dolfinx)
-[![Anaconda-Server Badge](https://anaconda.org/conda-forge/adios4dolfinx/badges/version.svg)](https://anaconda.org/conda-forge/adios4dolfinx)
+io4dolfinx is an extension for [DOLFINx](https://github.com/FEniCS/dolfinx/) that supports reading and writing various mesh formats using a variety of backends:
 
-ADIOS4DOLFINx is an extension for [DOLFINx](https://github.com/FEniCS/dolfinx/) to checkpoint meshes, meshtags and functions using [ADIOS 2](https://adios2.readthedocs.io/en/latest/).
+## Reading meshes, node data and cell data
+Most meshing formats supports associating data with the nodes of the mesh (the mesh can be higher order) and the cells of the mesh. The node data can be read in as P-th order Lagrange functions (where P is the order of the grid), while the cell data can be read in as piecewise constant (DG-0) functions.
 
-The code uses the ADIOS2 Python-wrappers to write DOLFINx objects to file, supporting N-to-M (_recoverable_) and N-to-N (_snapshot_) checkpointing.
-See: [Checkpointing in DOLFINx - FEniCS 23](https://jsdokken.com/checkpointing-presentation/#/) or the examples in the [Documentation](https://jsdokken.com/adios4dolfinx/) for more information.
+- [VTKHDF](./docs/backends/vtkhdf.rst): The new scalable format from VTK, called [VTKHDF](https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/index.html) is supported by the `vtkhdf` backend. 
+- [XDMF](./docs/backends/xdmf.rst) (eXtensible Model Data Format): `.xdmf`. The `xdmf` backend supports the `HDF5` encoding, to ensure performance in parallel.
+- [PyVista](./docs/backends/pyvista.rst) (IO backend is meshio): The [pyvista](https://pyvista.org/) backend uses {py:func}`pyvista.read` to read in meshes, point data and cell data. `pyvista` relies on [meshio](https://github.com/nschloe/meshio) for most reading operations (including the XDMF ascii format).
+
+## Checkpointing
+Many finite element applications requires storage of functions that cannot be associated with the nodes or cells of the mesh. Therefore, we have implemented our own, native checkpointing format that supports N-to-M checkpointing (write data on N processors, read in on M) through the following backends:
+- [h5py](./docs/backends/h5py.rst): Requires HDF5 with MPI support to work, but can store, meshes, partitioning info, meshtags, function data and more.
+- [adios2](./docs/backends/adios2.rst): Requires [ADIOS 2](https://adios2.readthedocs.io/en/latest/) compiled with MPI support and Python bindings. Supports the same set of operations as the `h5py` backend.
+
+The code uses the ADIOS2/Python-wrappers and h5py module to write DOLFINx objects to file, supporting N-to-M (_recoverable_) and N-to-N (_snapshot_) checkpointing.
+See: [Checkpointing in DOLFINx - FEniCS 23](https://jsdokken.com/checkpointing-presentation/#/) or the examples in the [Documentation](https://jsdokken.com/io4dolfinx/) for more information.
 
 For scalability, the code uses [MPI Neighbourhood collectives](https://www.mpi-forum.org/docs/mpi-3.1/mpi31-report/node200.htm) for communication across processes.
+
+## Relation to adios4dolfinx
+
+This library is an evolution of the [adios4dolfinx](https://doi.org/10.21105/joss.06451) code and has all the functionality of that library, and can read the checkpointing files from `adios4dolfinx`.
+
+As `adios4dolfinx` was solely relying on ADIOS2 it was hard to interface other meshing formats and still keep the library structure sane.
+
+`io4dolfinx` support custom user backends, which can be provided as a string through all functions via the `backend` keyword arg, i.e. `backend="name_of_my_module"`.
 
 ## Statement of Need
 
 As the usage of high performance computing clusters increases, more and more large-scale, long-running simulations are deployed.
 The need for storing intermediate solutions from such simulations are crucial, as the HPC system might crash, or the simulation might crash or exceed the alloted computational budget.
 Having a checkpoint of related variables, such as the solutions to partial differential equations (PDEs) is therefore essential.
-The `adios4dolfinx` library extends the [DOLFINx](https://github.com/FEniCS/dolfinx/) computational framework for solving PDEs with checkpointing functionality, such that immediate solutions and mesh information can be stored and re-used in another simulation.
+The `io4dolfinx` library extends the [DOLFINx](https://github.com/FEniCS/dolfinx/) computational framework for solving PDEs with checkpointing functionality, such that immediate solutions and mesh information can be stored and re-used in another simulation.
 
 ## Installation
 
-Compatibility with DOLFINx:
+The library is backwards compatible against the DOLFINx API of the nightly release of DOLFINx, v0.10.0 and v0.9.0.
 
-- ADIOS4DOLFINx v0.10.0 is compatible with DOLFINx v0.10.x
-- ADIOS4DOLFINx v0.9.6 is compatible with DOLFINx v0.9.x
-- ADIOS4DOLFINx v0.8.1 is compatible with DOLFINx v0.8.x
-- ADIOS4DOLFINx v0.7.3 is compatible with DOLFINx v0.7.x
+The library can be installed through `pip` with `python3 -m pip install io4dolfinx`.
+For notes on installation of specific backends see the individual backend documentation.
 
-### Dependencies
+See [./docs/installation.md](./docs/installation.md) for further info.
 
-The library depends on the Python-interface of [DOLFINx](https://github.com/) and an MPI-build of [ADIOS2](https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html#as-package).
-Therefore `ADIOS2` should not be install through PYPI/pip, but has to be installed through Conda, Spack or from source.
-
-> [!IMPORTANT]  
-> ADIOS2<2.10.2 does not work properly with `numpy>=2.0.0`. Everyone is advised to use the newest version of ADIOS2.
-> This is for instance available through `conda` or the `ghcr.io/fenics/dolfinx/dolfinx:nightly` Docker-image.
-
-### Spack
-
-ADIOS4DOLFINx is a [spack package](https://packages.spack.io/package.html?name=py-adios4dolfinx)
-which can be installed with
-
-```bash
-spack add py-adios4dolfinx ^py-fenics-dolfinx+petsc4py+slepc4py
-spack concretize
-spack install
-```
-
-once you have downloaded spack and set up a new environment, as described in [Spack: Installation notes](https://github.com/spack/spack?tab=readme-ov-file#installation).
-To ensure that the spack packages are up to date, please call
-
-```bash
-spack repo update builtin
-```
-
-prior to concretizing.
-
-### Docker
-
-An MPI build of ADIOS2 is installed in the official DOLFINx containers, and thus there are no additional dependencies required to install `adios4dolfinx`
-on top of DOLFINx in these images.
-
-Create a Docker container, named for instance `dolfinx-checkpoint`.
-Use the `nightly` tag to get the main branch of DOLFINx, or `stable` to get the latest stable release
-
-```bash
-docker run -ti -v $(pwd):/root/shared -w /root/shared --name=dolfinx-checkpoint ghcr.io/fenics/dolfinx/dolfinx:nightly
-```
-
-For the latest version compatible with nightly (with the ability to run the test suite), use
-
-```bash
-python3 -m pip install adios4dolfinx[test]@git+https://github.com/jorgensd/adios4dolfinx@main
-```
-
-If you are using the `stable` image, you can install `adios4dolfinx` from [PYPI](https://pypi.org/project/adios4dolfinx/) with
-
-```bash
-python3 -m pip install adios4dolfinx[test]
-```
-
-This docker container can be opened with
-
-```bash
-docker container start -i dolfinx-checkpoint
-```
-
-at a later instance
-
-### Conda
-
-> [!NOTE]  
-> Conda supports the stable release of DOLFINx, and thus the appropriate version should be installed, see the section above for more details.
-
-Following is a minimal recipe of how to install adios4dolfinx, given that you have conda installed on your system.
-
-```bash
-conda create -n dolfinx-checkpoint python=3.10
-conda activate dolfinx-checkpoint
-conda install -c conda-forge adios4dolfinx
-```
-
-> [!NOTE]
-> Remember to download the appropriate version of `adios4dolfinx` from Github [adios4dolfinx: Releases](https://github.com/jorgensd/adios4dolfinx/releases)
-
-To run the test suite, you should also install `ipyparallel`, `pytest` and `coverage`, which can all be installed with conda
-
-```bash
-conda install -c conda-forge ipyparallel pytest coverage
-```
 
 ## Functionality
 
 ### DOLFINx
 
-- Reading and writing meshes, using `adios4dolfinx.read/write_mesh`
-- Reading and writing meshtags associated to meshes `adios4dolfinx.read/write_meshtags`
-- Reading checkpoints for any element (serial and parallel, arbitrary number of functions and timesteps per file). Use `adios4dolfinx.read/write_function`.
-- Writing standalone function checkpoints relating to "original meshes", i.e. meshes read from `XDMFFile`. Use `adios4dolfinx.write_function_on_input_mesh` for this.
+- Reading and writing meshes, using `io4dolfinx.read/write_mesh`
+- Reading and writing meshtags associated to meshes `io4dolfinx.read/write_meshtags`
+- Reading checkpoints for any element (serial and parallel, arbitrary number of functions and timesteps per file). Use `io4dolfinx.read/write_function`.
+- Writing standalone function checkpoints relating to "original meshes", i.e. meshes read from `XDMFFile`. Use `io4dolfinx.write_function_on_input_mesh` for this.
 - Store mesh partitioning and re-read the mesh with this information, avoiding calling SCOTCH, Kahip or Parmetis.
 
 > [!IMPORTANT]  
@@ -128,6 +63,7 @@ conda install -c conda-forge ipyparallel pytest coverage
 > [!IMPORTANT]  
 > Only one mesh per file is allowed
 
+
 ## Example Usage
 
 The repository contains many documented examples of usage, in the `docs`-folder, including
@@ -137,12 +73,7 @@ The repository contains many documented examples of usage, in the `docs`-folder,
 - [Writing mesh-tags to a checkpoint](./docs/meshtags.py)
 - [Reading and writing function checkpoints](./docs/writing_functions_checkpoint.py)
 - [Checkpoint on input mesh](./docs/original_checkpoint.py)
-  Further examples can be found at [ADIOS4DOLFINx examples](https://jsdokken.com/adios4dolfinx/)
-
-### Backwards compatibility
-
-> [!WARNING]
-> If you are using v0.7.2, you are advised to upgrade to v0.7.3, as it contains som crucial fixes for openmpi.
+  Further examples can be found at [io4dolfinx examples](https://jsdokken.com/io4dolfinx/)
 
 ### Legacy DOLFIN
 
@@ -180,9 +111,9 @@ Then, inside this container, call
 python3 ./tests/create_legacy_data.py --output-dir=legacy
 ```
 
-### Testing against data from older versions of ADIOS4DOLFINx
+### Testing against data from older versions of io4dolfinx
 
-Some tests check the capability to read data generated by `adios4dolfinx<0.7.2`.
+Some tests check the capability to read data generated by `io4dolfinx<0.7.2`.
 To generate data for these tests use the following commands:
 
 ```bash
@@ -192,10 +123,6 @@ docker run -ti -v $(pwd):/root/shared -w /root/shared --rm ghcr.io/fenics/dolfin
 Then, inside the container, call
 
 ```bash
-python3 -m pip install adios4dolfinx==0.7.1
+python3 -m pip install io4dolfinx==0.7.1
 python3 ./tests/create_legacy_checkpoint.py --output-dir=legacy_checkpoint
 ```
-
-## Long term plan
-
-The long term plan is to get this library merged into DOLFINx (rewritten in C++ with appropriate Python-bindings).

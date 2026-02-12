@@ -1,5 +1,5 @@
 """
-H5py interface to ADIOS4DOLFINx
+H5py interface to io4dolfinx
 
 SPDX License identifier: MIT
 

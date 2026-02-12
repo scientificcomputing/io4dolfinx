@@ -1,5 +1,5 @@
 """
-Module that uses DOLFINx/H%py to import XDMF files.
+Module that uses DOLFINx/H5py to import XDMF files.
 """
 
 from pathlib import Path
@@ -13,8 +13,8 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 
-from adios4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from adios4dolfinx.utils import check_file_exists, compute_local_range
+from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
+from io4dolfinx.utils import check_file_exists, compute_local_range
 
 from .. import FileMode, ReadMode
 from ..h5py.backend import h5pyfile

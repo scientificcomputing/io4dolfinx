@@ -1,4 +1,6 @@
-PyvVsta-backend
+.. _pyvistabackend:
+
+PyVista-backend
 ----------------
 
 .. automodule:: io4dolfinx.backends.pyvista.backend

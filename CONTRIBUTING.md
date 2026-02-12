@@ -1,11 +1,11 @@
 # Contributor guidelines
-When contributing to this repository, please first [create an issue](https://github.com/jorgensd/adios4dolfinx/issues/new/choose) containing information about the missing feature or the bug that you would like to fix. Here you can discuss the change you want to make with the maintainers of the repository.
+When contributing to this repository, please first [create an issue](https://github.com/jorgensd/io4dolfinx/issues/new/choose) containing information about the missing feature or the bug that you would like to fix. Here you can discuss the change you want to make with the maintainers of the repository.
 
 Please note we have a code of conduct, please follow it in all your interactions with the project.
 
 ## New contributor guide
 
-To get an overview of the project, read the [documentation](https://jorgensd.github.io/adios4dolfinx). Here are some resources to help you get started with open source contributions:
+To get an overview of the project, read the [documentation](https://jorgensd.github.io/io4dolfinx). Here are some resources to help you get started with open source contributions:
 
 - [Finding ways to contribute to open source on GitHub](https://docs.github.com/en/get-started/exploring-projects-on-github/finding-ways-to-contribute-to-open-source-on-github)
 - [Set up Git](https://docs.github.com/en/get-started/quickstart/set-up-git)

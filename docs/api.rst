@@ -1,5 +1,5 @@
 API Reference
 =============
 
-.. automodule:: adios4dolfinx
+.. automodule:: io4dolfinx
     :members:
