@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from packaging.version import parse as _v
 
-import adios4dolfinx
+import io4dolfinx
 
 
 @pytest.mark.parametrize("comm", [MPI.COMM_SELF, MPI.COMM_WORLD])
@@ -29,16 +29,16 @@ def test_read_write_attributes(comm, backend, tmp_path):
     file = fname.with_suffix(suffix)
     # print(comm.size)
 
-    adios4dolfinx.write_attributes(
+    io4dolfinx.write_attributes(
         comm=comm, filename=file, name="group1", attributes=attributes1, backend=backend
     )
-    adios4dolfinx.write_attributes(
+    io4dolfinx.write_attributes(
         comm=comm, filename=file, name="group2", attributes=attributes2, backend=backend
     )
-    loaded_attributes1 = adios4dolfinx.read_attributes(
+    loaded_attributes1 = io4dolfinx.read_attributes(
         comm=comm, filename=file, name="group1", backend=backend
     )
-    loaded_attributes2 = adios4dolfinx.read_attributes(
+    loaded_attributes2 = io4dolfinx.read_attributes(
         comm=comm, filename=file, name="group2", backend=backend
     )
 
