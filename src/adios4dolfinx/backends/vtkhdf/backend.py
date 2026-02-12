@@ -17,7 +17,7 @@ from adios4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTags
 from adios4dolfinx.utils import check_file_exists, compute_local_range
 
 from .. import FileMode, ReadMode
-from .._h5py.backend import convert_file_mode, h5pyfile
+from ..h5py.backend import convert_file_mode, h5pyfile
 from ..pyvista.backend import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
 
 read_mode = ReadMode.parallel
