@@ -207,7 +207,11 @@ def read_point_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
+                pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            else:
+                # Compatibility with 0.47
+                pyvista.core.vtk_snake_case._state = "allow"
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -250,7 +254,11 @@ def read_cell_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
+                pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            else:
+                # Compatibility with 0.47
+                pyvista.core.vtk_snake_case._state = "allow"
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -355,7 +363,11 @@ def read_function_names(
         grid = in_data
     elif isinstance(in_data, pyvista.core.composite.MultiBlock):
         # To handle multiblock like pvd
-        pyvista._VTK_SNAKE_CASE_STATE = "allow"
+        if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
+            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+        else:
+            # Compatibility with 0.47
+            pyvista.core.vtk_snake_case._state = "allow"
         number_of_blocks = in_data.number_of_blocks
         assert number_of_blocks == 1
         b0 = in_data.get_block(0)
