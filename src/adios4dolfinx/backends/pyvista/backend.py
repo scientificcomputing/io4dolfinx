@@ -10,7 +10,7 @@ import numpy.typing as npt
 try:
     import pyvista
 except ImportError:
-    raise ModuleNotFoundError("This module requires pyvista")
+    raise ModuleNotFoundError("The PyVista-backend requires pyvista")
 from pathlib import Path
 
 from mpi4py import MPI
@@ -217,10 +217,10 @@ def read_point_data(
         else:
             num_components = dataset.shape[1]
         if np.issubdtype(dataset.dtype, np.integer):
-            gtype = in_data.points.dtype
+            gtype = grid.points.dtype
             dataset = dataset.astype(gtype)
         else:
-            gtype = in_data.dtype
+            gtype = dataset.dtype
         num_components, gtype = comm.bcast((num_components, gtype), root=0)
         local_range_start = 0
     else:

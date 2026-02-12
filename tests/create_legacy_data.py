@@ -40,12 +40,20 @@ def create_reference_data(
 
     tt = dolfin.Function(dolfin.FunctionSpace(mesh, "DG", 0))
     tt.interpolate(dolfin.Expression(("x[0]+x[1]"), degree=0))
+    ff = dolfin.MeshFunction("size_t", mesh, mesh.topology().dim() - 1, 1)
+
+    class Boundary(dolfin.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary
+
+    Boundary().mark(ff, 2)
+
     with dolfin.HDF5File(mesh.mpi_comm(), str(h5_file), "w") as hdf:
         hdf.write(mesh, mesh_name)
         hdf.write(v0, function_name)
         hdf.write(w0, function_name_vec)
         hdf.write(tt, function_name + "DG")
-
+        hdf.write(ff, "facet_tags")
     with dolfin.XDMFFile(mesh.mpi_comm(), str(xdmf_file)) as xdmf:
         xdmf.write(mesh)
         xdmf.write_checkpoint(v0, function_name, 0, dolfin.XDMFFile.Encoding.HDF5, append=True)
