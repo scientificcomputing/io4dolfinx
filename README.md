@@ -1,7 +1,6 @@
 # ADIOS4DOLFINx - A framework for checkpointing in DOLFINx
 
 ![MIT](https://img.shields.io/github/license/jorgensd/adios4dolfinx)
-[![DOI](https://joss.theoj.org/papers/10.21105/joss.06451/status.svg)](https://doi.org/10.21105/joss.06451)
 [![Anaconda-Server Badge](https://anaconda.org/conda-forge/adios4dolfinx/badges/version.svg)](https://anaconda.org/conda-forge/adios4dolfinx)
 
 ADIOS4DOLFINx is an extension for [DOLFINx](https://github.com/FEniCS/dolfinx/) to checkpoint meshes, meshtags and functions using [ADIOS 2](https://adios2.readthedocs.io/en/latest/).
