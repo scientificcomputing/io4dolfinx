@@ -17,9 +17,11 @@ from .checkpointing import (
     read_meshtags,
     read_timestamps,
     write_attributes,
+    write_cell_data,
     write_function,
     write_mesh,
     write_meshtags,
+    write_point_data,
 )
 from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
 from .readers import (
@@ -52,9 +54,12 @@ __all__ = [
     "write_function_on_input_mesh",
     "write_mesh_input_order",
     "write_attributes",
+    "write_data",
     "read_attributes",
     "read_function_names",
     "read_point_data",
     "read_timestamps",
     "get_backend",
+    "write_cell_data",
+    "write_point_data",
 ]

@@ -25,7 +25,8 @@ from .comm_helpers import (
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
 )
-from .structures import FunctionData, MeshTagsData
+from .readers import create_geometry_function_space
+from .structures import ArrayData, FunctionData, MeshTagsData
 from .utils import (
     check_file_exists,
     compute_dofmap_pos,
@@ -378,7 +379,7 @@ def read_mesh(
     filename: Path | str,
     comm: MPI.Intracomm,
     ghost_mode: dolfinx.mesh.GhostMode = dolfinx.mesh.GhostMode.shared_facet,
-    time: float | str | None = None,
+    time: float | str | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
     backend: str = "adios2",
@@ -404,12 +405,10 @@ def read_mesh(
 
     # Let each backend handle what should be default behavior when reading mesh
     # with or without time stamp.
-    kwarg = {} if time is None else {"time": time}
-
     dist_in_data = backend_cls.read_mesh_data(
         filename,
         comm,
-        **kwarg,
+        time=time,
         read_from_partition=read_from_partition,
         backend_args=backend_args,
     )
@@ -566,3 +565,76 @@ def read_function_names(
     """
     backend_cls = get_backend(backend)
     return backend_cls.read_function_names(filename, comm, backend_args=backend_args)
+
+
+def write_point_data(
+    filename: Path | str,
+    u: dolfinx.fem.Function,
+    time: str | float | None,
+    mode: FileMode,
+    backend_args: dict[str, Any] | None,
+    backend: str = "vtkhdf",
+):
+    """Write function to file by interpolating into geometry nodes.
+
+
+    Args:
+        filename: Path to file
+        u: The function to store
+        time: Time stamp
+        mode: Append or write
+        backend_args: The backend arguments
+        backend: Which backend to use.
+    """
+    V = create_geometry_function_space(u.function_space.mesh, int(np.prod(u.ufl_shape)))
+    v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
+    v_out.interpolate(u)
+    comm = v_out.function_space.mesh.comm
+    data_shape = (V.dofmap.index_map.size_global, V.dofmap.index_map_bs)
+    local_range = V.dofmap.index_map.local_range
+    num_dofs_local = V.dofmap.index_map.size_local
+    data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
+    ad = ArrayData(
+        name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Point"
+    )
+    backend_cls = get_backend(backend)
+    return backend_cls.write_data(
+        filename, comm=comm, mode=mode, time=time, array_data=ad, backend_args=backend_args
+    )
+
+
+def write_cell_data(
+    filename: Path | str,
+    u: dolfinx.fem.Function,
+    time: str | float | None,
+    mode: FileMode,
+    backend_args: dict[str, Any] | None,
+    backend: str = "vtkhdf",
+):
+    """Write function to file by interpolating into cell midpoints.
+
+
+    Args:
+        filename: Path to file
+        point_data: Data to write to file
+        time: Time stamp
+        mode: Append or write
+        backend_args: The backend arguments
+    """
+    V = dolfinx.fem.functionspace(u.function_space.mesh, ("DG", 0, u.ufl_shape))
+    v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
+    v_out.interpolate(u)
+    comm = v_out.function_space.mesh.comm
+    data_shape = (V.dofmap.index_map.size_global, V.dofmap.index_map_bs)
+    local_range = V.dofmap.index_map.local_range
+    num_dofs_local = V.dofmap.index_map.size_local
+    data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
+
+    backend_cls = get_backend(backend)
+    ad = ArrayData(
+        name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Cell"
+    )
+    backend_cls = get_backend(backend)
+    return backend_cls.write_data(
+        filename, comm=comm, mode=mode, time=time, array_data=ad, backend_args=backend_args
+    )

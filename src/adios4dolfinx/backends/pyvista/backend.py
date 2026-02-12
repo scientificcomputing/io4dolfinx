@@ -18,7 +18,7 @@ from mpi4py import MPI
 import basix
 import dolfinx
 
-from adios4dolfinx.structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
+from adios4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from adios4dolfinx.utils import check_file_exists
 
 from .. import FileMode, ReadMode
@@ -26,6 +26,7 @@ from .. import FileMode, ReadMode
 # Cell types can be found at
 # https://vtk.org/doc/nightly/html/vtkCellType_8h_source.html
 _first_order_vtk = {
+    1: "point",
     3: "interval",
     5: "triangle",
     9: "quadrilateral",
@@ -564,3 +565,24 @@ def read_hdf5_array(
                 Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
     """
     raise NotImplementedError("The Pyvista backend cannot read HDF5 arrays")
+
+
+def write_data(
+    filename: Path | str,
+    array_data: ArrayData,
+    comm: MPI.Intracomm,
+    time: str | float | None,
+    mode: FileMode,
+    backend_args: dict[str, Any] | None,
+):
+    """Write a 2D-array to file (distributed across proceses with MPI).
+
+    Args:
+        filename: Path to file
+        array_data: Data to write to file
+        comm: MPI communicator to open the file with
+        time: Time stamp
+        mode: Append or write
+        backend_args: The backend arguments
+    """
+    raise NotImplementedError("The pyvista backend does not support writing point data")

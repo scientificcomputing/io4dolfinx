@@ -9,7 +9,7 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 
-from ..structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
+from ..structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 
 __all__ = ["FileMode", "IOBackend", "get_backend"]
 
@@ -378,6 +378,28 @@ class IOBackend(Protocol):
             A tuple (topology, dofs) where topology contains the
             vertex indices of the cells, dofs the degrees of
             freedom within that cell.
+        """
+        ...
+
+    def write_data(
+        self,
+        filename: Path | str,
+        array_data: ArrayData,
+        comm: MPI.Intracomm,
+        time: str | float | None,
+        mode: FileMode,
+        backend_args: dict[str, Any] | None,
+    ):
+        """Write a 2D-array to file.
+
+
+        Args:
+            filename: Path to file
+            array_data: Data to write to file.
+            comm: The MPI communicator to open the writer with.
+            time: The time stamp
+            mode: Append or write
+            backend_args: The backend arguments
         """
         ...
 

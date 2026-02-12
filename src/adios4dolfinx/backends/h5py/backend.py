@@ -17,7 +17,7 @@ import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import adjacencylist
 
-from ...structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
+from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import FileMode, ReadMode
 
@@ -199,7 +199,9 @@ def write_mesh(
         # Write geometry data
         gdim = mesh.local_geometry.shape[1]
         geometry_dataset = geometry_group.create_dataset(
-            "Points", [mesh.num_nodes_global, gdim], dtype=mesh.local_geometry.dtype
+            "Points",
+            [mesh.num_nodes_global, gdim],
+            dtype=mesh.local_geometry.dtype,
         )
         geometry_dataset[slice(*mesh.local_geometry_pos), :] = mesh.local_geometry
 
@@ -796,3 +798,24 @@ def read_cell_data(
         freedom within that cell.
     """
     raise NotImplementedError("The h5py backend does not support reading cell data.")
+
+
+def write_data(
+    filename: Path | str,
+    array_data: ArrayData,
+    comm: MPI.Intracomm,
+    time: str | float | None,
+    mode: FileMode,
+    backend_args: dict[str, Any] | None,
+):
+    """Write a 2D-array to file (distributed across proceses with MPI).
+
+    Args:
+        filename: Path to file
+        array_data: Data to write to file
+        comm: MPI communicator to open the file with
+        time: Time-stamp for data.
+        mode: Append or write
+        backend_args: The backend arguments
+    """
+    raise NotImplementedError("H5PY has not implemented this yet")

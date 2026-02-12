@@ -95,3 +95,12 @@ class MeshTagsData:
 
     # Optional info to help visualization
     cell_type: str | None = None  #: The cell type
+
+
+@dataclass
+class ArrayData:
+    name: str  # Name of point data
+    values: npt.NDArray  # Array of values (num_entities, num_components)
+    global_shape: tuple[int, int]  # Global shape of data
+    local_range: tuple[int, int]  # Start and stop of local array in global array
+    type: str  # Type of array-data

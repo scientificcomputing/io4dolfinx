@@ -9,7 +9,7 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 
-from ...structures import FunctionData, MeshData, MeshTagsData, ReadMeshData
+from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import FileMode, ReadMode
 from .helpers import (
@@ -971,3 +971,25 @@ def read_cell_data(
         freedom within that cell.
     """
     raise NotImplementedError("The ADIOS2 backend does not support reading cell data.")
+
+
+def write_data(
+    filename: Path | str,
+    array_data: ArrayData,
+    comm: MPI.Intracomm,
+    time: str | float | None,
+    mode: FileMode,
+    backend_args: dict[str, Any] | None,
+):
+    """Write a 2D-array to file (distributed across proceses with MPI).
+
+
+    Args:
+        filename: Path to file
+        array_data: Data to write to file
+        comm: MPI communicator to open the file with.
+        time: Time stamp
+        mode: Append or write
+        backend_args: The backend arguments
+    """
+    raise NotImplementedError("ADIOS2 has not implemented this yet")
