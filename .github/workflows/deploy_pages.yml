@@ -22,13 +22,8 @@ jobs:
     with:
       tag: "stable"
 
-  run-coverage:
-    uses: ./.github/workflows/test_package.yml
-    with:
-      tag: "stable"
-
   deploy:
-    needs: [run-coverage, build-docs]
+    needs: [build-docs]
 
     environment:
       name: github-pages

@@ -86,7 +86,7 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -xvs ./tests/
+          coverage run --rcfile=.coveragerc -m pytest -xvs ./tests/
 
       - name: Run tests in parallel
         run: |
