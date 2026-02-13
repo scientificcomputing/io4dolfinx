@@ -22,8 +22,13 @@ jobs:
     with:
       tag: "stable"
 
+  test-code:
+    uses: ./.github/workflows/test_workflow.yml
+    with:
+      tag: "stable"
+
   deploy:
-    needs: [build-docs]
+    needs: [build-docs, test-code]
 
     environment:
       name: github-pages
@@ -38,6 +43,13 @@ jobs:
         with:
           name: docs
           path: "./public"
+
+      - name: Download docs artifact
+        # docs artifact is uploaded by build-docs job
+        uses: actions/download-artifact@v7
+        with:
+          name: code-coverage-report-stable
+          path: "./public/code-coverage-report"
 
 
       - name: Upload artifact

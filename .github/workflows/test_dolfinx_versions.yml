@@ -1,0 +1,32 @@
+# .github/workflows/test-matrix.yml
+name: Test Matrix (All Versions)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # 1. Prerequisite jobs (Data creation)
+  create-datasets:
+    uses: ./.github/workflows/create_legacy_data.yml
+    with:
+      artifact_name: "legacy_mpich"
+
+  create-legacy-datasets:
+    uses: ./.github/workflows/create_legacy_checkpoint.yml
+    with:
+      artifact_name: "legacy_checkpoint_mpich"
+
+  # 2. The Matrix Job
+  run-tests:
+    needs: [create-datasets, create-legacy-datasets]
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ["nightly", "stable", "v0.9"]
+    
+    # Call the reusable workflow
+    uses: ./.github/workflows/test_workflow.yml
+    with:
+      dolfinx_tag: ${{ matrix.tag }}
