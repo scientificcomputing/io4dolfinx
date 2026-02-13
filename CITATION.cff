@@ -3,28 +3,11 @@ authors:
   - family-names: Dokken
     given-names: Jørgen Schartum
     orcid: "https://orcid.org/0000-0001-6489-8858"
+  - family-names: Finsberg
+    given-names: Henrik Nicolay Topnes
+    orcid: "0000-0003-3766-2393"
 contact:
   - family-names: Dokken
     given-names: Jørgen Schartum
     orcid: "https://orcid.org/0000-0001-6489-8858"
 doi: 10.5281/zenodo.11094985
-message: If you use this software, please cite our article in the
-  Journal of Open Source Software.
-preferred-citation:
-  authors:
-    - family-names: Dokken
-      given-names: Jørgen Schartum
-      orcid: "https://orcid.org/0000-0001-6489-8858"
-  date-published: 2024-04-30
-  doi: 10.21105/joss.06451
-  issn: 2475-9066
-  issue: 96
-  journal: Journal of Open Source Software
-  publisher:
-    name: Open Journals
-  start: 6451
-  title: "ADIOS4DOLFINx: A framework for checkpointing in FEniCS"
-  type: article
-  url: "https://joss.theoj.org/papers/10.21105/joss.06451"
-  volume: 9
-title: "ADIOS4DOLFINx: A framework for checkpointing in FEniCS"
