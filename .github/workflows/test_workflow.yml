@@ -40,6 +40,12 @@ jobs:
           HDF5_MPI=ON HDF5_PKGCONFIG_NAME="hdf5" python3 -m pip install h5py --no-build-isolation --no-binary=h5py
           python3 -m pip install .[test]
 
+      - name: Show adios2 version
+        run: python3 -c "import adios2; print(adios2.__version__)"
+
+      - name: Show h5py version
+        run: python3 -c "import h5py; print(h5py.__version__)"
+
       - name: Run tests
         run: coverage run --rcfile=.coveragerc -m pytest -xvs ./tests/
 
