@@ -228,8 +228,8 @@ def send_dofs_and_recv_values(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros_like(source, dtype=np.int32)
-    recv_size.resize(max(len(recv_size), 1)) # Minimal resize to work with ompi
-    dest_size.resize(max(len(dest_size), 1)) # Mininal resize to work with ompi
+    recv_size.resize(max(len(recv_size), 1))  # Minimal resize to work with ompi
+    dest_size.resize(max(len(dest_size), 1))  # Mininal resize to work with ompi
     dofmap_to_values.Neighbor_alltoall(dest_size, recv_size)
     dest_size.resize(len(dest))
     recv_size.resize(len(source))
