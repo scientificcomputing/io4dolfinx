@@ -27,54 +27,7 @@ __all__ = [
     "unroll_dofmap",
     "compute_insert_position",
     "unroll_insert_position",
-    "get_hdf5_version",
 ]
-
-
-def get_hdf5_version():
-    """Get the HDF5 library version found on the system.
-
-    Note: This function first tries to get the version via h5py.
-    If h5py is not installed, it attempts to load the HDF5 shared library
-    directly using ctypes to query the version.
-    """
-    import ctypes
-    from ctypes import byref, c_uint
-
-    from packaging.version import parse as _v
-
-    try:
-        import h5py
-
-        return _v(h5py.version.hdf5_version)
-    except ImportError:
-        try:
-            # Try to load default HDF5 library names
-            # If adios2 is already imported, the symbols might be globally available
-            try:
-                libhdf5 = ctypes.CDLL("libhdf5.so")
-            except OSError:
-                try:
-                    libhdf5 = ctypes.CDLL("libhdf5.dylib")  # MacOS
-                except OSError:
-                    print("\n[Method 2] Could not load libhdf5 shared library directly.")
-                    libhdf5 = None
-
-            if libhdf5:
-                major = c_uint()
-                minor = c_uint()
-                rel = c_uint()
-
-                # Call the C function
-                libhdf5.H5get_libversion(byref(major), byref(minor), byref(rel))
-                return _v(f"{major.value}.{minor.value}.{rel.value}")
-        except Exception:
-            pass
-
-    except Exception:
-        pass
-
-    raise RuntimeError("Failed to get HDF5 version")
 
 
 def check_file_exists(filename: Path | str):

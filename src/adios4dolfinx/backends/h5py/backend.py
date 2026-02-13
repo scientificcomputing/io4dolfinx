@@ -13,6 +13,7 @@ from typing import Any
 from mpi4py import MPI
 
 import dolfinx
+import h5py
 import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import adjacencylist
@@ -22,6 +23,10 @@ from ...utils import check_file_exists, compute_local_range
 from .. import FileMode, ReadMode
 
 read_mode = ReadMode.parallel
+
+# try:
+# except ModuleNotFoundError:
+#     raise ModuleNotFoundError("This backend requires h5py to be installed.")
 
 
 @contextlib.contextmanager
@@ -35,8 +40,6 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
         comm: The MPI communicator
 
     """
-    import h5py
-
     if comm is None:
         comm = MPI.COMM_WORLD
 
@@ -58,13 +61,7 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
-    args = arguments or {}
-
-    if arguments:
-        # Currently no default arguments for h5py backend
-        # TODO: Pehaps we would like to make this into a warning instead?
-        raise RuntimeError("Unexpected backend arguments to h5py backend")
-
+    args = arguments or {"legacy": False}  # If meshtags is read from legacy
     return args
 
 
@@ -384,20 +381,32 @@ def read_meshtags_data(
         Internal data structure for the mesh tags read from file
     """
     backend_args = get_default_backend_args(backend_args)
+    legacy = backend_args["legacy"]
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        if "mesh" not in h5file.keys():
-            raise KeyError("No mesh found")
-        mesh = h5file["mesh"]
-        if "tags" not in mesh.keys():
-            raise KeyError("Could not find 'tags' in file, are you sure this is a checkpoint?")
-        tags = mesh["tags"]
-        if name not in tags.keys():
-            raise KeyError(f"Could not find {name} in '/mesh/tags/' in {filename}")
-        tag = tags[name]
+        if legacy:
+            if name not in h5file.keys():
+                raise RuntimeError(f"MeshTag {name} not found in {filename}.")
+            mesh = h5file[name]
+            topology = mesh["topology"]
+            cell_type = topology.attrs["celltype"]
+            if isinstance(cell_type, np.bytes_):
+                cell_type = cell_type.decode("utf-8")
+            dim = dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(cell_type))
+            values = mesh["values"]
+        else:
+            if "mesh" not in h5file.keys():
+                raise KeyError("No mesh found")
+            mesh = h5file["mesh"]
+            if "tags" not in mesh.keys():
+                raise KeyError("Could not find 'tags' in file, are you sure this is a checkpoint?")
+            tags = mesh["tags"]
+            if name not in tags.keys():
+                raise KeyError(f"Could not find {name} in '/mesh/tags/' in {filename}")
+            tag = tags[name]
 
-        dim = tag.attrs["dim"]
-        topology = tag["Topology"]
-        values = tag["Values"]
+            dim = tag.attrs["dim"]
+            topology = tag["Topology"]
+            values = tag["Values"]
         num_entities_global = topology.shape[0]
         topology_range = compute_local_range(comm, num_entities_global)
         indices = topology[slice(*topology_range), :].astype(np.int64)

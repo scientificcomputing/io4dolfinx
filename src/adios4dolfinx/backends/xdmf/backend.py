@@ -2,7 +2,6 @@
 Module that uses DOLFINx/H%py to import XDMF files.
 """
 
-import contextlib
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -18,41 +17,9 @@ from adios4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTags
 from adios4dolfinx.utils import check_file_exists, compute_local_range
 
 from .. import FileMode, ReadMode
+from ..h5py.backend import h5pyfile
 
 read_mode = ReadMode.parallel
-
-
-@contextlib.contextmanager
-def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
-    """Context manager for opening an HDF5 file with h5py.
-
-    Args:
-        h5name: The name of the HDF5 file.
-        filemode: The file mode.
-        force_serial: Force serial access to the file.
-        comm: The MPI communicator
-
-    """
-    import h5py
-
-    if comm is None:
-        comm = MPI.COMM_WORLD
-
-    if h5py.h5.get_config().mpi and not force_serial:
-        h5file = h5py.File(h5name, filemode, driver="mpio", comm=comm)
-    else:
-        if comm.size > 1 and not force_serial:
-            raise ValueError(
-                f"h5py is not installed with MPI support, while using {comm.size} processes.",
-                "If you really want to do this, turn on the `force_serial` flag.",
-            )
-        h5file = h5py.File(h5name, filemode)
-
-    try:
-        yield h5file
-    finally:
-        if h5file.id:
-            h5file.close()
 
 
 def extract_function_names_and_timesteps(filename: Path | str) -> dict[str, list[str]]:

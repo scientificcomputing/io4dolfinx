@@ -10,7 +10,7 @@ import numpy.typing as npt
 try:
     import pyvista
 except ImportError:
-    raise ModuleNotFoundError("This module requires pyvista")
+    raise ModuleNotFoundError("The PyVista-backend requires pyvista")
 from pathlib import Path
 
 from mpi4py import MPI
@@ -138,7 +138,11 @@ def read_mesh_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
+                pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            else:
+                # Compatibility with 0.47
+                pyvista.core.vtk_snake_case._state = "allow"
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -203,7 +207,11 @@ def read_point_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
+                pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            else:
+                # Compatibility with 0.47
+                pyvista.core.vtk_snake_case._state = "allow"
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -217,10 +225,10 @@ def read_point_data(
         else:
             num_components = dataset.shape[1]
         if np.issubdtype(dataset.dtype, np.integer):
-            gtype = in_data.points.dtype
+            gtype = grid.points.dtype
             dataset = dataset.astype(gtype)
         else:
-            gtype = in_data.dtype
+            gtype = dataset.dtype
         num_components, gtype = comm.bcast((num_components, gtype), root=0)
         local_range_start = 0
     else:
@@ -246,7 +254,11 @@ def read_cell_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
+                pyvista._VTK_SNAKE_CASE_STATE = "allow"
+            else:
+                # Compatibility with 0.47
+                pyvista.core.vtk_snake_case._state = "allow"
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -351,7 +363,11 @@ def read_function_names(
         grid = in_data
     elif isinstance(in_data, pyvista.core.composite.MultiBlock):
         # To handle multiblock like pvd
-        pyvista._VTK_SNAKE_CASE_STATE = "allow"
+        if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
+            pyvista._VTK_SNAKE_CASE_STATE = "allow"
+        else:
+            # Compatibility with 0.47
+            pyvista.core.vtk_snake_case._state = "allow"
         number_of_blocks = in_data.number_of_blocks
         assert number_of_blocks == 1
         b0 = in_data.get_block(0)

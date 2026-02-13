@@ -23,6 +23,7 @@ from adios4dolfinx import (
     read_function_names,
     read_mesh,
     read_mesh_from_legacy_h5,
+    read_meshtags,
     read_point_data,
 )
 
@@ -81,6 +82,26 @@ def test_legacy_function(backend):
     if not path.exists():
         pytest.skip(f"{path} does not exist")
     mesh = read_mesh_from_legacy_h5(path, comm, "/mesh", backend=backend)
+    ff = read_meshtags(
+        path, mesh, "facet_tags", backend_args={"legacy": True, "engine": "HDF5"}, backend=backend
+    )
+    fdim = mesh.topology.dim - 1
+    assert ff.dim == fdim
+    boundary_facets = ff.find(2)
+    interior_facets = ff.find(1)
+    mesh.topology.create_connectivity(fdim, fdim + 1)
+    num_facets_local = (
+        mesh.topology.index_map(fdim).size_local + mesh.topology.index_map(fdim).num_ghosts
+    )
+    true_exterior_facets = dolfinx.mesh.exterior_facet_indices(mesh.topology)
+    assert len(boundary_facets) == len(true_exterior_facets)
+    assert np.isin(boundary_facets, true_exterior_facets).all()
+    true_interior = np.ones(num_facets_local, dtype=np.int8)
+    true_interior[true_exterior_facets] = 0
+    interior_marker = np.flatnonzero(true_interior)
+    assert len(interior_marker) == len(interior_facets)
+    assert np.isin(interior_facets, interior_marker).all()
+
     V = dolfinx.fem.functionspace(mesh, ("DG", 2))
     u = ufl.TrialFunction(V)
     v = ufl.TestFunction(V)
