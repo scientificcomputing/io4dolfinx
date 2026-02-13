@@ -46,6 +46,9 @@ jobs:
       - name: Show h5py version
         run: python3 -c "import h5py; print(h5py.__version__)"
 
+      - name: Show hdf5 version
+        run: python3 -c "import h5py; print(h5py.version.hdf5_version)"
+
       - name: Run tests
         run: coverage run --rcfile=.coveragerc -m pytest -xvs ./tests/
 
