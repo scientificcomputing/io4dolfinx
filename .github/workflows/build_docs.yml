@@ -15,9 +15,6 @@ on:
         default: "nightly"
         required: true
         type: string
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
@@ -40,8 +37,11 @@ jobs:
       - id: docker_tag
         run: echo "image=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
 
+  test-code:
+    uses: ./.github/workflows/test_package.yml
+
   build-docs:
-    needs: get_image_tag
+    needs: [get_image_tag, test-code]
     runs-on: ubuntu-latest
     container: ghcr.io/fenics/dolfinx/dolfinx:${{ needs.get_image_tag.outputs.image }}
 
@@ -57,6 +57,13 @@ jobs:
 
       - name: Build docs
         run: jupyter book build .
+
+      - name: Download docs artifact
+        # docs artifact is uploaded by build-docs job
+        uses: actions/download-artifact@v7
+        with:
+          name: code-coverage-report
+          path: "./_build/html/code-coverage-report"
 
       - name: Upload documentation as artifact
         uses: actions/upload-artifact@v6
