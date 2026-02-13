@@ -17,8 +17,10 @@ on:
         type: string
 
   pull_request:
-    branches:
-      - main
+    branches: [main]
+  push:
+    branches: [main]
+    
   schedule:
     - cron: "0 8 * * *"
 
