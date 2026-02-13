@@ -15,10 +15,9 @@ from importlib.metadata import version
 
 from mpi4py import MPI
 
+import adios4dolfinx
 import dolfinx
 import numpy as np
-
-import adios4dolfinx
 
 a4d_version = version("adios4dolfinx")
 assert a4d_version < "0.7.2", (
