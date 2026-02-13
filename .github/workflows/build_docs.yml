@@ -39,6 +39,8 @@ jobs:
 
   test-code:
     uses: ./.github/workflows/test_package.yml
+    with:
+      tag: ${{ needs.get_image_tag.outputs.image }}
 
   build-docs:
     needs: [get_image_tag, test-code]
