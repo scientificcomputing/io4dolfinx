@@ -16,6 +16,11 @@ on:
         required: true
         type: string
 
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 8 * * *"
 
 env:
   DEB_PYTHON_INSTALL_LAYOUT: deb_system

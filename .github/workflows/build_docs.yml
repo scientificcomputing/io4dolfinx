@@ -5,14 +5,14 @@ on:
     inputs:
       tag:
         description: "Tag of DOLFINx docker image"
-        default: "nightly"
+        default: "stable"
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
         description: "Tag of DOLFINx docker image"
-        default: "nightly"
+        default: "stable"
         required: true
         type: string
   pull_request:
@@ -23,7 +23,7 @@ on:
 
 env:
   DEB_PYTHON_INSTALL_LAYOUT: deb_system
-  DEFAULT_TAG: nightly
+  DEFAULT_TAG: stable
   ARTIFACT_NAME: docs
   PUBLISH_DIR: ./_build/html
   PIP_NO_BINARY: h5py
