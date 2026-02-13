@@ -37,11 +37,6 @@ jobs:
       - id: docker_tag
         run: echo "image=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
 
-  test-code:
-    uses: ./.github/workflows/test_package.yml
-    with:
-      tag: ${{ needs.get_image_tag.outputs.image }}
-
   build-docs:
     needs: get_image_tag
     runs-on: ubuntu-latest

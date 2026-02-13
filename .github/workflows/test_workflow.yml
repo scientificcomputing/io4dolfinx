@@ -1,4 +1,4 @@
-name: Single test run
+name: Test
 
 on:
   workflow_call:

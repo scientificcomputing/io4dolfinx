@@ -1,5 +1,4 @@
-# .github/workflows/test-matrix.yml
-name: Test Matrix (All Versions)
+name: Test dolfinx versions
 
 on:
   push:
