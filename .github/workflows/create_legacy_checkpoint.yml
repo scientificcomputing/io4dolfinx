@@ -1,4 +1,4 @@
-name: Generate io4dolfinx legacy data
+name: Generate adios4dolfinx legacy data
 
 on:
   workflow_call:
@@ -12,15 +12,15 @@ jobs:
   create-adios-data:
     env:
       data_dir: "legacy_checkpoint"
-      io4dolfinx_version: "0.7.1"
+      adios4dolfinx_version: "0.7.1"
     runs-on: "ubuntu-latest"
     container: ghcr.io/fenics/dolfinx/dolfinx:v0.7.3
   
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install legacy version of io4dolfinx
-        run: python3 -m pip install  io4dolfinx==${io4dolfinx_version}
+      - name: Install legacy version of adios4dolfinx
+        run: python3 -m pip install  adios4dolfinx==${io4dolfinx_version}
 
       - name: Create datasets
         run: python3 ./tests/create_legacy_checkpoint.py --output-dir=$data_dir

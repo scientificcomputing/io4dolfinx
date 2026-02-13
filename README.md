@@ -73,7 +73,7 @@ The repository contains many documented examples of usage, in the `docs`-folder,
 - [Writing mesh-tags to a checkpoint](./docs/meshtags.py)
 - [Reading and writing function checkpoints](./docs/writing_functions_checkpoint.py)
 - [Checkpoint on input mesh](./docs/original_checkpoint.py)
-  Further examples can be found at [io4dolfinx examples](https://jsdokken.com/io4dolfinx/)
+  - Further examples can be found at [io4dolfinx examples](https://jsdokken.com/io4dolfinx/)
 
 ### Legacy DOLFIN
 
