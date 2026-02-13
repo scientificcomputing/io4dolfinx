@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import ufl
 
-from adios4dolfinx import FileMode, read_mesh, write_mesh
+from io4dolfinx import FileMode, read_mesh, write_mesh
 
 
 def get_hdf5_version():
