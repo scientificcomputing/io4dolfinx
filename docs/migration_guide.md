@@ -13,12 +13,12 @@ kernelspec:
 # Migration Guide: Transitions to `io4dolfinx`
 
 
-This guide outlines the necessary steps to transition your code from {py:mod}`adios4dolfinx` new API introduced in `io4dolfinx`.
+This guide outlines the necessary steps to transition your code from {py:mod}`io4dolfinx` new API introduced in `io4dolfinx`.
 
 ## Major Changes
 
 The library has undergone a major refactor to support multiple IO backends.
-**{py:mod}`adios4dolfinx` now supports both [ADIOS2](https://adios2.readthedocs.io/en/latest/) and [h5py](https://docs.h5py.org/en/stable/) backends.**
+**{py:mod}`io4dolfinx` now supports both [ADIOS2](https://adios2.readthedocs.io/en/latest/) and [h5py](https://docs.h5py.org/en/stable/) backends.**
 
 This allows users to choose between the high-performance, adaptable ADIOS2 framework and the standard HDF5 format via {py:class}`h5py.File`, all using the same high-level API.
 It also opens the door for new backends in the future.
@@ -36,8 +36,8 @@ It also opens the door for new backends in the future.
 `````{tab-set}
 ````{tab-item} Old API
 ```python
-import adios4dolfinx
-adios4dolfinx.write_mesh("mesh.bp", mesh, engine="BP4")
+import io4dolfinx
+io4dolfinx.write_mesh("mesh.bp", mesh, engine="BP4")
 ```
 ````
 
@@ -63,8 +63,8 @@ io4dolfinx.write_mesh("mesh.bp", mesh, backend="h5py")
 `````{tab-set}
 ````{tab-item} Old API
 ```python
-import adios4dolfinx
-adios4dolfinx.write_function("solution.bp", u, time=0.0, engine="BP4")
+import io4dolfinx
+io4dolfinx.write_function("solution.bp", u, time=0.0, engine="BP4")
 ```
 ````
 ````{tab-item} New API (ADIOS2 Backend)

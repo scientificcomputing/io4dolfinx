@@ -16,7 +16,7 @@ from mpi4py import MPI
 
 import ipyparallel as ipp
 
-import adios4dolfinx
+import io4dolfinx
 
 
 def compute_volume(mesh, time_stamp):
@@ -39,7 +39,7 @@ def write_meshes(filename: Path):
     import dolfinx
     import numpy as np
 
-    import adios4dolfinx
+    import io4dolfinx
 
     # Create a unit cube
     mesh = dolfinx.mesh.create_unit_cube(
@@ -52,7 +52,7 @@ def write_meshes(filename: Path):
     )
 
     # Write mesh to file, associated with time stamp 1.5
-    adios4dolfinx.write_mesh(filename, mesh, time=1.5)
+    io4dolfinx.write_mesh(filename, mesh, time=1.5)
     compute_volume(mesh, 1.5)
     mesh.geometry.x[:, 0] += 0.1 * mesh.geometry.x[:, 0]
     mesh.geometry.x[:, 1] += 0.3 * mesh.geometry.x[:, 1] * np.sin(mesh.geometry.x[:, 2])
@@ -60,7 +60,7 @@ def write_meshes(filename: Path):
     # Write mesh to file, associated with time stamp 3.3
     # Note that we set the mode to append, as we have already created the file
     # and we do not want to overwrite the existing data
-    adios4dolfinx.write_mesh(filename, mesh, time=3.3, mode=adios4dolfinx.FileMode.append)
+    io4dolfinx.write_mesh(filename, mesh, time=3.3, mode=io4dolfinx.FileMode.append)
 
 
 # -
@@ -82,14 +82,14 @@ with ipp.Cluster(engines="mpi", n=n, log_level=logging.ERROR) as cluster:
 
 # # Reading a time dependent mesh
 # The only thing we need to do to read the mesh is to send in the associated time stamp,
-# which we do by adding `time=time_stamp` when calling {py:func}`adios4dolfinx.read_mesh`.
+# which we do by adding `time=time_stamp` when calling {py:func}`io4dolfinx.read_mesh`.
 
-second_mesh = adios4dolfinx.read_mesh(
+second_mesh = io4dolfinx.read_mesh(
     mesh_file, comm=MPI.COMM_WORLD, backend="adios2", backend_args={"engine": "BP4"}, time=3.3
 )
 compute_volume(second_mesh, 3.3)
 
-first_mesh = adios4dolfinx.read_mesh(
+first_mesh = io4dolfinx.read_mesh(
     mesh_file, comm=MPI.COMM_WORLD, backend="adios2", backend_args={"engine": "BP4"}, time=1.5
 )
 compute_volume(first_mesh, 1.5)

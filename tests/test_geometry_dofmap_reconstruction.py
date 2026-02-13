@@ -5,7 +5,7 @@ import dolfinx
 import numpy as np
 import pytest
 
-from adios4dolfinx.readers import create_geometry_function_space
+from io4dolfinx.readers import create_geometry_function_space
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 [run]
 parallel = true
-source = adios4dolfinx
+source = io4dolfinx
 
 [html]
 directory= htmlcov

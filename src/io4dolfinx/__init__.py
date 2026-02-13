@@ -1,6 +1,6 @@
 # Copyright (C) 2023 Jørgen Schartum Dokken
 #
-# This file is part of adios4dolfinx
+# This file is part of io4dolfinx
 #
 # SPDX-License-Identifier:    MIT
 
@@ -32,7 +32,7 @@ from .readers import (
 )
 from .snapshot import snapshot_checkpoint
 
-meta = metadata("adios4dolfinx")
+meta = metadata("io4dolfinx")
 __version__ = meta["Version"]
 __author__ = meta.get("Author", "")
 __license__ = meta["License"]

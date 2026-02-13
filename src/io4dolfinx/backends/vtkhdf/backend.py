@@ -13,8 +13,8 @@ import h5py
 import numpy as np
 import numpy.typing as npt
 
-from adios4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from adios4dolfinx.utils import check_file_exists, compute_local_range
+from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
+from io4dolfinx.utils import check_file_exists, compute_local_range
 
 from .. import FileMode, ReadMode
 from ..h5py.backend import convert_file_mode, h5pyfile
@@ -213,7 +213,7 @@ def read_mesh_data(
     num_nodes_per_cell = offset[1:] - offset[:-1]
     unique_cells = find_all_unique_cell_types(MPI.COMM_WORLD, cell_types_local, num_nodes_per_cell)
     if unique_cells.shape[0] > 1:
-        raise NotImplementedError("adios4dolfinx does not support mixed celltype grids")
+        raise NotImplementedError("io4dolfinx does not support mixed celltype grids")
     topology = topology.reshape(-1, num_nodes_per_cell[0])
     cell_type, number_of_nodes = unique_cells[0]
     gtype = backend_args.get("dtype", points_local.dtype)
@@ -970,7 +970,7 @@ def read_meshtags_data(
         cell_types_local = hdf["Types"][slice(*local_cell_range)]
     unique_cells = find_all_unique_cell_types(comm, cell_types_local, indices.shape[1])
     if unique_cells.shape[0] > 1:
-        raise NotImplementedError("adios4dolfinx does not support mixed celltype grids")
+        raise NotImplementedError("io4dolfinx does not support mixed celltype grids")
     vtk_cell_type = unique_cells[0][0]
     if vtk_cell_type in _first_order_vtk.keys():
         ct = _first_order_vtk[vtk_cell_type]

@@ -12,7 +12,7 @@
 # does not require extra RAM.
 
 # In this example, we will demonstrate how to write a
-# {py:func}`snapshot checkpoint<adios4dolfinx.snapshot_checkpoint>` to disk.
+# {py:func}`snapshot checkpoint<io4dolfinx.snapshot_checkpoint>` to disk.
 
 # First we define a {py:class}`function<dolfinx.fem.Function>` `f` that we want to represent in
 # the {py:class}`function space<dolfinx.fem.FunctionSpace>`.
@@ -33,7 +33,7 @@ def f(x):
 # -
 
 # Next, we create a mesh and an appropriate function space and read and write from file.
-# Note that for both these operations, we use {py:func}`adios4dolfinx.snapshot_checkpoint`,
+# Note that for both these operations, we use {py:func}`io4dolfinx.snapshot_checkpoint`,
 # with different read and write modes.
 
 
@@ -43,7 +43,7 @@ def read_write_snapshot(filename: Path):
     import dolfinx
     import numpy as np
 
-    import adios4dolfinx
+    import io4dolfinx
 
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, 3, 7, 4)
     V = dolfinx.fem.functionspace(mesh, ("Lagrange", 5))
@@ -51,12 +51,12 @@ def read_write_snapshot(filename: Path):
     u.interpolate(f)
     u.name = "Current_solution"
     # Next, we store the solution to file
-    adios4dolfinx.snapshot_checkpoint(u, filename, adios4dolfinx.FileMode.write)
+    io4dolfinx.snapshot_checkpoint(u, filename, io4dolfinx.FileMode.write)
 
     # Next, we create a new function and load the solution into it
     u_new = dolfinx.fem.Function(V)
     u_new.name = "Read_solution"
-    adios4dolfinx.snapshot_checkpoint(u_new, filename, adios4dolfinx.FileMode.read)
+    io4dolfinx.snapshot_checkpoint(u_new, filename, io4dolfinx.FileMode.read)
 
     # Next, we verify that the solution is correct
     np.testing.assert_allclose(u_new.x.array, u.x.array, atol=np.finfo(float).eps)

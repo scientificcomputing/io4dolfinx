@@ -8,7 +8,7 @@ import dolfinx
 import numpy as np
 import pytest
 
-import adios4dolfinx
+import io4dolfinx
 
 root = 0
 dtypes: list["str"] = ["float64", "float32"]  # Mesh geometry dtypes
@@ -76,10 +76,10 @@ def test_checkpointing_meshtags_1D(
     # If mesh communicator is more than a self communicator or serial write on all processes.
     # If serial or self communicator, only write on root rank
     if mesh.comm.size != 1:
-        adios4dolfinx.write_mesh(filename, mesh, backend=backend)
+        io4dolfinx.write_mesh(filename, mesh, backend=backend)
     else:
         if MPI.COMM_WORLD.rank == root:
-            adios4dolfinx.write_mesh(filename, mesh, backend=backend)
+            io4dolfinx.write_mesh(filename, mesh, backend=backend)
 
     # Create meshtags labeling each entity (of each co-dimension) with a
     # unique number (their initial global index).
@@ -94,13 +94,13 @@ def test_checkpointing_meshtags_1D(
 
         # If parallel write on all processes, else write on root rank
         if mesh.comm.size != 1:
-            adios4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
+            io4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
             # Create map from mesh tag value to its corresponding index and midpoint
             org_map = generate_reference_map(mesh, ft, mesh.comm, root)
             org_maps.append(org_map)
         else:
             if MPI.COMM_WORLD.rank == root:
-                adios4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
+                io4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
                 # Create map from mesh tag value to its corresponding index and midpoint
                 org_map = generate_reference_map(mesh, ft, MPI.COMM_SELF, root)
                 org_maps.append(org_map)
@@ -108,12 +108,12 @@ def test_checkpointing_meshtags_1D(
     del mesh
     MPI.COMM_WORLD.Barrier()
     # Read mesh on testing communicator
-    new_mesh = adios4dolfinx.read_mesh(filename, read_comm, ghost_mode=read_mode, backend=backend)
+    new_mesh = io4dolfinx.read_mesh(filename, read_comm, ghost_mode=read_mode, backend=backend)
     for dim in range(new_mesh.topology.dim + 1):
         # Read meshtags on all processes if testing communicator has multiple ranks
         # else read on root 0
         if read_comm.size != 1:
-            new_ft = adios4dolfinx.read_meshtags(
+            new_ft = io4dolfinx.read_meshtags(
                 filename,
                 new_mesh,
                 meshtag_name=f"entity_{dim}",
@@ -124,7 +124,7 @@ def test_checkpointing_meshtags_1D(
             read_map = generate_reference_map(new_mesh, new_ft, new_mesh.comm, root)
         else:
             if MPI.COMM_WORLD.rank == root:
-                new_ft = adios4dolfinx.read_meshtags(
+                new_ft = io4dolfinx.read_meshtags(
                     filename,
                     new_mesh,
                     meshtag_name=f"entity_{dim}",
@@ -152,10 +152,10 @@ def test_checkpointing_meshtags_2D(
     filename = fname / f"meshtags_1D_{hash}.bp"
 
     if mesh.comm.size != 1:
-        adios4dolfinx.write_mesh(filename, mesh, backend=backend)
+        io4dolfinx.write_mesh(filename, mesh, backend=backend)
     else:
         if MPI.COMM_WORLD.rank == root:
-            adios4dolfinx.write_mesh(filename, mesh, backend=backend)
+            io4dolfinx.write_mesh(filename, mesh, backend=backend)
 
     org_maps = []
     for dim in range(mesh.topology.dim + 1):
@@ -166,21 +166,21 @@ def test_checkpointing_meshtags_2D(
         ft = dolfinx.mesh.meshtags(mesh, dim, entities, e_map.local_range[0] + entities)
         ft.name = f"entity_{dim}"
         if mesh.comm.size != 1:
-            adios4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
+            io4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
             org_map = generate_reference_map(mesh, ft, mesh.comm, root)
             org_maps.append(org_map)
         else:
             if MPI.COMM_WORLD.rank == root:
-                adios4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
+                io4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
                 org_map = generate_reference_map(mesh, ft, MPI.COMM_SELF, root)
                 org_maps.append(org_map)
         del ft
     del mesh
     MPI.COMM_WORLD.Barrier()
-    new_mesh = adios4dolfinx.read_mesh(filename, read_comm, ghost_mode=read_mode, backend=backend)
+    new_mesh = io4dolfinx.read_mesh(filename, read_comm, ghost_mode=read_mode, backend=backend)
     for dim in range(new_mesh.topology.dim + 1):
         if read_comm.size != 1:
-            new_ft = adios4dolfinx.read_meshtags(
+            new_ft = io4dolfinx.read_meshtags(
                 filename,
                 new_mesh,
                 meshtag_name=f"entity_{dim}",
@@ -189,7 +189,7 @@ def test_checkpointing_meshtags_2D(
             read_map = generate_reference_map(new_mesh, new_ft, new_mesh.comm, root)
         else:
             if MPI.COMM_WORLD.rank == root:
-                new_ft = adios4dolfinx.read_meshtags(
+                new_ft = io4dolfinx.read_meshtags(
                     filename,
                     new_mesh,
                     meshtag_name=f"entity_{dim}",
@@ -215,10 +215,10 @@ def test_checkpointing_meshtags_3D(
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
     filename = fname / f"meshtags_1D_{hash}.bp"
     if mesh.comm.size != 1:
-        adios4dolfinx.write_mesh(filename, mesh, backend=backend)
+        io4dolfinx.write_mesh(filename, mesh, backend=backend)
     else:
         if MPI.COMM_WORLD.rank == root:
-            adios4dolfinx.write_mesh(filename, mesh, backend=backend)
+            io4dolfinx.write_mesh(filename, mesh, backend=backend)
 
     org_maps = []
     for dim in range(mesh.topology.dim + 1):
@@ -230,22 +230,22 @@ def test_checkpointing_meshtags_3D(
         ft.name = f"entity_{dim}"
 
         if mesh.comm.size != 1:
-            adios4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
+            io4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
             org_map = generate_reference_map(mesh, ft, mesh.comm, root)
             org_maps.append(org_map)
         else:
             if MPI.COMM_WORLD.rank == root:
-                adios4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
+                io4dolfinx.write_meshtags(filename, mesh, ft, backend=backend)
                 org_map = generate_reference_map(mesh, ft, MPI.COMM_SELF, root)
                 org_maps.append(org_map)
         del ft
     del mesh
 
     MPI.COMM_WORLD.Barrier()
-    new_mesh = adios4dolfinx.read_mesh(filename, read_comm, ghost_mode=read_mode, backend=backend)
+    new_mesh = io4dolfinx.read_mesh(filename, read_comm, ghost_mode=read_mode, backend=backend)
     for dim in range(new_mesh.topology.dim + 1):
         if read_comm.size != 1:
-            new_ft = adios4dolfinx.read_meshtags(
+            new_ft = io4dolfinx.read_meshtags(
                 filename,
                 new_mesh,
                 meshtag_name=f"entity_{dim}",
@@ -254,7 +254,7 @@ def test_checkpointing_meshtags_3D(
             read_map = generate_reference_map(new_mesh, new_ft, new_mesh.comm, root)
         else:
             if MPI.COMM_WORLD.rank == root:
-                new_ft = adios4dolfinx.read_meshtags(
+                new_ft = io4dolfinx.read_meshtags(
                     filename,
                     new_mesh,
                     meshtag_name=f"entity_{dim}",

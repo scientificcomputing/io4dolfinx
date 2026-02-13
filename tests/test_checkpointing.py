@@ -9,7 +9,7 @@ import dolfinx
 import numpy as np
 import pytest
 
-import adios4dolfinx
+import io4dolfinx
 
 dtypes = [np.float64, np.float32]  # Mesh geometry dtypes
 write_comm = [MPI.COMM_SELF, MPI.COMM_WORLD]  # Communicators for creating mesh
@@ -234,11 +234,11 @@ def test_read_write_P_3D_time(
 @pytest.mark.parametrize(
     "func, args",
     [
-        (adios4dolfinx.read_attributes, ("nonexisting_file", MPI.COMM_WORLD, "")),
-        (adios4dolfinx.read_timestamps, ("nonexisting_file", MPI.COMM_WORLD, "")),
-        (adios4dolfinx.read_meshtags, ("nonexisting_file", MPI.COMM_WORLD, None, "")),
-        (adios4dolfinx.read_function, ("nonexisting_file", None)),
-        (adios4dolfinx.read_mesh, ("nonexisting_file", MPI.COMM_WORLD)),
+        (io4dolfinx.read_attributes, ("nonexisting_file", MPI.COMM_WORLD, "")),
+        (io4dolfinx.read_timestamps, ("nonexisting_file", MPI.COMM_WORLD, "")),
+        (io4dolfinx.read_meshtags, ("nonexisting_file", MPI.COMM_WORLD, None, "")),
+        (io4dolfinx.read_function, ("nonexisting_file", None)),
+        (io4dolfinx.read_mesh, ("nonexisting_file", MPI.COMM_WORLD)),
     ],
 )
 def test_read_nonexisting_file_raises_FileNotFoundError(func, args, backend):
@@ -262,11 +262,11 @@ def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
     mesh = dolfinx.mesh.create_unit_square(comm, 10, 10, cell_type=dolfinx.mesh.CellType.triangle)
     V = dolfinx.fem.functionspace(mesh, ("P", 1))
     u = dolfinx.fem.Function(V)
-    adios4dolfinx.write_function(filename, u, time=0, name="some_name", backend=backend)
-    adios4dolfinx.write_function(filename, u, time=0, name="some_other_name", backend=backend)
+    io4dolfinx.write_function(filename, u, time=0, name="some_name", backend=backend)
+    io4dolfinx.write_function(filename, u, time=0, name="some_other_name", backend=backend)
     # variables = set(sorted(["some_name", "some_other_name"]))
     with pytest.raises(KeyError):
-        adios4dolfinx.read_function(filename, u, time=0, name="nonexisting_name", backend=backend)
+        io4dolfinx.read_function(filename, u, time=0, name="nonexisting_name", backend=backend)
     # assert e.value.args[0] == (
     #     f"nonexisting_name not found in {filename}. Did you mean one of {variables}?"
     # )
@@ -299,16 +299,16 @@ def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
     t_u = [0.1, 1.4]
     t_v = [0.45, 1.2]
 
-    adios4dolfinx.write_mesh(filename, mesh, backend=backend)
-    adios4dolfinx.write_function(filename, u, time=t_u[0], backend=backend)
-    adios4dolfinx.write_function(filename, v, time=t_v[0], backend=backend)
-    adios4dolfinx.write_function(filename, u, time=t_u[1], backend=backend)
-    adios4dolfinx.write_function(filename, v, time=t_v[1], backend=backend)
+    io4dolfinx.write_mesh(filename, mesh, backend=backend)
+    io4dolfinx.write_function(filename, u, time=t_u[0], backend=backend)
+    io4dolfinx.write_function(filename, v, time=t_v[0], backend=backend)
+    io4dolfinx.write_function(filename, u, time=t_u[1], backend=backend)
+    io4dolfinx.write_function(filename, v, time=t_v[1], backend=backend)
 
-    timestamps_u = adios4dolfinx.read_timestamps(
+    timestamps_u = io4dolfinx.read_timestamps(
         comm=mesh.comm, filename=filename, function_name="u", backend=backend
     )
-    timestamps_v = adios4dolfinx.read_timestamps(
+    timestamps_v = io4dolfinx.read_timestamps(
         comm=mesh.comm, filename=filename, function_name="v", backend=backend
     )
     assert np.allclose(timestamps_u, t_u)

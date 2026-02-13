@@ -5,7 +5,7 @@
 # If we want to avoid to re-partition the mesh every time you run a simulation
 # (on a fixed number of processes), one can store the partitioning of the mesh
 # in the checkpoint. This is done by setting the flag `store_partition_info=True`
-# when calling {py:func}`adios4dolfinx.write_mesh`.
+# when calling {py:func}`io4dolfinx.write_mesh`.
 
 # +
 import logging
@@ -21,7 +21,7 @@ def write_partitioned_mesh(filename: Path):
 
     import dolfinx
 
-    import adios4dolfinx
+    import io4dolfinx
 
     # Create a simple unit square mesh
     mesh = dolfinx.mesh.create_unit_square(
@@ -33,7 +33,7 @@ def write_partitioned_mesh(filename: Path):
     )
 
     # Write mesh checkpoint
-    adios4dolfinx.write_mesh(
+    io4dolfinx.write_mesh(
         filename, mesh, backend="adios2", backend_args={"engine": "BP4"}, store_partition_info=True
     )
     # Inspect checkpoint on rank 0 with `bpls`
@@ -62,17 +62,17 @@ with ipp.Cluster(engines="mpi", n=n, log_level=logging.ERROR) as cluster:
 # If we try to read the mesh in on a different number of processes, we will get an error.
 # We illustrate this below, by first trying to read the mesh using partitioning information,
 # which is done by setting the flag `read_from_partition=True` when calling
-# {py:func}`adios4dolfinx.read_mesh`.
+# {py:func}`io4dolfinx.read_mesh`.
 
 
 def read_partitioned_mesh(filename: Path, read_from_partition: bool = True):
     from mpi4py import MPI
 
-    import adios4dolfinx
+    import io4dolfinx
 
     prefix = f"{MPI.COMM_WORLD.rank + 1}/{MPI.COMM_WORLD.size}: "
     try:
-        mesh = adios4dolfinx.read_mesh(
+        mesh = io4dolfinx.read_mesh(
             filename,
             comm=MPI.COMM_WORLD,
             backend="adios2",

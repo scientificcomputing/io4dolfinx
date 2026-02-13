@@ -138,3 +138,5 @@ output/
 *.h5
 *.xdmf
 *.bp/
+*.pvd
+*.vtu

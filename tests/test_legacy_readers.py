@@ -1,6 +1,6 @@
 # Copyright (C) 2023-2026 Jørgen Schartum Dokken
 #
-# This file is part of adios4dolfinx
+# This file is part of io4dolfinx
 #
 # SPDX-License-Identifier:    MIT
 
@@ -16,7 +16,7 @@ import pytest
 import ufl
 from dolfinx.fem.petsc import LinearProblem
 
-from adios4dolfinx import (
+from io4dolfinx import (
     read_cell_data,
     read_function,
     read_function_from_legacy_h5,
@@ -194,9 +194,9 @@ def test_read_legacy_function_from_checkpoint(backend):
         np.testing.assert_allclose(qh.x.array, ref_val)
 
 
-def test_adios4dolfinx_legacy():
+def test_io4dolfinx_legacy():
     comm = MPI.COMM_WORLD
-    path = (pathlib.Path("legacy_checkpoint") / "adios4dolfinx_checkpoint.bp").absolute()
+    path = (pathlib.Path("legacy_checkpoint") / "io4dolfinx_checkpoint.bp").absolute()
     if not path.exists():
         pytest.skip(f"{path} does not exist")
 

@@ -84,7 +84,7 @@ with ipp.Cluster(engines="mpi", n=3, log_level=logging.ERROR) as cluster:
 #    is part of each cell
 # - A {py:func}`reference element<basix.ufl.element>`: Used for push data back and
 #   forth from the reference element and computing Jacobians
-# We now use {py:mod}`adios4dolfinx` to write a mesh to file.
+# We now use {py:mod}`io4dolfinx` to write a mesh to file.
 
 
 def write_mesh(filename: Path):
@@ -94,7 +94,7 @@ def write_mesh(filename: Path):
 
     import dolfinx
 
-    import adios4dolfinx
+    import io4dolfinx
 
     # Create a simple unit square mesh
     mesh = dolfinx.mesh.create_unit_square(
@@ -102,7 +102,7 @@ def write_mesh(filename: Path):
     )
 
     # Write mesh checkpoint
-    adios4dolfinx.write_mesh(filename, mesh, backend="adios2", backend_args={"engine": "BP4"})
+    io4dolfinx.write_mesh(filename, mesh, backend="adios2", backend_args={"engine": "BP4"})
 
     # Inspect checkpoint on rank 0 with `bpls`
     if mesh.comm.rank == 0:
@@ -122,7 +122,7 @@ with ipp.Cluster(engines="mpi", n=2, log_level=logging.ERROR) as cluster:
 # -
 
 # We observe that we have stored all the data needed to re-create the mesh in the file `mesh.bp`.
-# We can therefore read it (to any number of processes) with {py:func}`adios4dolfinx.read_mesh`
+# We can therefore read it (to any number of processes) with {py:func}`io4dolfinx.read_mesh`
 
 
 def read_mesh(filename: Path):
@@ -130,9 +130,9 @@ def read_mesh(filename: Path):
 
     import dolfinx
 
-    import adios4dolfinx
+    import io4dolfinx
 
-    mesh = adios4dolfinx.read_mesh(
+    mesh = io4dolfinx.read_mesh(
         filename,
         comm=MPI.COMM_WORLD,
         backend="adios2",

@@ -1,11 +1,11 @@
 # Copyright (C) 2023 Jørgen Schartum Dokken
 #
-# This file is part of adios4dolfinx
+# This file is part of io4dolfinx
 #
 # SPDX-License-Identifier:    MIT
 
 """
-Vectorized numpy operations used internally in adios4dolfinx
+Vectorized numpy operations used internally in io4dolfinx
 """
 
 from __future__ import annotations

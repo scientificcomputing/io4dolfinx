@@ -1,5 +1,5 @@
-import adios4dolfinx
+import io4dolfinx
 
 
 def test_version():
-    assert adios4dolfinx.__version__ is not None
+    assert io4dolfinx.__version__ is not None

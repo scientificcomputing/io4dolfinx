@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import ufl
 
-import adios4dolfinx
+import io4dolfinx
 
 pyvista = pytest.importorskip("pyvista")
 
@@ -18,7 +18,7 @@ def test_read_mesh_and_cell_data(tmp_path):
         grid.save(filename)
     MPI.COMM_WORLD.barrier()
 
-    mesh = adios4dolfinx.read_mesh(filename, MPI.COMM_WORLD, backend="pyvista")
+    mesh = io4dolfinx.read_mesh(filename, MPI.COMM_WORLD, backend="pyvista")
 
     vol = dolfinx.fem.form(1 * ufl.dx(domain=mesh))
     surf = dolfinx.fem.form(1 * ufl.ds(domain=mesh))
@@ -31,7 +31,7 @@ def test_read_mesh_and_cell_data(tmp_path):
     assert np.isclose(vol_glob, vol_ref)
     assert np.isclose(surf_glob, surf_ref)
 
-    names = adios4dolfinx.read_function_names(filename, MPI.COMM_WORLD, backend="pyvista")
+    names = io4dolfinx.read_function_names(filename, MPI.COMM_WORLD, backend="pyvista")
     for name in grid.cell_data.keys():
         assert name in names
     for name in grid.point_data.keys():
@@ -39,11 +39,11 @@ def test_read_mesh_and_cell_data(tmp_path):
 
     for name in names:
         if name in grid.cell_data.keys():
-            cd = adios4dolfinx.read_cell_data(filename, name, mesh, backend="pyvista")
+            cd = io4dolfinx.read_cell_data(filename, name, mesh, backend="pyvista")
             oci = mesh.topology.original_cell_index
             np.testing.assert_allclose(cd.x.array[:], grid.cell_data[name][oci])
         elif name in grid.point_data.keys():
-            pd = adios4dolfinx.read_point_data(filename, name, mesh, backend="pyvista")
+            pd = io4dolfinx.read_point_data(filename, name, mesh, backend="pyvista")
             igi = mesh.geometry.input_global_indices
             np.testing.assert_allclose(pd.x.array[:], grid.point_data[name][igi])
         else:

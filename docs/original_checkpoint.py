@@ -1,6 +1,6 @@
 # # Checkpoint on input mesh
 # As we have discussed earlier, one can choose to store function data in a way that
-# is N-to-M compatible by using {py:func}`adios4dolfinx.write_checkpoint`.
+# is N-to-M compatible by using {py:func}`io4dolfinx.write_checkpoint`.
 # This stores the distributed mesh in it's current (partitioned) ordering, and does
 # use the original input data ordering for the cells and connectivity.
 # This means that you cannot use your original mesh (from `.xdmf` files) or mesh tags
@@ -10,7 +10,7 @@
 # An optional way of store an N-to-M checkpoint is to store the function data in the same
 # ordering as the mesh. The write operation will be more expensive, as it requires data
 # communication to ensure contiguous data being written to the checkpoint.
-# The method is exposed as {py:func}`adios4dolfinx.write_function_on_input_mesh`.
+# The method is exposed as {py:func}`io4dolfinx.write_function_on_input_mesh`.
 # Below we will demonstrate this method.
 
 # +
@@ -33,7 +33,6 @@ def create_xdmf_mesh(filename: Path):
     mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 10, 10)
     facets = dolfinx.mesh.locate_entities_boundary(mesh, mesh.topology.dim - 1, locate_facets)
     facet_tag = dolfinx.mesh.meshtags(mesh, mesh.topology.dim - 1, facets, 1)
-    facet_tag.name = "FacetTag"
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, filename.with_suffix(".xdmf"), "w") as xdmf:
         xdmf.write_mesh(mesh)
         xdmf.write_meshtags(facet_tag, mesh.geometry)
@@ -65,7 +64,7 @@ def write_function(
 
     import dolfinx
 
-    import adios4dolfinx
+    import io4dolfinx
 
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, mesh_filename, "r") as xdmf:
         mesh = xdmf.read_mesh()
@@ -73,10 +72,10 @@ def write_function(
     u = dolfinx.fem.Function(V)
     u.interpolate(f)
 
-    adios4dolfinx.write_function_on_input_mesh(
+    io4dolfinx.write_function_on_input_mesh(
         function_filename.with_suffix(".bp"),
         u,
-        mode=adios4dolfinx.FileMode.write,
+        mode=io4dolfinx.FileMode.write,
         time=0.0,
         name="Output",
     )
@@ -112,13 +111,13 @@ def verify_checkpoint(
     import dolfinx
     import numpy as np
 
-    import adios4dolfinx
+    import io4dolfinx
 
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, mesh_filename, "r") as xdmf:
         in_mesh = xdmf.read_mesh()
     V = dolfinx.fem.functionspace(in_mesh, element)
     u_in = dolfinx.fem.Function(V)
-    adios4dolfinx.read_function(function_filename.with_suffix(".bp"), u_in, time=0.0, name="Output")
+    io4dolfinx.read_function(function_filename.with_suffix(".bp"), u_in, time=0.0, name="Output")
 
     # Compute exact interpolation
     u_ex = dolfinx.fem.Function(V)

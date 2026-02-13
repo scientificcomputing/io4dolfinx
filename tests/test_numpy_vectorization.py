@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from adios4dolfinx.utils import compute_dofmap_pos, unroll_dofmap
+from io4dolfinx.utils import compute_dofmap_pos, unroll_dofmap
 
 write_comm = [MPI.COMM_SELF, MPI.COMM_WORLD]  # Communicators for creating mesh
 ghost_mode = [dolfinx.mesh.GhostMode.none, dolfinx.mesh.GhostMode.shared_facet]

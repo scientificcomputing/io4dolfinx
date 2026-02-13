@@ -1,6 +1,6 @@
 # Copyright (C) 2023 Jørgen Schartum Dokken
 #
-# This file is part of adios4dolfinx
+# This file is part of io4dolfinx
 #
 # SPDX-License-Identifier:    MIT
 
@@ -349,7 +349,7 @@ def read_point_data(
     """Read data from the nodes of a mesh.
 
     Note:
-        Backend has to implement {py:class}`adios4dolfinx.backends.read_cell_data`.
+        Backend has to implement {py:class}`io4dolfinx.backends.read_cell_data`.
 
     Args:
         filename: Path to file
@@ -413,7 +413,7 @@ def read_cell_data(
     """Read data from the nodes of a mesh.
 
     Note:
-        Backend has to implement {py:class}`adios4dolfinx.backends.read_cell_data`.
+        Backend has to implement {py:class}`io4dolfinx.backends.read_cell_data`.
 
     Args:
         filename: Path to file

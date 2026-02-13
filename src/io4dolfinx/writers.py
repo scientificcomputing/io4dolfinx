@@ -1,6 +1,6 @@
 # Copyright (C) 2024-2026 Jørgen Schartum Dokken
 #
-# This file is part of adios4dolfinx
+# This file is part of io4dolfinx
 #
 # SPDX-License-Identifier:    MIT
 

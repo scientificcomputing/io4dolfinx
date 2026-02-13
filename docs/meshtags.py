@@ -17,7 +17,7 @@ import dolfinx
 import ipyparallel as ipp
 import numpy as np
 
-import adios4dolfinx
+import io4dolfinx
 
 assert MPI.COMM_WORLD.size == 1, "This example should only be run with 1 MPI process"
 
@@ -41,19 +41,19 @@ for i in range(mesh.topology.dim + 1):
     values = np.arange(e_map.size_local, dtype=np.int32) + e_map.local_range[0]
     meshtags[i] = dolfinx.mesh.meshtags(mesh, i, entities, values)
 
-# We use {py:func}`adios4dolfinx.write_mesh` and `adios4dolfinx.write_meshtags` to write the
+# We use {py:func}`io4dolfinx.write_mesh` and `io4dolfinx.write_meshtags` to write the
 # {py:class}`dolfinx.mesh.Mesh` and {py:class}`dolfinx.mesh.MeshTags` to file.
 # We associate each meshtag with a name
 
 filename = Path("mesh_with_meshtags.bp")
-adios4dolfinx.write_mesh(filename, mesh)
+io4dolfinx.write_mesh(filename, mesh)
 for i, tag in meshtags.items():
-    adios4dolfinx.write_meshtags(filename, mesh, tag, meshtag_name=f"meshtags_{i}")
+    io4dolfinx.write_meshtags(filename, mesh, tag, meshtag_name=f"meshtags_{i}")
 
 
 # Next we want to read the meshtags in on a different number of processes,
 # and check that the midpoints of each entity is still correct.
-# We do this with {py:func}`adios4dolfinx.read_meshtags`.
+# We do this with {py:func}`io4dolfinx.read_meshtags`.
 
 
 def verify_meshtags(filename: Path):
@@ -63,13 +63,13 @@ def verify_meshtags(filename: Path):
     import dolfinx
     import numpy as np
 
-    import adios4dolfinx
+    import io4dolfinx
 
-    read_mesh = adios4dolfinx.read_mesh(filename, MPI.COMM_WORLD)
+    read_mesh = io4dolfinx.read_mesh(filename, MPI.COMM_WORLD)
     prefix = f"{read_mesh.comm.rank + 1}/{read_mesh.comm.size}: "
     for i in range(read_mesh.topology.dim + 1):
         # Read mesh from file
-        meshtags = adios4dolfinx.read_meshtags(filename, read_mesh, meshtag_name=f"meshtags_{i}")
+        meshtags = io4dolfinx.read_meshtags(filename, read_mesh, meshtag_name=f"meshtags_{i}")
 
         # Compute midpoints for all local entities on process
         read_mesh.topology.create_connectivity(i, read_mesh.topology.dim)

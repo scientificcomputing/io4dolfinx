@@ -7,7 +7,7 @@ import dolfinx
 import numpy as np
 import pytest
 
-from adios4dolfinx import FileMode, snapshot_checkpoint
+from io4dolfinx import FileMode, snapshot_checkpoint
 
 
 def suffix(backend: str) -> str:

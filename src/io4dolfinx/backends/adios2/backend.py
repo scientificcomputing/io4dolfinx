@@ -614,7 +614,7 @@ def read_dofmap(
     """
     backend_args = {} if backend_args is None else backend_args
 
-    # Handles legacy adios4dolfinx files, modern files, and custom location of dofmap.
+    # Handles legacy io4dolfinx files, modern files, and custom location of dofmap.
     legacy = backend_args.get("legacy", False)
     xdofmap_path: str | None
     dofmap_path: str | None

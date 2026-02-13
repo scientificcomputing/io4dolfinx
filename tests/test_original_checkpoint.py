@@ -14,7 +14,7 @@ import dolfinx
 import numpy as np
 import pytest
 
-import adios4dolfinx
+import io4dolfinx
 
 dtypes = [np.float64, np.float32]  # Mesh geometry dtypes
 
@@ -130,7 +130,7 @@ def write_function_original(
     uh.interpolate(f)
     uh.name = name
     el_hash = (
-        adios4dolfinx.utils.element_signature(V)
+        io4dolfinx.utils.element_signature(V)
         .replace(" ", "")
         .replace(",", "")
         .replace("(", "")
@@ -149,8 +149,8 @@ def write_function_original(
 
     filename = (path / f"mesh_{file_hash}").with_suffix(suffix)
     if write_mesh:
-        adios4dolfinx.write_mesh_input_order(filename, mesh, backend=backend)
-    adios4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0, backend=backend)
+        io4dolfinx.write_mesh_input_order(filename, mesh, backend=backend)
+    io4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0, backend=backend)
     return filename
 
 
@@ -171,7 +171,7 @@ def read_function_original(
 
     import dolfinx
 
-    import adios4dolfinx
+    import io4dolfinx
 
     # assert MPI.COMM_WORLD.size > 1
     if backend == "adios2":
@@ -183,7 +183,7 @@ def read_function_original(
         with dolfinx.io.XDMFFile(MPI.COMM_WORLD, mesh_fname, "r") as xdmf:
             mesh = xdmf.read_mesh()
     else:
-        mesh = adios4dolfinx.read_mesh(
+        mesh = io4dolfinx.read_mesh(
             mesh_fname,
             MPI.COMM_WORLD,
             ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
@@ -202,7 +202,7 @@ def read_function_original(
 
     V = dolfinx.fem.functionspace(mesh, el)
     u = dolfinx.fem.Function(V, name=u_name, dtype=u_dtype)
-    adios4dolfinx.read_function(u_fname, u, time=0.0, backend_args=backend_args, backend=backend)
+    io4dolfinx.read_function(u_fname, u, time=0.0, backend_args=backend_args, backend=backend)
     MPI.COMM_WORLD.Barrier()
 
     u_ex = dolfinx.fem.Function(V, name="exact", dtype=u_dtype)
@@ -229,7 +229,7 @@ def write_function_vector(
     import basix.ufl
     import dolfinx
 
-    import adios4dolfinx
+    import io4dolfinx
 
     assert MPI.COMM_WORLD.size > 1
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, fname, "r") as xdmf:
@@ -240,7 +240,7 @@ def write_function_vector(
     uh.interpolate(f)
     uh.name = name
     el_hash = (
-        adios4dolfinx.utils.element_signature(V)
+        io4dolfinx.utils.element_signature(V)
         .replace(" ", "")
         .replace(",", "")
         .replace("(", "")
@@ -253,8 +253,8 @@ def write_function_vector(
     filename = dir / f"mesh_{file_hash}.bp"
 
     if write_mesh:
-        adios4dolfinx.write_mesh_input_order(filename, mesh, backend=backend)
-    adios4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0, backend=backend)
+        io4dolfinx.write_mesh_input_order(filename, mesh, backend=backend)
+    io4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0, backend=backend)
     return filename
 
 
@@ -276,7 +276,7 @@ def read_function_vector(
         with dolfinx.io.XDMFFile(MPI.COMM_WORLD, mesh_fname, "r") as xdmf:
             mesh = xdmf.read_mesh()
     elif mesh_fname.suffix == ".bp":
-        mesh = adios4dolfinx.read_mesh(
+        mesh = io4dolfinx.read_mesh(
             mesh_fname,
             MPI.COMM_WORLD,
             ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
@@ -286,7 +286,7 @@ def read_function_vector(
 
     V = dolfinx.fem.functionspace(mesh, el)
     u = dolfinx.fem.Function(V, name=u_name, dtype=u_dtype)
-    adios4dolfinx.read_function(u_fname, u, time=0.0, backend=backend)
+    io4dolfinx.read_function(u_fname, u, time=0.0, backend=backend)
     MPI.COMM_WORLD.Barrier()
 
     u_ex = dolfinx.fem.Function(V, name="exact", dtype=u_dtype)

@@ -2,7 +2,7 @@
 requires = ["setuptools>=61.0.0", "wheel"]
 
 [project]
-name = "adios4dolfinx"
+name = "io4dolfinx"
 version = "0.11.0.dev0"
 description = "Checkpointing functionality for DOLFINx meshes/functions with ADIOS2"
 authors = [{ name = "Jørgen S. Dokken", email = "dokken@simula.no" }]
@@ -15,9 +15,9 @@ test = [
     "pytest", 
     "coverage", 
     "ipyparallel", 
-    "adios4dolfinx[h5py]", 
-    "adios4dolfinx[pyvista]", 
-    "adios4dolfinx[xdmf]"
+    "io4dolfinx[h5py]", 
+    "io4dolfinx[pyvista]", 
+    "io4dolfinx[xdmf]"
 ]
 dev = ["pdbpp", "ipython", "mypy", "ruff"]
 h5py = ["h5py"]
@@ -30,10 +30,10 @@ docs = [
     "jupytext",
     "ipykernel<7.0.0",     # Note: Remove once https://github.com/ipython/ipykernel/issues/1450 is in a release
     "sphinx-codeautolink",
-    "adios4dolfinx[h5py]",
+    "io4dolfinx[h5py]",
     "sphinx_external_toc<1.1.0",
 ]
-all = ["adios4dolfinx[test,dev,docs]"]
+all = ["io4dolfinx[test,dev,docs]"]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
@@ -64,7 +64,7 @@ select = [
 
 
 [tool.ruff.lint.isort]
-known-first-party = ["adios4dolfinx"]
+known-first-party = ["io4dolfinx"]
 known-third-party = [
     "basix",
     "dolfinx",

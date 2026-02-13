@@ -1,6 +1,6 @@
 # Copyright (C) 2024 Jørgen Schartum Dokken
 #
-# This file is part of adios4dolfinx
+# This file is part of io4dolfinx
 #
 # SPDX-License-Identifier:    MIT
 
@@ -349,7 +349,7 @@ def write_function_on_input_mesh(
     Write function checkpoint (to be read with the input mesh).
 
     Note:
-        Requires backend to implement {py:class}`adios4dolfinx.backends.write_function`.
+        Requires backend to implement {py:class}`io4dolfinx.backends.write_function`.
 
     Args:
         filename: The filename to write to
@@ -388,7 +388,7 @@ def write_mesh_input_order(
     Write mesh to checkpoint file in original input ordering.
 
     Note:
-        Requires backend to implement {py:class}`adios4dolfinx.backends.write_mesh`.
+        Requires backend to implement {py:class}`io4dolfinx.backends.write_mesh`.
 
     Args:
         filename: The filename to write to
