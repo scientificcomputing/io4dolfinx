@@ -23,13 +23,13 @@ jobs:
         run: python3 -m pip install -r build-requirements.txt
 
       # Note: We assume the caller workflow has already uploaded these artifacts
-      - name: Download legacy data
+      - name: Download legacy mpich data
         uses: actions/download-artifact@v7
         with:
           name: legacy_mpich
           path: ./legacy
 
-      - name: Download legacy data
+      - name: Download legacy checkpoint mpich data
         uses: actions/download-artifact@v7
         with:
           name: legacy_checkpoint_mpich
