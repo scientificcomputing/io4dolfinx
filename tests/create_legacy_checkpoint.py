@@ -1,12 +1,12 @@
 # Copyright (C) 2024 Jørgen Schartum Dokken
 #
-# This file is part of io4dolfinx
+# This file is part of io4dolfinx.
 #
 # SPDX-License-Identifier:    MIT
 
 
 """
-Functions to create checkpoints with io4dolfinx v0.7.x
+Functions to create checkpoints with adios4dolfinx v0.7.x
 """
 
 import argparse
@@ -18,11 +18,11 @@ from mpi4py import MPI
 import dolfinx
 import numpy as np
 
-import io4dolfinx
+import adios4dolfinx
 
-a4d_version = version("io4dolfinx")
+a4d_version = version("adios4dolfinx")
 assert a4d_version < "0.7.2", (
-    f"Creating a legacy checkpoint requires io4dolfinx < 0.7.2, you have {a4d_version}."
+    f"Creating a legacy checkpoint requires adios4dolfinx < 0.7.2, you have {a4d_version}."
 )
 
 
@@ -38,17 +38,17 @@ def write_checkpoint(filename, mesh, el, f):
     uh = dolfinx.fem.Function(V, dtype=np.float64)
     uh.interpolate(f)
 
-    io4dolfinx.write_mesh(V.mesh, filename)
-    io4dolfinx.write_function(uh, filename)
+    adios4dolfinx.write_mesh(V.mesh, filename)
+    adios4dolfinx.write_function(uh, filename)
 
 
 def verify_checkpoint(filename, el, f):
-    mesh = io4dolfinx.read_mesh(
+    mesh = adios4dolfinx.read_mesh(
         MPI.COMM_WORLD, filename, "BP4", dolfinx.mesh.GhostMode.shared_facet
     )
     V = dolfinx.fem.FunctionSpace(mesh, el)
     uh = dolfinx.fem.Function(V, dtype=np.float64)
-    io4dolfinx.read_function(uh, filename)
+    adios4dolfinx.read_function(uh, filename)
 
     u_ex = dolfinx.fem.Function(V, dtype=np.float64)
     u_ex.interpolate(f)
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     inputs = parser.parse_args()
     path = pathlib.Path(inputs.dir)
     path.mkdir(exist_ok=True, parents=True)
-    filename = path / "io4dolfinx_checkpoint.bp"
+    filename = path / "adios4dolfinx_checkpoint.bp"
 
     mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 10, 10)
     el = ("N1curl", 3)
