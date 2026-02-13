@@ -1,16 +1,59 @@
 # io4dolfinx - A framework for reading and writing data to various mesh formats
 
-io4dolfinx is an extension for [DOLFINx](https://github.com/FEniCS/dolfinx/) that supports reading and writing various mesh formats using a variety of backends:
+**io4dolfinx** is an extension for [DOLFINx](https://github.com/FEniCS/dolfinx/) that provides advanced input/output capabilities. It focuses on **N-to-M checkpointing** (writing data on N processors, reading on M processors) and supports reading/writing various mesh formats using interchangeable backends.
 
-## Reading meshes, node data and cell data
-Most meshing formats supports associating data with the nodes of the mesh (the mesh can be higher order) and the cells of the mesh. The node data can be read in as P-th order Lagrange functions (where P is the order of the grid), while the cell data can be read in as piecewise constant (DG-0) functions.
 
-- [VTKHDF](./docs/backends/vtkhdf.rst): The new scalable format from VTK, called [VTKHDF](https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/index.html) is supported by the `vtkhdf` backend. 
-- [XDMF](./docs/backends/xdmf.rst) (eXtensible Model Data Format): `.xdmf`. The `xdmf` backend supports the `HDF5` encoding, to ensure performance in parallel.
-- [PyVista](./docs/backends/pyvista.rst) (IO backend is meshio): The [pyvista](https://pyvista.org/) backend uses {py:func}`pyvista.read` to read in meshes, point data and cell data. `pyvista` relies on [meshio](https://github.com/nschloe/meshio) for most reading operations (including the XDMF ascii format).
+## Installation
 
-## Checkpointing
+The library is compatible with the DOLFINx nightly release, v0.10.0, and v0.9.0.
+
+```bash
+python3 -m pip install io4dolfinx
+```
+
+For specific backend requirements (like ADIOS2 or H5PY), see the [Installation Guide](./docs/installation.md).
+
+
+## Quick Start
+
+Here is a minimal example of saving and loading a simulation state (Checkpointing).
+
+```python
+from pathlib import Path
+from mpi4py import MPI
+import dolfinx
+import io4dolfinx
+
+# 1. Create a mesh and function
+comm = MPI.COMM_WORLD
+mesh = dolfinx.mesh.create_unit_square(comm, 10, 10)
+V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))
+u = dolfinx.fem.Function(V)
+u.interpolate(lambda x: x[0] + x[1])
+u.name = "my_function"
+
+# 2. Write checkpoint
+# The mesh must be written before the function
+filename = Path("checkpoint.bp")
+io4dolfinx.write_mesh(filename, mesh)
+io4dolfinx.write_function(filename, u, time=0.0)
+
+# 3. Read checkpoint
+# This works even if the number of MPI processes changes (N-to-M)
+mesh_new = io4dolfinx.read_mesh(filename, comm)
+V_new = dolfinx.fem.functionspace(mesh_new, ("Lagrange", 1))
+u_new = dolfinx.fem.Function(V_new)
+io4dolfinx.read_function(filename, u_new, time=0.0, name="my_function")
+```
+
+
+## Features and Backends
+
+`io4dolfinx` supports custom user backends. You can switch backends by passing `backend="name"` to IO functions.
+
+### Checkpointing (N-to-M)
 Many finite element applications requires storage of functions that cannot be associated with the nodes or cells of the mesh. Therefore, we have implemented our own, native checkpointing format that supports N-to-M checkpointing (write data on N processors, read in on M) through the following backends:
+
 - [h5py](./docs/backends/h5py.rst): Requires HDF5 with MPI support to work, but can store, meshes, partitioning info, meshtags, function data and more.
 - [adios2](./docs/backends/adios2.rst): Requires [ADIOS 2](https://adios2.readthedocs.io/en/latest/) compiled with MPI support and Python bindings. Supports the same set of operations as the `h5py` backend.
 
@@ -19,110 +62,49 @@ See: [Checkpointing in DOLFINx - FEniCS 23](https://jsdokken.com/checkpointing-p
 
 For scalability, the code uses [MPI Neighbourhood collectives](https://www.mpi-forum.org/docs/mpi-3.1/mpi31-report/node200.htm) for communication across processes.
 
-## Relation to adios4dolfinx
 
-This library is an evolution of the [adios4dolfinx](https://doi.org/10.21105/joss.06451) code and has all the functionality of that library, and can read the checkpointing files from `adios4dolfinx`.
+### Mesh IO (Import/Export)
+Most meshing formats supports associating data with the nodes of the mesh (the mesh can be higher order) and the cells of the mesh. The node data can be read in as P-th order Lagrange functions (where P is the order of the grid), while the cell data can be read in as piecewise constant (DG-0) functions.
 
-As `adios4dolfinx` was solely relying on ADIOS2 it was hard to interface other meshing formats and still keep the library structure sane.
-
-`io4dolfinx` support custom user backends, which can be provided as a string through all functions via the `backend` keyword arg, i.e. `backend="name_of_my_module"`.
-
-## Statement of Need
-
-As the usage of high performance computing clusters increases, more and more large-scale, long-running simulations are deployed.
-The need for storing intermediate solutions from such simulations are crucial, as the HPC system might crash, or the simulation might crash or exceed the alloted computational budget.
-Having a checkpoint of related variables, such as the solutions to partial differential equations (PDEs) is therefore essential.
-The `io4dolfinx` library extends the [DOLFINx](https://github.com/FEniCS/dolfinx/) computational framework for solving PDEs with checkpointing functionality, such that immediate solutions and mesh information can be stored and re-used in another simulation.
-
-## Installation
-
-The library is backwards compatible against the DOLFINx API of the nightly release of DOLFINx, v0.10.0 and v0.9.0.
-
-The library can be installed through `pip` with `python3 -m pip install io4dolfinx`.
-For notes on installation of specific backends see the individual backend documentation.
-
-See [./docs/installation.md](./docs/installation.md) for further info.
+- [VTKHDF](./docs/backends/vtkhdf.rst): The new scalable format from VTK, called [VTKHDF](https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/index.html) is supported by the `vtkhdf` backend. 
+- [XDMF](./docs/backends/xdmf.rst) (eXtensible Model Data Format): `.xdmf`. The `xdmf` backend supports the `HDF5` encoding, to ensure performance in parallel.
+- [PyVista](./docs/backends/pyvista.rst) (IO backend is meshio): The [pyvista](https://pyvista.org/) backend uses {py:func}`pyvista.read` to read in meshes, point data and cell data. `pyvista` relies on [meshio](https://github.com/nschloe/meshio) for most reading operations (including the XDMF ascii format).
 
 
-## Functionality
 
-### DOLFINx
+## Advanced Usage
 
-- Reading and writing meshes, using `io4dolfinx.read/write_mesh`
-- Reading and writing meshtags associated to meshes `io4dolfinx.read/write_meshtags`
-- Reading checkpoints for any element (serial and parallel, arbitrary number of functions and timesteps per file). Use `io4dolfinx.read/write_function`.
-- Writing standalone function checkpoints relating to "original meshes", i.e. meshes read from `XDMFFile`. Use `io4dolfinx.write_function_on_input_mesh` for this.
-- Store mesh partitioning and re-read the mesh with this information, avoiding calling SCOTCH, Kahip or Parmetis.
+The repository contains detailed documented examples in the `docs` folder:
 
-> [!IMPORTANT]  
-> For checkpoints written with `write_function` to be valid, you first have to store the mesh with `write_mesh` to the checkpoint file.
+* [Reading and writing mesh checkpoints](./docs/writing_mesh_checkpoint.py)
+* [Storing mesh partitioning data](./docs/partitioned_mesh.py) (Avoid re-partitioning when restarting)
+* [Writing mesh-tags](./docs/meshtags.py)
+* [Writing function checkpoints](./docs/writing_functions_checkpoint.py)
+* [Checkpoint on input mesh](./docs/original_checkpoint.py)
 
-> [!IMPORTANT]  
-> A checkpoint file supports multiple functions and multiple time steps, as long as the functions are associated with the same mesh
+For a full API reference and backend details, see the [Documentation](https://jsdokken.com/io4dolfinx/).
 
-> [!IMPORTANT]  
-> Only one mesh per file is allowed
+### Legacy DOLFIN Support
+`io4dolfinx` can read checkpoints created by the legacy version of DOLFIN (Lagrange or DG functions).
+* Reading meshes from DOLFIN HDF5File-format.
+* Reading checkpoints from DOLFIN HDF5File and XDMFFile.
 
+## Project Background
 
-## Example Usage
+### Relation to adios4dolfinx
+This library is an evolution of [adios4dolfinx](https://doi.org/10.21105/joss.06451). It includes all functionality of the original library but has been refactored to support multiple IO backends (not just ADIOS2), making it easier to interface with different meshing formats while keeping the library structure sane.
 
-The repository contains many documented examples of usage, in the `docs`-folder, including
+### Statement of Need
+As large-scale, long-running simulations on HPC clusters become more common, the need to store intermediate solutions is crucial. If a system crashes or a computational budget is exceeded, checkpoints allow the simulation to resume without restarting from scratch. `io4dolfinx` extends DOLFINx with this essential functionality.
 
-- [Reading and writing mesh checkpoints](./docs/writing_mesh_checkpoint.py)
-- [Storing mesh partitioning data](./docs/partitioned_mesh.py)
-- [Writing mesh-tags to a checkpoint](./docs/meshtags.py)
-- [Reading and writing function checkpoints](./docs/writing_functions_checkpoint.py)
-- [Checkpoint on input mesh](./docs/original_checkpoint.py)
-  - Further examples can be found at [io4dolfinx examples](https://jsdokken.com/io4dolfinx/)
+## Contributing
 
-### Legacy DOLFIN
-
-Only checkpoints for `Lagrange` or `DG` functions are supported from legacy DOLFIN
-
-- Reading meshes from the DOLFIN HDF5File-format
-- Reading checkpoints from the DOLFIN HDF5File-format (one checkpoint per file only)
-- Reading checkpoints from the DOLFIN XDMFFile-format (one checkpoint per file only, and only uses the `.h5` file)
-
-See the [API](./docs/api) for more information.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
 
 ## Testing
 
-This library uses `pytest` for testing.
-To execute the tests, one should first install the library and its dependencies, as listed above.
-Then, can execute all tests by calling
+`io4dolfinx` includes a comprehensive test suite that ensures functionality across different backends and compatibility with legacy data formats, see the [Testing Guide](./docs/testing.md) for details.
 
-```bash
-python3 -m pytest .
-```
 
-### Testing against data from legacy dolfin
-
-Some tests check the capability of reading data created with the legacy version of DOLFIN.
-To create this dataset, start a docker container with legacy DOLFIN, for instance:
-
-```bash
-docker run -ti -v $(pwd):/root/shared -w /root/s
-hared --rm ghcr.io/scientificcomputing/fenics:2024-02-19
-```
-
-Then, inside this container, call
-
-```bash
-python3 ./tests/create_legacy_data.py --output-dir=legacy
-```
-
-### Testing against data from older versions of io4dolfinx
-
-Some tests check the capability to read data generated by `io4dolfinx<0.7.2`.
-To generate data for these tests use the following commands:
-
-```bash
-docker run -ti -v $(pwd):/root/shared -w /root/shared --rm ghcr.io/fenics/dolfinx/dolfinx:v0.7.3
-```
-
-Then, inside the container, call
-
-```bash
-python3 -m pip install io4dolfinx==0.7.1
-python3 ./tests/create_legacy_checkpoint.py --output-dir=legacy_checkpoint
-```
+## LICENSE
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

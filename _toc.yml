@@ -5,8 +5,11 @@ parts:
   - caption: How to guides
     chapters:
     - file: "docs/installation"
+    - file: "docs/quickstart"
     - file: "docs/adding_backend"
     - file: "docs/migration_guide"
+    - file: "docs/testing.md"
+    - file: "docs/reading_legacy_data"
     
   - caption: Introduction to IPyParallel
     chapters:
@@ -33,3 +36,7 @@ parts:
     - file: "docs/backends/pyvista"
     - file: "docs/backends/xdmf"
     - file: "docs/backends/vtkhdf"
+
+  - caption: Contributing
+    chapters:
+    - file: "CONTRIBUTING"

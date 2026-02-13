@@ -33,7 +33,6 @@ def create_xdmf_mesh(filename: Path):
     mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 10, 10)
     facets = dolfinx.mesh.locate_entities_boundary(mesh, mesh.topology.dim - 1, locate_facets)
     facet_tag = dolfinx.mesh.meshtags(mesh, mesh.topology.dim - 1, facets, 1)
-    facet_tag.name = "FacetTag"
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, filename.with_suffix(".xdmf"), "w") as xdmf:
         xdmf.write_mesh(mesh)
         xdmf.write_meshtags(facet_tag, mesh.geometry)
