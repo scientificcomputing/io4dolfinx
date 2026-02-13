@@ -789,6 +789,7 @@ def write_meshtags(
             maxshape=(None,),
             mode=h5_mode,
         )
+        assert data.local_start is not None
         insert_slice = _compute_append_slice(
             dataset,
             data.num_entities_global,
