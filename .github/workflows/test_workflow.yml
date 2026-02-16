@@ -12,27 +12,25 @@ jobs:
   get_image_tag:
     runs-on: ubuntu-latest
     outputs:
-      image: ${{ steps.docker_tag.outputs.image }}
-    steps:
+    image: ${{ steps.tagger.outputs.image }}
+  steps:
+    - name: Validate inputs
+      run: |
+        if [[ "${{ inputs.dolfinx_tag }}" != "stable" && "${{ inputs.dolfinx_tag }}" != "nightly" ]]; then
+          echo "::error::Invalid DOLFINx environment. Allowed: stable, nightly"
+          exit 1
+        fi
 
-      - name: Validate inputs
-        run: |
-          if [[ "${{ inputs.dolfinx_tag }}" != "stable" && "${{ inputs.dolfinx_tag }}" != "nightly" ]]; then
-            echo "::error::Invalid DOLFINx environment: ${{ inputs.dolfinx_tag }}. Allowed values: stable, nightly"
-            exit 1
-          fi
-
-      - id: Nightly
-        if: (${{ inputs.dolfinx_tag }} == 'nightly')
-        run: |
+    - id: tagger
+      run: |
+        # 2. Handle the 'if' logic inside the script
+        if [[ "${{ inputs.dolfinx_tag }}" == "nightly" ]]; then
           echo "branch=main" >> $GITHUB_OUTPUT
           echo "image=current" >> $GITHUB_OUTPUT
-
-      - id: Stable
-        if: (${{ inputs.dolfinx_tag }} == 'stable')
-        run: |
+        else
           echo "branch=release" >> $GITHUB_OUTPUT
           echo "image=stable" >> $GITHUB_OUTPUT
+        fi
 
 
   test-code:
