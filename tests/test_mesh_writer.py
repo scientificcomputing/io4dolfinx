@@ -10,6 +10,7 @@ import ufl
 from io4dolfinx import FileMode, read_mesh, write_mesh
 
 
+
 def get_hdf5_version():
     """Get the HDF5 library version found on the system.
 
@@ -56,6 +57,7 @@ def get_hdf5_version():
     raise RuntimeError("Failed to get HDF5 version")
 
 
+
 @pytest.mark.parametrize(
     "backend, encoder, suffix",
     [
@@ -89,7 +91,6 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
     backend_args = None
     if backend == "adios2":
         backend_args = {"engine": encoder}
-
     write_mesh(
         file.with_suffix(suffix),
         mesh,
@@ -97,12 +98,13 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
         backend_args=backend_args,
         backend=backend,
     )
+
     mesh.comm.Barrier()
     with dolfinx.io.XDMFFile(mesh.comm, xdmf_file.with_suffix(".xdmf"), "w") as xdmf:
         xdmf.write_mesh(mesh)
     mesh.comm.Barrier()
 
-    mesh_adios = read_mesh(
+    in_mesh = read_mesh(
         file.with_suffix(suffix),
         MPI.COMM_WORLD,
         ghost_mode=ghost_mode,
@@ -110,7 +112,7 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
         backend_args=backend_args,
         backend=backend,
     )
-    mesh_adios.comm.Barrier()
+    in_mesh.comm.Barrier()
     if store_partition:
 
         def compute_distance_matrix(points_A, points_B, tol=1e-12):
@@ -120,7 +122,7 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
             return distances < tol
 
         cell_map = mesh.topology.index_map(mesh.topology.dim)
-        new_cell_map = mesh_adios.topology.index_map(mesh_adios.topology.dim)
+        new_cell_map = in_mesh.topology.index_map(in_mesh.topology.dim)
         assert cell_map.size_local == new_cell_map.size_local
         assert cell_map.num_ghosts == new_cell_map.num_ghosts
         mesh.topology.create_connectivity(mesh.topology.dim, mesh.topology.dim)
@@ -129,10 +131,10 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
             mesh.topology.dim,
             np.arange(cell_map.size_local + cell_map.num_ghosts, dtype=np.int32),
         )
-        mesh_adios.topology.create_connectivity(mesh_adios.topology.dim, mesh_adios.topology.dim)
+        in_mesh.topology.create_connectivity(in_mesh.topology.dim, in_mesh.topology.dim)
         new_midpoints = dolfinx.mesh.compute_midpoints(
-            mesh_adios,
-            mesh_adios.topology.dim,
+            in_mesh,
+            in_mesh.topology.dim,
             np.arange(new_cell_map.size_local + new_cell_map.num_ghosts, dtype=np.int32),
         )
         # Check that all points in owned by initial mesh is owned by the new mesh
@@ -156,10 +158,10 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
     for i in range(mesh.topology.dim + 1):
         mesh.topology.create_entities(i)
         mesh_xdmf.topology.create_entities(i)
-        mesh_adios.topology.create_entities(i)
+        in_mesh.topology.create_entities(i)
         assert (
             mesh_xdmf.topology.index_map(i).size_global
-            == mesh_adios.topology.index_map(i).size_global
+            == in_mesh.topology.index_map(i).size_global
         )
 
     # Check that integration over different entities are consistent
@@ -167,16 +169,16 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
         [ufl.ds, ufl.dx] if ghost_mode is dolfinx.mesh.GhostMode.none else [ufl.ds, ufl.dS, ufl.dx]
     )
     for measure in measures:
-        print(mesh_adios, mesh_adios.ufl_domain().ufl_coordinate_element())
-        c_adios = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_adios)))
+        form = dolfinx.fem.form(1 * measure(domain=in_mesh))
+        c_adios = dolfinx.fem.assemble_scalar(form)
         c_ref = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh)))
         c_xdmf = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * measure(domain=mesh_xdmf)))
         assert np.isclose(
-            mesh_adios.comm.allreduce(c_adios, MPI.SUM),
+            in_mesh.comm.allreduce(c_adios, MPI.SUM),
             mesh.comm.allreduce(c_xdmf, MPI.SUM),
         )
         assert np.isclose(
-            mesh_adios.comm.allreduce(c_adios, MPI.SUM),
+            in_mesh.comm.allreduce(c_adios, MPI.SUM),
             mesh.comm.allreduce(c_ref, MPI.SUM),
         )
 
