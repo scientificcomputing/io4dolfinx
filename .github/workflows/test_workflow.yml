@@ -39,7 +39,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: get_image_tag
 
-    runs-on: ubuntu-latest
     container: ghcr.io/fenics/dolfinx/dolfinx:${{ needs.get_image_tag.outputs.image }}
 
     steps:
