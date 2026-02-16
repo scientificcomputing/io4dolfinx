@@ -10,7 +10,6 @@ import ufl
 from io4dolfinx import FileMode, read_mesh, write_mesh
 
 
-
 def get_hdf5_version():
     """Get the HDF5 library version found on the system.
 
@@ -55,7 +54,6 @@ def get_hdf5_version():
         pass
 
     raise RuntimeError("Failed to get HDF5 version")
-
 
 
 @pytest.mark.parametrize(
@@ -160,8 +158,7 @@ def test_mesh_read_writer(backend, encoder, suffix, ghost_mode, tmp_path, store_
         mesh_xdmf.topology.create_entities(i)
         in_mesh.topology.create_entities(i)
         assert (
-            mesh_xdmf.topology.index_map(i).size_global
-            == in_mesh.topology.index_map(i).size_global
+            mesh_xdmf.topology.index_map(i).size_global == in_mesh.topology.index_map(i).size_global
         )
 
     # Check that integration over different entities are consistent
