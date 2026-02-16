@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import inspect
 import typing
 from pathlib import Path
 from typing import Any
@@ -383,6 +384,7 @@ def read_mesh(
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
     backend: str = "adios2",
+    max_facet_to_cell_links: int = 2,
 ) -> dolfinx.mesh.Mesh:
     """
     Read an ADIOS2 mesh into DOLFINx.
@@ -395,6 +397,8 @@ def read_mesh(
         time: Time stamp associated with mesh
         read_from_partition: Read mesh with partition from file
         backend_args: List of arguments to reader backend
+        max_facet_to_cell_links: Maximum number of cells a facet
+            can be connected to.
     Returns:
         The distributed mesh
     """
@@ -432,9 +436,18 @@ def read_mesh(
             else:
                 return partition_graph
     else:
-        partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)
+        sig = inspect.signature(dolfinx.mesh.create_cell_partitioner)
+        part_kwargs = {}
+        if "max_facet_to_cell_links" in list(sig.parameters.keys()):
+            part_kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
+        partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode, **part_kwargs)
+
     return dolfinx.mesh.create_mesh(
-        comm, cells=dist_in_data.cells, x=dist_in_data.x, e=domain, partitioner=partitioner
+        comm,
+        cells=dist_in_data.cells,
+        x=dist_in_data.x,
+        e=domain,
+        partitioner=partitioner,
     )
 
 
