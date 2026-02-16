@@ -17,8 +17,8 @@ jobs:
 
       - name: Validate inputs
         run: |
-          if [[ "${{ inputs.dolfinx_tag }}" != "stable" && "${{ inputs.dolfinx_tag }}" != "nightly"; then
-            echo "::error::Invalid DOLFINx enviroment: ${{ inputs.dolfinx_tag }}. Allowed values: stable, nightly"
+          if [[ "${{ inputs.dolfinx_tag }}" != "stable" && "${{ inputs.dolfinx_tag }}" != "nightly" ]]; then
+            echo "::error::Invalid DOLFINx environment: ${{ inputs.dolfinx_tag }}. Allowed values: stable, nightly"
             exit 1
           fi
 
