@@ -1,8 +1,11 @@
 name: Test dolfinx versions
 
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      dolfinx_tag:
+        required: true
+        type: string
   pull_request:
 
 jobs:
