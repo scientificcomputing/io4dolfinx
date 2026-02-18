@@ -15,7 +15,6 @@ from mpi4py import MPI
 import netCDF4
 
 import dolfinx
-import h5py
 import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import adjacencylist
@@ -227,7 +226,10 @@ def write_meshtags(
 
 
 def read_meshtags_data(
-    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None = None
+    filename: str | Path,
+    comm: MPI.Intracomm,
+    name: str,
+    backend_args: dict[str, Any] | None = None,
 ) -> MeshTagsData:
     """Read mesh tags from file.
 
@@ -265,7 +267,9 @@ def read_meshtags_data(
     for i in range(1, num_blocks + 1):
         connectivity = infile.variables.get(f"connect{i}")
 
-        cell_type = CellType.from_value(str(ExodusCellType.from_value(connectivity.elem_type)))
+        cell_type = CellType.from_value(
+            str(ExodusCellType.from_value(connectivity.elem_type))
+        )
         cell_types[i - 1] = cell_type
         tdim_to_cell_index[cell_type.tdim].append(i - 1)
         assert connectivity is not None, "No connectivity found"
@@ -278,7 +282,9 @@ def read_meshtags_data(
             max_dim = i
     cell_block_indices = tdim_to_cell_index[max_dim]
     for cell in cell_types[cell_block_indices]:
-        assert cell_types[cell_block_indices[0]] == cell, "Mixed cell types not supported"
+        assert cell_types[cell_block_indices[0]] == cell, (
+            "Mixed cell types not supported"
+        )
     cell_type = cell_types[cell_block_indices][0]
     connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
 
@@ -291,7 +297,9 @@ def read_meshtags_data(
             insert_offset = np.zeros(len(cell_block_indices) + 1, dtype=np.int64)
             insert_offset[1:] = np.cumsum(num_cells_per_block[cell_block_indices])
             for i, index in enumerate(cell_block_indices):
-                cell_array[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
+                cell_array[insert_offset[i] : insert_offset[i + 1]] = block_values[
+                    index
+                ]
             vals = cell_array
             indices = np.arange(connectivity_array.shape[0], dtype=np.int64)
             dim = cell_type.tdim
@@ -299,12 +307,16 @@ def read_meshtags_data(
         # Get all facet blocks
         facet_blocks_indices = tdim_to_cell_index[max_dim - 1]
         if len(facet_blocks_indices) > 0:
-            sub_geometry = np.vstack([connectivity_arrays[i] for i in facet_blocks_indices])
+            sub_geometry = np.vstack(
+                [connectivity_arrays[i] for i in facet_blocks_indices]
+            )
             facet_values = np.zeros(sub_geometry.shape[0], dtype=np.int64)
             insert_offset = np.zeros(len(facet_blocks_indices) + 1, dtype=np.int64)
             insert_offset[1:] = np.cumsum(num_cells_per_block[facet_blocks_indices])
             for i, index in enumerate(facet_blocks_indices):
-                facet_values[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
+                facet_values[insert_offset[i] : insert_offset[i + 1]] = block_values[
+                    index
+                ]
         # If sidesets are used for facet markers
         elif "ss_prop1" in infile.variables.keys():
             # Extract facet values
@@ -325,7 +337,9 @@ def read_meshtags_data(
                     local_facets = infile.variables[f"side_ss{i}"]
                     for element, index in zip(elements, local_facets):
                         facet_indices.append(
-                            connectivity_array[element - 1, local_facet_index[index - 1]]
+                            connectivity_array[
+                                element - 1, local_facet_index[index - 1]
+                            ]
                         )
                         facet_values.append(value)
                 sub_geometry = np.vstack(facet_indices)
@@ -338,7 +352,10 @@ def read_meshtags_data(
 
 
 def read_dofmap(
-    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
+    filename: str | Path,
+    comm: MPI.Intracomm,
+    name: str,
+    backend_args: dict[str, Any] | None,
 ) -> dolfinx.graph.AdjacencyList:
     """Read the dofmap of a function with a given name.
 
