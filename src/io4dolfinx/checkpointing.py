@@ -442,6 +442,15 @@ def read_mesh(
         except TypeError:
             partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)
 
+        # Should change to the commented code below when we require python
+        # minimum version to be >=3.12 see https://github.com/python/cpython/pull/116198
+        # import inspect
+        # sig = inspect.signature(dolfinx.mesh.create_cell_partitioner)
+        # part_kwargs = {}
+        # if "max_facet_to_cell_links" in list(sig.parameters.keys()):
+        #     part_kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
+        # partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode, **part_kwargs)
+
     return dolfinx.mesh.create_mesh(
         comm,
         cells=dist_in_data.cells,
