@@ -244,7 +244,6 @@ def read_mesh_data(
         assert cell_types[cell_block_indices[0]] == cell, "Mixed cell types not supported"
     cell_type = cell_types[cell_block_indices][0]
 
-    breakpoint()
     connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
     return ReadMeshData(
         cells=connectivity_array.data,
