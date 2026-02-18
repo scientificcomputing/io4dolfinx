@@ -25,7 +25,7 @@ jobs:
   test-code:
     uses: ./.github/workflows/test_workflow.yml
     with:
-      tag: "stable"
+      dolfinx_tag: "stable"
 
   deploy:
     needs: [build-docs, test-code]
