@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import inspect
 import pathlib
 import typing
 from pathlib import Path
@@ -181,19 +180,24 @@ def read_mesh_from_legacy_h5(
         shape=(mesh_geometry.shape[1],),
     )
     domain = ufl.Mesh(element)
-    sig = inspect.signature(dolfinx.mesh.create_mesh)
-    kwargs: dict[str, int] = {}
-    if "max_facet_to_cell_links" in list(sig.parameters.keys()):
-        kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
 
-    return dolfinx.mesh.create_mesh(
-        comm=MPI.COMM_WORLD,
-        cells=mesh_topology,
-        x=mesh_geometry,
-        e=domain,
-        partitioner=None,
-        **kwargs,
-    )
+    try:
+        return dolfinx.mesh.create_mesh(
+            comm=MPI.COMM_WORLD,
+            cells=mesh_topology,
+            x=mesh_geometry,
+            e=domain,
+            partitioner=None,
+            max_facet_to_cell_links=max_facet_to_cell_links,
+        )
+    except TypeError:
+        return dolfinx.mesh.create_mesh(
+            comm=MPI.COMM_WORLD,
+            cells=mesh_topology,
+            x=mesh_geometry,
+            e=domain,
+            partitioner=None,
+        )
 
 
 def read_function_from_legacy_h5(

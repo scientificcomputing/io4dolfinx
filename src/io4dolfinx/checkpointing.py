@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import inspect
 import typing
 from pathlib import Path
 from typing import Any
@@ -436,11 +435,12 @@ def read_mesh(
             else:
                 return partition_graph
     else:
-        sig = inspect.signature(dolfinx.mesh.create_cell_partitioner)
-        part_kwargs = {}
-        if "max_facet_to_cell_links" in list(sig.parameters.keys()):
-            part_kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
-        partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode, **part_kwargs)
+        try:
+            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(
+                ghost_mode, max_facet_to_cell_links=max_facet_to_cell_links
+            )
+        except TypeError:
+            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)
 
     return dolfinx.mesh.create_mesh(
         comm,
