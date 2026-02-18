@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from mpi4py import MPI
+import netCDF4
 
 import dolfinx
 import h5py
@@ -192,7 +193,7 @@ def read_mesh_data(
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
 ) -> ReadMeshData:
-    """Read mesh data from h5py based checkpoint files.
+    """Read mesh data from EXODUS based checkpoint files.
 
     Args:
         filename: Path to input file
@@ -202,8 +203,10 @@ def read_mesh_data(
     Returns:
         The mesh topology, geometry, UFL domain and partition function
     """
-
-    pass
+    # FIXME
+    return ReadMeshData(
+        cells=cells, cell_type=cell_type, x=geom.astype(gtype), lvar=lvar, degree=order
+    )
 
 
 def write_meshtags(
@@ -232,13 +235,106 @@ def read_meshtags_data(
         filename: Path to file to read from
         comm: MPI communicator used in storage
         name: Name of the mesh tags to read
-        backend_args: Arguments to backend. If "legacy_dolfin" is supplied as argument
-            the HDF5 file is assumed to have been made with DOLFIN
+        backend_args: Arguments to backend.
 
     Returns:
         Internal data structure for the mesh tags read from file
     """
-    pass
+    infile = netCDF4.Dataset(filename)
+
+    # use page 171 of manual to extract data
+    num_nodes = infile.dimensions["num_nodes"].size
+    gdim = infile.dimensions["num_dim"].size
+    num_blocks = infile.dimensions["num_el_blk"].size
+
+    # Get coordinates of mesh
+    coordinates = infile.variables.get("coord")
+    if coordinates is None:
+        coordinates = np.zeros((num_nodes, gdim), dtype=np.float64)
+        for i, coord in enumerate(["x", "y", "z"]):
+            coord_i = infile.variables.get(f"coord{coord}")
+            if coord_i is not None:
+                coordinates[: coord_i.size, i] = coord_i[:]
+
+    # Get element connectivity
+    connectivity_arrays = []
+    cell_types = np.empty(num_blocks, dtype=CellType)
+    num_cells_per_block = np.zeros(num_blocks, dtype=np.int32)
+    # Create map from topological dimension to block indices
+    tdim_to_cell_index = {0: [], 1: [], 2: [], 3: []}
+    for i in range(1, num_blocks + 1):
+        connectivity = infile.variables.get(f"connect{i}")
+
+        cell_type = CellType.from_value(str(ExodusCellType.from_value(connectivity.elem_type)))
+        cell_types[i - 1] = cell_type
+        tdim_to_cell_index[cell_type.tdim].append(i - 1)
+        assert connectivity is not None, "No connectivity found"
+        connectivity_arrays.append(connectivity[:] - 1)
+        num_cells_per_block[i - 1] = connectivity.shape[0]
+    max_dim = 0
+    for i in range(4):
+        tdim_to_cell_index[i] = np.asarray(tdim_to_cell_index[i], dtype=np.int32)
+        if len(tdim_to_cell_index[i]) > 0:
+            max_dim = i
+    cell_block_indices = tdim_to_cell_index[max_dim]
+    for cell in cell_types[cell_block_indices]:
+        assert cell_types[cell_block_indices[0]] == cell, "Mixed cell types not supported"
+    cell_type = cell_types[cell_block_indices][0]
+    connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
+
+    if name == "cell":
+        if "eb_prop1" in infile.variables.keys():
+            block_values = infile.variables["eb_prop1"][:]
+
+            # Extract cell block values
+            cell_array = np.zeros(connectivity_array.shape[0], dtype=np.int64)
+            insert_offset = np.zeros(len(cell_block_indices) + 1, dtype=np.int64)
+            insert_offset[1:] = np.cumsum(num_cells_per_block[cell_block_indices])
+            for i, index in enumerate(cell_block_indices):
+                cell_array[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
+            vals = cell_array
+            indices = np.arange(connectivity_array.shape[0], dtype=np.int64)
+            dim = cell_type.tdim
+    elif name == "facet":
+        # Get all facet blocks
+        facet_blocks_indices = tdim_to_cell_index[max_dim - 1]
+        if len(facet_blocks_indices) > 0:
+            sub_geometry = np.vstack([connectivity_arrays[i] for i in facet_blocks_indices])
+            facet_values = np.zeros(sub_geometry.shape[0], dtype=np.int64)
+            insert_offset = np.zeros(len(facet_blocks_indices) + 1, dtype=np.int64)
+            insert_offset[1:] = np.cumsum(num_cells_per_block[facet_blocks_indices])
+            for i, index in enumerate(facet_blocks_indices):
+                facet_values[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
+        # If sidesets are used for facet markers
+        elif "ss_prop1" in infile.variables.keys():
+            # Extract facet values
+            local_facet_index = side_set_to_vertex_map[cell_type]
+            if "num_side_sets" not in infile.dimensions:
+                num_vertices_per_facet = len(local_facet_index[0])
+                sub_geometry = np.zeros((0, num_vertices_per_facet), dtype=np.int64)
+                facet_values = np.zeros(0, dtype=np.int64)
+            else:
+                infile.dimensions.get("num_side_sets", 0)
+                num_facet_sets = infile.dimensions["num_side_sets"].size
+                values = infile.variables.get("ss_prop1")
+                facet_indices = []
+                facet_values = []
+                for i in range(1, num_facet_sets + 1):
+                    value = values[i - 1]
+                    elements = infile.variables[f"elem_ss{i}"]
+                    local_facets = infile.variables[f"side_ss{i}"]
+                    for element, index in zip(elements, local_facets):
+                        facet_indices.append(
+                            connectivity_array[element - 1, local_facet_index[index - 1]]
+                        )
+                        facet_values.append(value)
+                sub_geometry = np.vstack(facet_indices)
+        else:
+            sub_geometry = np.zeros((0, 0), dtype=np.int64)
+            facet_values = np.zeros(0, dtype=np.int64)
+        vals = facet_values
+        indices = sub_geometry
+    return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
 
 
 def read_dofmap(
