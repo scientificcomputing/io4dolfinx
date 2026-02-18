@@ -23,7 +23,7 @@ jobs:
       tag: "stable"
 
   test-code:
-    uses: ./.github/workflows/test_workflow.yml
+    uses: ./.github/workflows/test_dolfinx_versions.yml
     with:
       dolfinx_tag: "stable"
 
@@ -44,12 +44,19 @@ jobs:
           name: docs
           path: "./public"
 
-      - name: Download docs artifact
+      - name: Download code coverage report artifact
         # docs artifact is uploaded by build-docs job
         uses: actions/download-artifact@v7
         with:
           name: code-coverage-report-stable
-          path: "./public/code-coverage-report"
+          path: "./public/code-coverage-report-stable"
+
+      - name: Download code coverage report artifact
+        # docs artifact is uploaded by build-docs job
+        uses: actions/download-artifact@v7
+        with:
+          name: code-coverage-report-nightly
+          path: "./public/code-coverage-report-nightly"
 
 
       - name: Upload artifact
