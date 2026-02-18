@@ -83,7 +83,7 @@ class ExodusCellType(Enum):
         elif self == ExodusCellType.HEX:
             return "hex"
         elif self == ExodusCellType.QUAD:
-            return "quad"
+            return "quadrilateral"
         elif self == ExodusCellType.TRIANGLE:
             return "triangle"
         elif self == ExodusCellType.INTERVAL:
@@ -244,11 +244,11 @@ def read_mesh_data(
         assert cell_types[cell_block_indices[0]] == cell, "Mixed cell types not supported"
     cell_type = cell_types[cell_block_indices][0]
 
+    breakpoint()
     connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
-
     return ReadMeshData(
         cells=connectivity_array.data,
-        cell_type=cell_type.value,
+        cell_type=str(cell_type),
         x=coordinates,
         lvar=int(basix.LagrangeVariant.equispaced),
         degree=np.int32(1),

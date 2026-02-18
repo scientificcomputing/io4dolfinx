@@ -25,7 +25,7 @@ class CellType(Enum):
             return cls.point
         elif lower == "triangle":
             return cls.triangle
-        elif lower == "quad":
+        elif lower == "quadrilateral":
             return cls.quad
         elif lower == "tetra":
             return cls.tetra
@@ -42,7 +42,7 @@ class CellType(Enum):
         elif self == CellType.triangle:
             return "triangle"
         elif self == CellType.quad:
-            return "quad"
+            return "quadrilateral"
         elif self == CellType.tetra:
             return "tetra"
         elif self == CellType.hex:
