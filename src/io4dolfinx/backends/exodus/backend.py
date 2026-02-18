@@ -352,7 +352,7 @@ def read_meshtags_data(
                 for i, index in enumerate(cell_block_indices):
                     cell_array[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
                 vals = cell_array
-                indices = np.arange(connectivity_array.shape[0], dtype=np.int64)
+                indices = connectivity_array.data
                 dim = cell_type.tdim
         elif name == "facet":
             # Get all facet blocks
@@ -386,13 +386,20 @@ def read_meshtags_data(
                             facet_indices.append(
                                 connectivity_array[element - 1, local_facet_index[index - 1]]
                             )
-                            facet_values.append(value)
+
+                            # @jorgen can you check this please, I had to change it cause
+                            # each `value` object was a masked array with only one element
+                            # facet_values.append(value)
+                            facet_values.append(value.data.tolist())
                     sub_geometry = np.vstack(facet_indices)
+                    facet_values = np.array(facet_values, dtype=np.int64)
             else:
                 sub_geometry = np.zeros((0, 0), dtype=np.int64)
                 facet_values = np.zeros(0, dtype=np.int64)
             vals = facet_values
-            indices = sub_geometry
+            indices = sub_geometry.data
+            dim = cell_type.tdim - 1
+
     finally:
         infile.close()
     return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
