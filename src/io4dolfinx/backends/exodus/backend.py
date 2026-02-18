@@ -65,7 +65,7 @@ class ExodusCellType(Enum):
         upper = value.upper()
         if upper == "TRI3":
             return cls.TRIANGLE
-        elif upper == "QUAD":
+        elif upper in ["QUAD", "QUAD4"]:
             return cls.QUAD
         elif upper == "TETRA":
             return cls.TETRA
@@ -203,8 +203,60 @@ def read_mesh_data(
         The mesh topology, geometry, UFL domain and partition function
     """
     # FIXME
+    infile = netCDF4.Dataset(filename)
+
+    # use page 171 of manual to extract data
+    num_nodes = infile.dimensions["num_nodes"].size
+    gdim = infile.dimensions["num_dim"].size
+    num_blocks = infile.dimensions["num_el_blk"].size
+
+    # Get coordinates of mesh
+    coordinates = infile.variables.get("coord")
+    if coordinates is None:
+        coordinates = np.zeros((num_nodes, gdim), dtype=np.float64)
+        for i, coord in enumerate(["x", "y", "z"]):
+            coord_i = infile.variables.get(f"coord{coord}")
+            if coord_i is not None:
+                coordinates[: coord_i.size, i] = coord_i[:]
+
+    # Get element connectivity
+    connectivity_arrays = []
+    cell_types = np.empty(num_blocks, dtype=CellType)
+    num_cells_per_block = np.zeros(num_blocks, dtype=np.int32)
+    # Create map from topological dimension to block indices
+    tdim_to_cell_index = {0: [], 1: [], 2: [], 3: []}
+    for i in range(1, num_blocks + 1):
+        connectivity = infile.variables.get(f"connect{i}")
+
+        cell_type = CellType.from_value(
+            str(ExodusCellType.from_value(connectivity.elem_type))
+        )
+        cell_types[i - 1] = cell_type
+        tdim_to_cell_index[cell_type.tdim].append(i - 1)
+        assert connectivity is not None, "No connectivity found"
+        connectivity_arrays.append(connectivity[:] - 1)
+        num_cells_per_block[i - 1] = connectivity.shape[0]
+    max_dim = 0
+    for i in range(4):
+        tdim_to_cell_index[i] = np.asarray(tdim_to_cell_index[i], dtype=np.int32)
+        if len(tdim_to_cell_index[i]) > 0:
+            max_dim = i
+    cell_block_indices = tdim_to_cell_index[max_dim]
+    for cell in cell_types[cell_block_indices]:
+        assert cell_types[cell_block_indices[0]] == cell, (
+            "Mixed cell types not supported"
+        )
+    cell_type = cell_types[cell_block_indices][0]
+
+    # do we need this?
+    connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
+
     return ReadMeshData(
-        cells=cells, cell_type=cell_type, x=geom.astype(gtype), lvar=lvar, degree=order
+        cells=cell_block_indices,
+        cell_type=cell_type,
+        x=coordinates,
+        lvar=None,
+        degree=1,
     )
 
 
