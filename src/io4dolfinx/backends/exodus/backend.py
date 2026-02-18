@@ -245,8 +245,12 @@ def read_mesh_data(
     cell_type = cell_types[cell_block_indices][0]
 
     connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
+    cells = connectivity_array.data
+
+    perm = dolfinx.cpp.io.perm_vtk(dolfinx.mesh.to_type(str(cell_type)), cells.shape[1])
+    cells = cells[:, perm]
     return ReadMeshData(
-        cells=connectivity_array.data,
+        cells=cells,
         cell_type=str(cell_type),
         x=coordinates,
         lvar=int(basix.LagrangeVariant.equispaced),
