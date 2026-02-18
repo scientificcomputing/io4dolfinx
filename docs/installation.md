@@ -9,35 +9,51 @@ python3 -m pip install io4dolfinx
 `io4dolfinx` has some optional dependencies for specific backends (like ADIOS2 or H5PY). If you want to use these backends, you can install the library with the appropriate extras:
 
 - Test dependencies (for running the test suite):
+
 ```bash
 python3 -m pip install "io4dolfinx[test]"
 ```
 
 - Documentation dependencies (for building the docs):
+
 ```bash
 python3 -m pip install "io4dolfinx[docs]"
 ```
 
 - For HDF5 support with MPI, you need to have an HDF5 library installed with MPI support, and the `h5py` Python package installed with MPI support. You can install `h5py` with MPI support using pip:
+
 ```bash
 python3 -m pip install --no-binary=h5py h5py
 ```
 
 - For pyvista support, you can install the `pyvista` package:
+
 ```bash
 python3 -m pip install pyvista
 ```
+
 or equivalently
+
 ```bash
 python3 -m pip install "io4dolfinx[pyvista]"
 ```
 
-- For ADIOS2 support you should have ADIOS2 installed with Python bindings, see https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html for more info. 
-
+- For ADIOS2 support you should have ADIOS2 installed with Python bindings, see https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html for more info.
 
 ## Spack
 
-TBW
+The FEniCS Spack packages uses a separate [spack repo](https://github.com/FEniCS/spack-fenics) to be possible to maintain and keep up to date.
+We do the same for the [packages](https://github.com/scientificcomputing/spack_repos.git) maintained by Scientific Computing at Simula Research Laboratory.
+To install `py-io4dolfinx`, one should first install spack on your system, then use the following commands in a new spack environment:
+
+```bash
+spack repo add https://github.com/FEniCS/spack-fenics.git
+spack repo add https://github.com/scientificcomputing/spack_repos.git
+spack add py-io4dolfinx@1.1 ^py-fenics-dolfinx+petsc4py ^adios2+python+hdf5 ^petsc+mumps
+```
+
+to get an installation of `io4dolfinx` with all backends installed. If you require further petsc packages you should activate them by adding them to `^petsc+....`.
+See [Spack PETSc](https://packages.spack.io/package.html?name=petsc) for options.
 
 ## Docker
 
