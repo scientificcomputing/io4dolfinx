@@ -4,6 +4,12 @@
 This document outlines how `io4dolfinx` is tested, covering both local development
 testing and the Continuous Integration (CI) process on GitHub Actions.
 
+## Coverage reports:
+
+You will find the updated coverage reports for the latest version on `main` tested against `stable` and `nightly` versions of dolfinx at the following links:
+- [Coverage report for stable](https://scientificcomputing.github.io/io4dolfinx/code-coverage-report-stable/)
+- [Coverage report for nightly](https://scientificcomputing.github.io/io4dolfinx/code-coverage-report-nightly/)
+
 ## Local Testing
 
 The library uses `pytest` for testing. To execute the tests locally, you first
