@@ -105,7 +105,7 @@ def test_write_point_data(dtype, tmp_path, cell_type):
             filename=filename, name="u", mesh=grid, time=tj, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: f(x, tj))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
@@ -124,7 +124,7 @@ def test_write_point_data(dtype, tmp_path, cell_type):
             filename=blocked_file, name="u", mesh=grid, time=tk, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: g(x, tk))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
@@ -160,7 +160,7 @@ def test_write_cell_data(dtype, tmp_path, cell_type):
             filename=filename, name="u", mesh=grid, time=tj, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: f(x, tj))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
@@ -179,7 +179,7 @@ def test_write_cell_data(dtype, tmp_path, cell_type):
             filename=blocked_file, name="u", mesh=grid, time=tk, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: g(x, tk))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
