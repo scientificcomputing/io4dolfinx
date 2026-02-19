@@ -58,12 +58,12 @@ _exodus_to_string = {
 read_mode = ReadMode.serial
 
 
-def _get_cell_type(connectivity: netCDF4._netCDF4.Variable) -> dolfinx.mesh.CellType:
+def _get_cell_type(connectivity: netCDF4.Variable) -> dolfinx.mesh.CellType:
     cell_type = _exodus_to_string[connectivity.elem_type]
     return dolfinx.mesh.to_type(cell_type)
 
 
-def _compute_tdim(connectivity: netCDF4._netCDF4.Variable) -> int:
+def _compute_tdim(connectivity: netCDF4.Variable) -> int:
     d_ct = _get_cell_type(connectivity)
     return dolfinx.mesh.cell_dim(d_ct)
 
@@ -188,17 +188,18 @@ def read_mesh_data(
             num_blocks = infile.dimensions["num_el_blk"].size
 
             # Get coordinates of mesh
-            coordinates = infile.variables.get("coord")
-            if coordinates is None:
+            coord_var = infile.variables.get("coord")
+            if coord_var is None:
                 coordinates = np.zeros((num_nodes, gdim), dtype=np.float64)
                 for i, coord in enumerate(["x", "y", "z"]):
                     coord_i = infile.variables.get(f"coord{coord}")
                     if coord_i is not None:
                         coordinates[: coord_i.size, i] = coord_i[:]
-
+            else:
+                coordinates = np.asarray(coord_var)
             # Get element connectivity
             all_connectivity_variables = [
-                infile.variables.get(f"connect{i + 1}") for i in range(num_blocks)
+                infile.variables[f"connect{i + 1}"] for i in range(num_blocks)
             ]
 
             # Compute max topological dimension in mesh and find the correct
@@ -241,7 +242,7 @@ def read_mesh_data(
         cell_type=dolfinx.mesh.to_string(cell_type),
         x=coordinates,
         lvar=int(basix.LagrangeVariant.equispaced),
-        degree=np.int32(1),
+        degree=int(1),
         partition_graph=None,
     )
 
@@ -287,7 +288,7 @@ def read_meshtags_data(
 
             # Extract all connectivity blocks
             all_connectivity_variables = [
-                infile.variables.get(f"connect{i + 1}") for i in range(num_blocks)
+                infile.variables[f"connect{i + 1}"] for i in range(num_blocks)
             ]
 
             # Compute max topological dimension in mesh and find the correct
@@ -354,7 +355,7 @@ def read_meshtags_data(
                     # Extract facet values
                     local_facet_index = _side_set_to_vertex_map[dolfinx.mesh.to_string(cell_type)]
                     num_facet_sets = infile.dimensions["num_side_sets"].size
-                    values = infile.variables.get("ss_prop1")
+                    values = infile.variables["ss_prop1"]
                     # Extract all cell blocks to get correct look-up
                     connectivity_arrays = []
                     for entity_block in entity_blocks:
