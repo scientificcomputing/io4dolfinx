@@ -623,8 +623,6 @@ def read_cell_data(
     if comm.rank == 0:
         with netCDF4.Dataset(filename, "r") as infile:
             raw_names = infile.variables["name_elem_var"][:].data
-            num_nodes = infile.dimensions["num_nodes"].size
-            gdim = infile.dimensions["num_dim"].size
             num_blocks = infile.dimensions["num_el_blk"].size
 
             node_names = netCDF4.chartostring(raw_names)
