@@ -623,6 +623,9 @@ def read_cell_data(
     if comm.rank == 0:
         with netCDF4.Dataset(filename, "r") as infile:
             raw_names = infile.variables["name_elem_var"][:].data
+            num_nodes = infile.dimensions["num_nodes"].size
+            gdim = infile.dimensions["num_dim"].size
+            num_blocks = infile.dimensions["num_el_blk"].size
 
             node_names = netCDF4.chartostring(raw_names)
             if name not in node_names:
@@ -632,8 +635,9 @@ def read_cell_data(
                 )
             index = np.flatnonzero(name == node_names)[0] + 1
 
-            suffix = "eb1"  # FIXME @jorgensd this seems to be a element block
-            temporal_dataset = infile.variables[f"vals_elem_var{index}{suffix}"]
+            entity_blocks = [
+                infile.variables[f"vals_elem_var{index}eb{i + 1}"] for i in range(num_blocks)
+            ]
             time_steps = infile.variables["time_whole"][:].data
             if time is None:
                 time_idx = time_steps[0]
@@ -645,7 +649,13 @@ def read_cell_data(
                     )
                 time_idx = time_indices[0]
 
-            dataset = temporal_dataset[time_idx].data
+            if len(entity_blocks) > 0:
+                datasets = []
+                for entity_block in entity_blocks:
+                    datasets.append(entity_block[time_idx])
+
+            dataset = np.hstack(datasets)
+
             if len(dataset.shape) == 1:
                 dataset = dataset.reshape(-1, num_components)
             else:
