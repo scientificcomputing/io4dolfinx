@@ -413,7 +413,6 @@ def read_meshtags_data(
                         elements = infile.variables[f"elem_ss{i + 1}"]
                         local_facets = infile.variables[f"side_ss{i + 1}"]
                         for element, index in zip(elements, local_facets):
-                            breakpoint()
                             facet_indices.append(
                                 connectivity_array[element - 1, local_facet_index[index - 1]]
                             )
