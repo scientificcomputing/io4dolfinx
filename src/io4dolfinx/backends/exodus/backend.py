@@ -6,24 +6,21 @@ SPDX License identifier: MIT
 Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Simula Research Laboratory
 """
 
-import contextlib
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from mpi4py import MPI
-import netCDF4
 
+import basix
 import dolfinx
+import netCDF4
 import numpy as np
 import numpy.typing as npt
-from dolfinx.graph import adjacencylist
-import basix
 
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from ...utils import check_file_exists, compute_local_range
 from .. import FileMode, ReadMode
-from .mesh import CellType, Mesh
+from .mesh import CellType
 
 # Based on: https://src.fedoraproject.org/repo/pkgs/exodusii/922137.pdf/a45d67f4a1a8762bcf66af2ec6eb35f9/922137.pdf
 tetra_facet_to_vertex_map = {0: [0, 1, 3], 1: [1, 2, 3], 2: [0, 2, 3], 3: [0, 1, 2]}
