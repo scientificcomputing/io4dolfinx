@@ -3,7 +3,8 @@ Exodus interface to io4dolfinx
 
 SPDX License identifier: MIT
 
-Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Remi Delaporte-Mathurin, Simula Research Laboratory
+Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Remi Delaporte-Mathurin,
+           and Simula Research Laboratory
 """
 
 from pathlib import Path
@@ -521,7 +522,8 @@ def read_point_data(
     timestep = 0  # FIXME - need to find the correct timestep based on time argument
     if name not in infile.variables:
         raise ValueError(
-            f"Point data with name {name} not found in file. Available variables: {list(infile.variables.keys())}"
+            f"Point data with name {name} not found in file.",
+            "Available variables: {list(infile.variables.keys())}",
         )
     dataset = infile.variables[name][:][timestep].data
     if len(dataset.shape) == 1:
