@@ -530,7 +530,22 @@ def read_point_data(
     Returns:
        Data local to process (contiguous, no mpi comm) and local start range
     """
-    raise NotImplementedError("The Exodus backend cannot read point data.")
+    infile = netCDF4.Dataset(filename)
+    timestep = 0  # FIXME - need to find the correct timestep based on time argument
+    if name not in infile.variables:
+        raise ValueError(
+            f"Point data with name {name} not found in file. Available variables: {list(infile.variables.keys())}"
+        )
+    dataset = infile.variables[name][:][timestep].data
+    if len(dataset.shape) == 1:
+        num_components = 1
+        dataset = dataset.reshape(-1, num_components)
+    else:
+        num_components = dataset.shape[1]
+
+    local_start_range = 0
+
+    return dataset, int(local_start_range)
 
 
 def read_cell_data(
@@ -575,3 +590,11 @@ def write_data(
         backend_args: The backend arguments
     """
     raise NotImplementedError("Exodus has not implemented this yet")
+
+
+def getNames(model, key):
+    # name of the element variables
+    name_var = []
+    for vname in np.ma.getdata(model.variables[key][:]).astype("U8"):
+        name_var.append("".join(vname))
+    return name_var
