@@ -268,6 +268,8 @@ def read_mesh_data(
                 cell_type = cell_types[0]
 
                 cells = np.vstack(connectivity_arrays)
+                if isinstance(cells, np.ma.MaskedArray):
+                    cells = cells.filled()
             else:
                 raise ValueError(f"No blocks found in {filename}")
             perm = dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1])
@@ -664,7 +666,7 @@ def read_cell_data(
     if comm.rank != 0:
         dataset = np.zeros((0, num_components), dtype=np.float64)
     _time = float(time) if time is not None else None
-    topology = read_mesh_data(filename, comm, _time, False, backend_args=None).cells.data
+    topology = read_mesh_data(filename, comm, _time, False, backend_args=None).cells
     return topology, dataset
 
 
