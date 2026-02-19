@@ -3,10 +3,9 @@ Exodus interface to io4dolfinx
 
 SPDX License identifier: MIT
 
-Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Simula Research Laboratory
+Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Remi Delaporte-Mathurin, Simula Research Laboratory
 """
 
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +20,6 @@ import numpy.typing as npt
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists
 from .. import FileMode, ReadMode
-from .mesh import CellType
 
 # Based on: https://src.fedoraproject.org/repo/pkgs/exodusii/922137.pdf/a45d67f4a1a8762bcf66af2ec6eb35f9/922137.pdf
 _tetra_facet_to_vertex_map = {0: [0, 1, 3], 1: [1, 2, 3], 2: [0, 2, 3], 3: [0, 1, 2]}
@@ -39,59 +37,38 @@ _hex_to_vertex_map = {
 }
 
 _side_set_to_vertex_map = {
-    CellType.quad: _quad_to_vertex_map,
-    CellType.triangle: _triangle_to_vertex_map,
-    CellType.tetra: _tetra_facet_to_vertex_map,
-    CellType.hex: _hex_to_vertex_map,
+    "quadrilateral": _quad_to_vertex_map,
+    "triangle": _triangle_to_vertex_map,
+    "tetrahedron": _tetra_facet_to_vertex_map,
+    "hexahedron": _hex_to_vertex_map,
 }
 
+
+_exodus_to_string = {
+    "TRI3": "triangle",
+    "QUAD": "quadrilateral",
+    "QUAD4": "quadrilateral",
+    "TETRA": "tetrahedron",
+    "HEX": "hexahedron",
+    "HEX8": "hexahedron",
+    "BEAM2": "interval",
+}
 
 read_mode = ReadMode.serial
 
 
-class ExodusCellType(Enum):
-    TETRA = 1
-    HEX = 2
-    QUAD = 3
-    TRIANGLE = 4
-    INTERVAL = 5
+def _get_cell_type(connectivity: netCDF4._netCDF4.Variable) -> dolfinx.mesh.CellType:
+    cell_type = _exodus_to_string[connectivity.elem_type]
+    return dolfinx.mesh.to_type(cell_type)
 
-    @classmethod
-    def from_value(cls, value: str):
-        """
-        Workaround for string enum prior to Python 3.11
-        """
-        upper = value.upper()
-        if upper == "TRI3":
-            return cls.TRIANGLE
-        elif upper in ["QUAD", "QUAD4"]:
-            return cls.QUAD
-        elif upper == "TETRA":
-            return cls.TETRA
-        elif upper in ["HEX", "HEX8"]:
-            return cls.HEX
-        elif upper == "BEAM2":
-            return cls.INTERVAL
-        else:
-            raise ValueError(f"Unknown cell type: {value}")
 
-    def __str__(self) -> str:
-        if self == ExodusCellType.TETRA:
-            return "tetra"
-        elif self == ExodusCellType.HEX:
-            return "hex"
-        elif self == ExodusCellType.QUAD:
-            return "quadrilateral"
-        elif self == ExodusCellType.TRIANGLE:
-            return "triangle"
-        elif self == ExodusCellType.INTERVAL:
-            return "interval"
-        else:
-            raise ValueError(f"Unknown cell type: {self}")
+def _compute_tdim(connectivity: netCDF4._netCDF4.Variable) -> int:
+    d_ct = _get_cell_type(connectivity)
+    return dolfinx.mesh.cell_dim(d_ct)
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
-    args = arguments or {"legacy": False}  # If meshtags is read from legacy
+    args = arguments or {}
     return args
 
 
@@ -202,7 +179,7 @@ def read_mesh_data(
         The mesh topology, geometry, UFL domain and partition function
     """
     check_file_exists(filename)
-    with netCDF4.Dataset(filename) as infile:
+    with netCDF4.Dataset(filename, "r") as infile:
         if comm.rank == 0:
             # use page 171 of manual to extract data
             num_nodes = infile.dimensions["num_nodes"].size
@@ -219,36 +196,36 @@ def read_mesh_data(
                         coordinates[: coord_i.size, i] = coord_i[:]
 
             # Get element connectivity
-            connectivity_arrays = []
-            cell_types = np.empty(num_blocks, dtype=CellType)
-            num_cells_per_block = np.zeros(num_blocks, dtype=np.int32)
-            # Create map from topological dimension to block indices
-            tdim_to_cell_index = {0: [], 1: [], 2: [], 3: []}
-            for i in range(1, num_blocks + 1):
-                connectivity = infile.variables.get(f"connect{i}")
+            all_connectivity_variables = [
+                infile.variables.get(f"connect{i + 1}") for i in range(num_blocks)
+            ]
 
-                cell_type = CellType.from_value(
-                    str(ExodusCellType.from_value(connectivity.elem_type))
-                )
-                cell_types[i - 1] = cell_type
-                tdim_to_cell_index[cell_type.tdim].append(i - 1)
-                assert connectivity is not None, "No connectivity found"
-                connectivity_arrays.append(connectivity[:] - 1)
-                num_cells_per_block[i - 1] = connectivity.shape[0]
-            max_dim = 0
-            for i in range(4):
-                tdim_to_cell_index[i] = np.asarray(tdim_to_cell_index[i], dtype=np.int32)
-                if len(tdim_to_cell_index[i]) > 0:
-                    max_dim = i
-            cell_block_indices = tdim_to_cell_index[max_dim]
-            for cell in cell_types[cell_block_indices]:
-                assert cell_types[cell_block_indices[0]] == cell, "Mixed cell types not supported"
-            cell_type = cell_types[cell_block_indices][0]
+            # Compute max topological dimension in mesh and find the correct
+            max_tdim = _compute_tdim(max(all_connectivity_variables, key=_compute_tdim))
 
-            connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
-            cells = connectivity_array.data
+            # Extract only the connectivity blocks that we need
+            entity_blocks = list(
+                filter(lambda el: _compute_tdim(el) == max_tdim, all_connectivity_variables)
+            )
+            if len(entity_blocks) > 0:
+                # Extract markers directly from entity-blocks
+                connectivity_arrays = []
+                cell_types = []
+                num_entities = []
+                entity_block_index = []
+                for entity_block in entity_blocks:
+                    connectivity_arrays.append(entity_block[:] - 1)
+                    num_entities.append(entity_block.shape[0])
+                    cell_types.append(_get_cell_type(entity_block))
+                    entity_block_index.append(int(entity_block.name.removeprefix("connect")) - 1)
+                for cell in cell_types:
+                    assert cell_types[0] == cell, "Mixed cell types not supported"
+                cell_type = cell_types[0]
 
-            perm = dolfinx.cpp.io.perm_vtk(dolfinx.mesh.to_type(str(cell_type)), cells.shape[1])
+                cells = np.vstack(connectivity_arrays)
+            else:
+                raise ValueError(f"No blocks found in {filename}")
+            perm = dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1])
             cells = cells[:, perm]
             cell_type, gdim, xtype, num_dofs_per_cell = comm.bcast(
                 (cell_type, gdim, np.dtype(coordinates.dtype).name, cells.shape[1]), root=0
@@ -260,7 +237,7 @@ def read_mesh_data(
             cells = np.zeros((0, num_dofs_per_cell), dtype=np.int64)
     return ReadMeshData(
         cells=cells,
-        cell_type=str(cell_type),
+        cell_type=dolfinx.mesh.to_string(cell_type),
         x=coordinates,
         lvar=int(basix.LagrangeVariant.equispaced),
         degree=np.int32(1),
@@ -302,111 +279,117 @@ def read_meshtags_data(
     Returns:
         Internal data structure for the mesh tags read from file
     """
-    try:
-        infile = netCDF4.Dataset(filename)
+    if comm.rank == 0:
+        with netCDF4.Dataset(filename, "r") as infile:
+            # use page 171 of manual to extract data
+            num_blocks = infile.dimensions["num_el_blk"].size
 
-        # use page 171 of manual to extract data
-        num_nodes = infile.dimensions["num_nodes"].size
-        gdim = infile.dimensions["num_dim"].size
-        num_blocks = infile.dimensions["num_el_blk"].size
+            # Extract all connectivity blocks
+            all_connectivity_variables = [
+                infile.variables.get(f"connect{i + 1}") for i in range(num_blocks)
+            ]
 
-        # Get coordinates of mesh
-        coordinates = infile.variables.get("coord")
-        if coordinates is None:
-            coordinates = np.zeros((num_nodes, gdim), dtype=np.float64)
-            for i, coord in enumerate(["x", "y", "z"]):
-                coord_i = infile.variables.get(f"coord{coord}")
-                if coord_i is not None:
-                    coordinates[: coord_i.size, i] = coord_i[:]
+            # Compute max topological dimension in mesh and find the correct
+            max_tdim = _compute_tdim(max(all_connectivity_variables, key=_compute_tdim))
+            if name == "cell":
+                search_dim = max_tdim
+            elif name == "facet":
+                search_dim = max_tdim - 1
+            else:
+                raise ValueError(f"Only name 'cell' or 'facet' is supported, got '{name}'")
 
-        # Get element connectivity
-        connectivity_arrays = []
-        cell_types = np.empty(num_blocks, dtype=CellType)
-        num_cells_per_block = np.zeros(num_blocks, dtype=np.int32)
-        # Create map from topological dimension to block indices
-        tdim_to_cell_index = {0: [], 1: [], 2: [], 3: []}
-        for i in range(1, num_blocks + 1):
-            connectivity = infile.variables.get(f"connect{i}")
+            # Extract only the connectivity blocks that we need
+            entity_blocks = list(
+                filter(lambda el: _compute_tdim(el) == search_dim, all_connectivity_variables)
+            )
 
-            cell_type = CellType.from_value(str(ExodusCellType.from_value(connectivity.elem_type)))
-            cell_types[i - 1] = cell_type
-            tdim_to_cell_index[cell_type.tdim].append(i - 1)
-            assert connectivity is not None, "No connectivity found"
-            connectivity_arrays.append(connectivity[:] - 1)
-            num_cells_per_block[i - 1] = connectivity.shape[0]
-        max_dim = 0
-        for i in range(4):
-            tdim_to_cell_index[i] = np.asarray(tdim_to_cell_index[i], dtype=np.int32)
-            if len(tdim_to_cell_index[i]) > 0:
-                max_dim = i
-        cell_block_indices = tdim_to_cell_index[max_dim]
-        for cell in cell_types[cell_block_indices]:
-            assert cell_types[cell_block_indices[0]] == cell, "Mixed cell types not supported"
-        cell_type = cell_types[cell_block_indices][0]
-        connectivity_array = np.vstack([connectivity_arrays[i] for i in cell_block_indices])
+            if len(entity_blocks) > 0:
+                # Extract markers directly from entity-blocks
+                connectivity_arrays = []
+                cell_types = []
+                num_entities = []
+                entity_block_index = []
+                for entity_block in entity_blocks:
+                    connectivity_arrays.append(entity_block[:] - 1)
+                    num_entities.append(entity_block.shape[0])
+                    cell_types.append(_get_cell_type(entity_block))
+                    entity_block_index.append(int(entity_block.name.removeprefix("connect")) - 1)
+                for cell in cell_types:
+                    assert cell_types[0] == cell, "Mixed cell types not supported"
+                cell_type = cell_types[0]
 
-        if name == "cell":
-            if "eb_prop1" in infile.variables.keys():
-                block_values = infile.variables["eb_prop1"][:]
+                marked_entities = np.vstack(connectivity_arrays)
+                entity_values = np.zeros(marked_entities.shape[0], dtype=np.int64)
+                if "eb_prop1" in infile.variables.keys():
+                    block_values = infile.variables["eb_prop1"][:]
 
-                # Extract cell block values
-                cell_array = np.zeros(connectivity_array.shape[0], dtype=np.int64)
-                insert_offset = np.zeros(len(cell_block_indices) + 1, dtype=np.int64)
-                insert_offset[1:] = np.cumsum(num_cells_per_block[cell_block_indices])
-                for i, index in enumerate(cell_block_indices):
-                    cell_array[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
-                vals = cell_array
-                indices = connectivity_array.data
-                dim = cell_type.tdim
-        elif name == "facet":
-            # Get all facet blocks
-            facet_blocks_indices = tdim_to_cell_index[max_dim - 1]
-            if len(facet_blocks_indices) > 0:
-                sub_geometry = np.vstack([connectivity_arrays[i] for i in facet_blocks_indices])
-                facet_values = np.zeros(sub_geometry.shape[0], dtype=np.int64)
-                insert_offset = np.zeros(len(facet_blocks_indices) + 1, dtype=np.int64)
-                insert_offset[1:] = np.cumsum(num_cells_per_block[facet_blocks_indices])
-                for i, index in enumerate(facet_blocks_indices):
-                    facet_values[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
-            # If sidesets are used for facet markers
-            elif "ss_prop1" in infile.variables.keys():
-                # Extract facet values
-                local_facet_index = _side_set_to_vertex_map[cell_type]
+                    # First check if entities are in eb_prop1
+                    insert_offset = np.zeros(len(num_entities) + 1, dtype=np.int64)
+                    insert_offset[1:] = np.cumsum(num_entities)
+                    for i, index in enumerate(entity_block_index):
+                        entity_values[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
+                else:
+                    marked_entities = np.zeros((0, marked_entities.shape[1]), dtype=np.int64)
+                    entity_values = np.zeros(0, dtype=np.int64)
+            elif name == "facet" and "ss_prop1" in infile.variables.keys():
+                # If we haven't found the cell type as a block, we should be extracting facets
+                # (from side-sets), then we need the parent cell
+                entity_blocks = list(
+                    filter(lambda el: _compute_tdim(el) == max_tdim, all_connectivity_variables)
+                )
+                cell_types = []
+                for entity_block in entity_blocks:
+                    cell_types.append(_get_cell_type(entity_block))
+                for cell in cell_types:
+                    assert cell_types[0] == cell, "Mixed cell types not supported"
+                cell_type = cell_types[0]
+
+                local_facet_index = _side_set_to_vertex_map[dolfinx.mesh.to_string(cell_type)]
                 if "num_side_sets" not in infile.dimensions:
                     num_vertices_per_facet = len(local_facet_index[0])
-                    sub_geometry = np.zeros((0, num_vertices_per_facet), dtype=np.int64)
-                    facet_values = np.zeros(0, dtype=np.int64)
+                    marked_entities = np.zeros((0, num_vertices_per_facet), dtype=np.int64)
+                    entity_values = np.zeros(0, dtype=np.int64)
                 else:
-                    infile.dimensions.get("num_side_sets", 0)
+                    # Extract facet values
+                    local_facet_index = _side_set_to_vertex_map[dolfinx.mesh.to_string(cell_type)]
                     num_facet_sets = infile.dimensions["num_side_sets"].size
                     values = infile.variables.get("ss_prop1")
+                    # Extract all cell blocks to get correct look-up
+                    connectivity_arrays = []
+                    for entity_block in entity_blocks:
+                        connectivity_arrays.append(entity_block[:] - 1)
+                    connectivity_array = np.vstack(connectivity_arrays)
+
+                    # Loop through all side sets to extract the correct connectivity
                     facet_indices = []
                     facet_values = []
-                    for i in range(1, num_facet_sets + 1):
-                        value = values[i - 1]
-                        elements = infile.variables[f"elem_ss{i}"]
-                        local_facets = infile.variables[f"side_ss{i}"]
+                    for i in range(num_facet_sets):
+                        value = values[i].reshape(-1)
+                        elements = infile.variables[f"elem_ss{i + 1}"]
+                        local_facets = infile.variables[f"side_ss{i + 1}"]
                         for element, index in zip(elements, local_facets):
                             facet_indices.append(
                                 connectivity_array[element - 1, local_facet_index[index - 1]]
                             )
-
-                            # @jorgen can you check this please, I had to change it cause
-                            # each `value` object was a masked array with only one element
-                            # facet_values.append(value)
                             facet_values.append(value.data.tolist())
-                    sub_geometry = np.vstack(facet_indices)
-                    facet_values = np.array(facet_values, dtype=np.int64)
+                        marked_entities = np.vstack(facet_indices)
+                        entity_values = np.array(facet_values, dtype=np.int64).flatten()
             else:
-                sub_geometry = np.zeros((0, 0), dtype=np.int64)
-                facet_values = np.zeros(0, dtype=np.int64)
-            vals = facet_values
-            indices = sub_geometry.data
-            dim = cell_type.tdim - 1
+                # If we cannot find any information about the blocks we send nothing
+                marked_entities = np.zeros((0, 0), dtype=np.int64)
+                entity_values = np.zeros(0, dtype=np.int64)
+        # Broadcast information read by this process to other processes
+        (dim, _, _) = comm.bcast(
+            (search_dim, marked_entities.shape[1], np.dtype(entity_values.dtype).name),
+            root=0,
+        )
 
-    finally:
-        infile.close()
-    return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
+    else:
+        # Other process gets info from process that read the file
+        dim, num_dofs_per_cell, vtype = comm.bcast((None, None, None), root=0)
+        marked_entities = np.zeros((0, num_dofs_per_cell), dtype=np.int64)
+        entity_values = np.zeros(0, dtype=vtype)
+    return MeshTagsData(name=name, values=entity_values, indices=marked_entities, dim=dim)
 
 
 def read_dofmap(
