@@ -562,13 +562,28 @@ def read_point_data(
     num_components = 1  # Default assumption, overriden by data read in having multiple components
     if comm.rank == 0:
         with netCDF4.Dataset(filename, "r") as infile:
-            timestep = 0  # FIXME - need to find the correct timestep based on time argument
-            if name not in infile.variables:
+            raw_names = infile.variables["name_nod_var"][:].data
+            node_names = netCDF4.chartostring(raw_names)
+            if name not in node_names:
                 raise ValueError(
                     f"Point data with name {name} not found in file.",
-                    "Available variables: {list(infile.variables.keys())}",
+                    f"Available variables: {node_names}",
                 )
-            dataset = infile.variables[name][:][timestep].data
+            index = np.flatnonzero(name == node_names)[0] + 1
+
+            temporal_dataset = infile.variables[f"vals_nod_var{index}"]
+            time_steps = infile.variables["time_whole"][:].data
+            if time is None:
+                time_idx = time_steps[0]
+            else:
+                time_indices = np.flatnonzero(np.isclose(time_steps, time))
+                if len(time_indices) == 0:
+                    raise ValueError(
+                        f"Could not find {name}(t={time}), available time steps are {time_steps}"
+                    )
+                time_idx = time_indices[0]
+
+            dataset = temporal_dataset[time_idx]
             if len(dataset.shape) == 1:
                 dataset = dataset.reshape(-1, num_components)
             else:
