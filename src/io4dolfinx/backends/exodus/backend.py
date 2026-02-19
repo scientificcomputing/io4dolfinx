@@ -622,7 +622,6 @@ def read_cell_data(
     num_components = 1  # Default assumption, overriden by data read in having multiple components
     if comm.rank == 0:
         with netCDF4.Dataset(filename, "r") as infile:
-            breakpoint()
             raw_names = infile.variables["name_elem_var"][:].data
 
             node_names = netCDF4.chartostring(raw_names)
@@ -633,7 +632,8 @@ def read_cell_data(
                 )
             index = np.flatnonzero(name == node_names)[0] + 1
 
-            temporal_dataset = infile.variables[f"vals_nod_var{index}"]
+            suffix = "eb1"  # FIXME @jorgensd this seems to be a element block
+            temporal_dataset = infile.variables[f"vals_elem_var{index}{suffix}"]
             time_steps = infile.variables["time_whole"][:].data
             if time is None:
                 time_idx = time_steps[0]
@@ -645,7 +645,7 @@ def read_cell_data(
                     )
                 time_idx = time_indices[0]
 
-            dataset = temporal_dataset[time_idx]
+            dataset = temporal_dataset[time_idx].data
             if len(dataset.shape) == 1:
                 dataset = dataset.reshape(-1, num_components)
             else:
@@ -655,7 +655,9 @@ def read_cell_data(
     # Zero data on all other processes
     if comm.rank != 0:
         dataset = np.zeros((0, num_components), dtype=np.float64)
-    return dataset, 0
+    _time = float(time) if time is not None else None
+    topology = read_mesh_data(filename, comm, _time, False, backend_args=None).cells.data
+    return topology, dataset
 
 
 def read_function_names(
