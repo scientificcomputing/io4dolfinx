@@ -122,6 +122,46 @@ def read_attributes(
     raise NotImplementedError("The Exodus backend cannot read attributes.")
 
 
+def snapshot_checkpoint(
+    filename: Path | str,
+    mode: FileMode,
+    u: dolfinx.fem.Function,
+    backend_args: dict[str, Any] | None,
+):
+    """Create a snapshot checkpoint of a dolfinx function.
+
+    Args:
+        filename: Path to file to read from
+        mode: File-mode to store the function
+        u: dolfinx function to create a snapshot checkpoint for
+        backend_args: Arguments to backend
+    """
+    raise NotImplementedError("The EXODUS backend cannot make checkpoints.")
+
+
+def read_hdf5_array(
+    comm: MPI.Intracomm,
+    filename: Path | str,
+    group: str,
+    backend_args: dict[str, Any] | None,
+) -> tuple[np.ndarray, int]:
+    """Read an array from an HDF5 file.
+
+    Args:
+        comm: MPI communicator used in storage
+        filename: Path to file to read from
+        group: Group in HDF5 file where array is stored
+        backend_args: Arguments to backend
+
+    Returns:
+        Tuple containing:
+            - Numpy array read from file
+            - Global starting point on the process.
+                Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
+    """
+    raise NotImplementedError("The EXODUS backend cannot read HDF5 arrays")
+
+
 def read_timestamps(
     filename: Path | str,
     comm: MPI.Intracomm,
@@ -562,6 +602,22 @@ def read_cell_data(
         freedom within that cell.
     """
     raise NotImplementedError("The Exodus backend does not support reading cell data.")
+
+
+def read_function_names(
+    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+) -> list[str]:
+    """Read all function names from a file.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator to launch IO on.
+        backend_args: Arguments to backend
+
+    Returns:
+        A list of function names.
+    """
+    raise NotImplementedError("The Exodus backend does not support reading function names.")
 
 
 def write_data(
