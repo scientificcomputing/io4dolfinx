@@ -22,6 +22,7 @@ from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadM
 from ...utils import check_file_exists
 from .. import FileMode, ReadMode
 
+_interval_to_vertex_map = {0: [0, 1]}
 # Based on: https://src.fedoraproject.org/repo/pkgs/exodusii/922137.pdf/a45d67f4a1a8762bcf66af2ec6eb35f9/922137.pdf
 _tetra_facet_to_vertex_map = {0: [0, 1, 3], 1: [1, 2, 3], 2: [0, 2, 3], 3: [0, 1, 2]}
 # https://coreform.com/cubit_help/appendix/element_numbering.htm
@@ -38,6 +39,7 @@ _hex_to_vertex_map = {
 }
 
 _side_set_to_vertex_map = {
+    "interval": _interval_to_vertex_map,
     "quadrilateral": _quad_to_vertex_map,
     "triangle": _triangle_to_vertex_map,
     "tetrahedron": _tetra_facet_to_vertex_map,
@@ -46,6 +48,7 @@ _side_set_to_vertex_map = {
 
 
 _exodus_to_string = {
+    "EDGE2": "interval",
     "TRI3": "triangle",
     "QUAD": "quadrilateral",
     "QUAD4": "quadrilateral",
@@ -410,6 +413,7 @@ def read_meshtags_data(
                         elements = infile.variables[f"elem_ss{i + 1}"]
                         local_facets = infile.variables[f"side_ss{i + 1}"]
                         for element, index in zip(elements, local_facets):
+                            breakpoint()
                             facet_indices.append(
                                 connectivity_array[element - 1, local_facet_index[index - 1]]
                             )
@@ -616,7 +620,43 @@ def read_cell_data(
         vertex indices of the cells, dofs the degrees of
         freedom within that cell.
     """
-    raise NotImplementedError("The Exodus backend does not support reading cell data.")
+    num_components = 1  # Default assumption, overriden by data read in having multiple components
+    if comm.rank == 0:
+        with netCDF4.Dataset(filename, "r") as infile:
+            breakpoint()
+            raw_names = infile.variables["name_elem_var"][:].data
+
+            node_names = netCDF4.chartostring(raw_names)
+            if name not in node_names:
+                raise ValueError(
+                    f"Point data with name {name} not found in file.",
+                    f"Available variables: {node_names}",
+                )
+            index = np.flatnonzero(name == node_names)[0] + 1
+
+            temporal_dataset = infile.variables[f"vals_nod_var{index}"]
+            time_steps = infile.variables["time_whole"][:].data
+            if time is None:
+                time_idx = time_steps[0]
+            else:
+                time_indices = np.flatnonzero(np.isclose(time_steps, time))
+                if len(time_indices) == 0:
+                    raise ValueError(
+                        f"Could not find {name}(t={time}), available time steps are {time_steps}"
+                    )
+                time_idx = time_indices[0]
+
+            dataset = temporal_dataset[time_idx]
+            if len(dataset.shape) == 1:
+                dataset = dataset.reshape(-1, num_components)
+            else:
+                num_components = dataset.shape[1]
+    # Broadcast num components to all other ranks
+    num_components = comm.bcast(num_components, root=0)
+    # Zero data on all other processes
+    if comm.rank != 0:
+        dataset = np.zeros((0, num_components), dtype=np.float64)
+    return dataset, 0
 
 
 def read_function_names(
