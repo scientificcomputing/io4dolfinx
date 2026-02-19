@@ -41,6 +41,7 @@ def backend(request):
 def cluster():
     cluster = ipp.Cluster(engines="mpi", n=2)
     rc = cluster.start_and_connect_sync()
+    rc.wait_for_engines(n=2)
     yield rc
     cluster.stop_cluster_sync()
 

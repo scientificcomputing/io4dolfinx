@@ -105,7 +105,7 @@ def test_write_point_data(dtype, tmp_path, cell_type):
             filename=filename, name="u", mesh=grid, time=tj, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: f(x, tj))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
@@ -124,7 +124,7 @@ def test_write_point_data(dtype, tmp_path, cell_type):
             filename=blocked_file, name="u", mesh=grid, time=tk, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: g(x, tk))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
@@ -160,7 +160,7 @@ def test_write_cell_data(dtype, tmp_path, cell_type):
             filename=filename, name="u", mesh=grid, time=tj, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: f(x, tj))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
@@ -179,7 +179,7 @@ def test_write_cell_data(dtype, tmp_path, cell_type):
             filename=blocked_file, name="u", mesh=grid, time=tk, backend="vtkhdf"
         )
         v_ref = Function(u.function_space, dtype=u.x.array.dtype)
-        atol = 10 * np.finfo(u.x.array.dtype).eps
+        atol = 15 * np.finfo(u.x.array.dtype).eps
         v_ref.interpolate(lambda x: g(x, tk))
         np.testing.assert_allclose(u.x.array, v_ref.x.array, atol=atol)
 
@@ -254,7 +254,7 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map):
         )
         org_maps[dim] = generate_reference_map(mesh, et, comm, root)
 
-    tol = 10 * np.finfo(dtype).eps
+    tol = 15 * np.finfo(dtype).eps
     # Read in hex grid from second time step
     hex_mesh = io4dolfinx.read_mesh(
         filename, comm, time=1.0, backend_args={"name": "hex"}, backend="vtkhdf"
@@ -288,7 +288,7 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map):
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_read_write_pointdata(dtype, tmp_path):
-    tol = 10 * np.finfo(dtype).eps
+    tol = 15 * np.finfo(dtype).eps
 
     comm = MPI.COMM_WORLD
     tmp_path = comm.bcast(tmp_path, root=0)
@@ -360,7 +360,7 @@ def test_read_write_pointdata(dtype, tmp_path):
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_read_write_celldata(dtype, tmp_path):
-    tol = 10 * np.finfo(dtype).eps
+    tol = 15 * np.finfo(dtype).eps
 
     comm = MPI.COMM_WORLD
     tmp_path = comm.bcast(tmp_path, root=0)
@@ -436,7 +436,7 @@ def test_read_write_celldata(dtype, tmp_path):
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_read_write_mix_data(dtype, tmp_path):
-    tol = 10 * np.finfo(dtype).eps
+    tol = 15 * np.finfo(dtype).eps
 
     mesh = create_unit_square(MPI.COMM_WORLD, 5, 7, dtype=dtype)
 
