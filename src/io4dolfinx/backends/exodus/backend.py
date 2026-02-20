@@ -1,5 +1,9 @@
 """
-Exodus interface to io4dolfinx
+Exodus interface to io4dolfinx.
+The Exodus2 format is described in:
+https://src.fedoraproject.org/repo/pkgs/exodusii/922137.pdf/a45d67f4a1a8762bcf66af2ec6eb35f9/922137.pdf
+Further documentation from CUBIT on node numbering can be found at:
+https://coreform.com/cubit_help/appendix/element_numbering.htm
 
 SPDX License identifier: MIT
 
@@ -102,7 +106,7 @@ def write_attributes(
         comm: MPI communicator used in storage
         name: Name of the attributes
         attributes: Dictionary of attributes to write to file
-        engine: ADIOS2 engine to use
+        backend_args: Arguments to backend
     """
     raise NotImplementedError("The Exodus backend cannot write attributes.")
 
@@ -119,6 +123,7 @@ def read_attributes(
         filename: Path to file to read from
         comm: MPI communicator used in storage
         name: Name of the attributes
+        backend_args: Arguments to backend
     Returns:
         The attributes
     """
@@ -176,6 +181,7 @@ def read_timestamps(
     Args:
         comm: MPI communicator
         filename: Path to file
+        comm: MPI communicator
         function_name: Name of the function to read time-stamps for
         backend_args: Arguments for backend, for instance file type.
         backend: What backend to use for writing.
@@ -196,9 +202,10 @@ def write_mesh(
     """Write a mesh to file using H5PY
 
     Args:
-        comm: MPI communicator used in storage
-        mesh: Internal data structure for the mesh data to save to file
         filename: Path to file to write to.
+        mesh: Internal data structure for the mesh data to save to file
+        comm: MPI communicator used in storage
+        backend_args: Arguments to backend
         mode: Mode to use (write or append)
         time: Time stamp
     """
@@ -277,6 +284,7 @@ def read_mesh_data(
         comm: The MPI communciator to distribute the mesh over
         time: Time stamp associated with mesh
         read_from_partition: Read mesh with partition from file
+        backend_args: Arguments to backend
     Returns:
         The mesh topology, geometry, UFL domain and partition function
     """
@@ -514,9 +522,9 @@ def write_function(
     """Write a function to file.
 
     Args:
+        filename: Path to file to write to
         comm: MPI communicator used in storage
         u: Internal data structure for the function data to save to file
-        filename: Path to file to write to
         time: Time stamp associated with function
         mode: File-mode to store the function
         backend_args: Arguments to backend
