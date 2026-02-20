@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 
 from mpi4py import MPI
 
-import basix
+import basix.ufl
 import dolfinx
 import netCDF4
 import numpy as np
@@ -52,26 +52,27 @@ _side_set_to_vertex_map = {
 
 
 _exodus_to_string = {
-    "EDGE2": "interval",
-    "TRI3": "triangle",
-    "QUAD": "quadrilateral",
-    "QUAD4": "quadrilateral",
-    "TETRA": "tetrahedron",
-    "HEX": "hexahedron",
-    "HEX8": "hexahedron",
-    "BEAM2": "interval",
+    "EDGE2": ("interval", 1),
+    "TRI3": ("triangle", 1),
+    "QUAD": ("quadrilateral", 1),
+    "QUAD4": ("quadrilateral", 1),
+    "TETRA": ("tetrahedron", 1),
+    "HEX": ("hexahedron", 1),
+    "HEX8": ("hexahedron", 1),
+    "BEAM2": ("interval", 1),
+    "HEX27": ("hexahedron", 2),
 }
 
 read_mode = ReadMode.serial
 
 
-def _get_cell_type(connectivity: netCDF4.Variable) -> dolfinx.mesh.CellType:
-    cell_type = _exodus_to_string[connectivity.elem_type]
-    return dolfinx.mesh.to_type(cell_type)
+def _get_cell_type(connectivity: netCDF4.Variable) -> tuple[dolfinx.mesh.CellType, int]:
+    cell_type, degree = _exodus_to_string[connectivity.elem_type]
+    return dolfinx.mesh.to_type(cell_type), degree
 
 
 def _compute_tdim(connectivity: netCDF4.Variable) -> int:
-    d_ct = _get_cell_type(connectivity)
+    d_ct, _ = _get_cell_type(connectivity)
     return dolfinx.mesh.cell_dim(d_ct)
 
 
@@ -256,7 +257,7 @@ def _get_entity_blocks(
 
 def _extract_connectivity_data(
     entity_blocks: list[netCDF4.Variable],
-) -> tuple[list[npt.NDArray[np.int64]], dolfinx.mesh.CellType, list[int]]:
+) -> tuple[list[npt.NDArray[np.int64]], tuple[dolfinx.mesh.CellType, int], list[int]]:
     connectivity_arrays = []
     cell_types = []
     entity_block_index = []
@@ -296,8 +297,8 @@ def read_mesh_data(
             _tdim, entity_blocks = _get_entity_blocks(infile, "cell")
             if len(entity_blocks) > 0:
                 # Extract markers directly from entity-blocks
-                connectivity_arrays, cell_type, _entity_block_index = _extract_connectivity_data(
-                    entity_blocks
+                connectivity_arrays, (cell_type, degree), _entity_block_index = (
+                    _extract_connectivity_data(entity_blocks)
                 )
 
                 cells = np.vstack(connectivity_arrays)
@@ -306,14 +307,56 @@ def read_mesh_data(
             else:
                 raise ValueError(f"No blocks found in {filename}")
 
-            perm = dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1])
+            if degree == 1:
+                perm = dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1])
+            elif cell_type == dolfinx.mesh.CellType.hexahedron and degree == 2:
+                # Ordering from Fig 4.14 of: https://sandialabs.github.io/seacas-docs/exodusII-new.pdf
+                dolfinx_to_exodus = np.array(
+                    [
+                        0,
+                        1,
+                        5,
+                        4,
+                        2,
+                        3,
+                        7,
+                        6,
+                        8,
+                        12,
+                        16,
+                        10,
+                        9,
+                        11,
+                        18,
+                        17,
+                        13,
+                        15,
+                        19,
+                        14,
+                        26,
+                        21,
+                        24,
+                        22,
+                        23,
+                        20,
+                        25,
+                    ]
+                )
+                perm = np.argsort(dolfinx_to_exodus)
+            else:
+                raise NotImplementedError(
+                    "Reading Exodus2 mesh with {cell_type} of order {degree} is not supported."
+                )
+
             cells = cells[:, perm]
-            cell_type, gdim, xtype, num_dofs_per_cell = comm.bcast(
-                (cell_type, gdim, np.dtype(coordinates.dtype).name, cells.shape[1]), root=0
+            cell_type, gdim, xtype, degree, num_dofs_per_cell = comm.bcast(
+                (cell_type, gdim, np.dtype(coordinates.dtype).name, degree, cells.shape[1]), root=0
             )
 
         else:
-            cell_type, gdim, xtype, num_dofs_per_cell = comm.bcast((None, None, None, None), root=0)
+            cell_type, gdim, xtype, degree, num_dofs_per_cell = comm.bcast(
+                (None, None, None, None), root=0
+            )
             coordinates = np.zeros((0, gdim), dtype=xtype)
             cells = np.zeros((0, num_dofs_per_cell), dtype=np.int64)
     return ReadMeshData(
@@ -321,7 +364,7 @@ def read_mesh_data(
         cell_type=dolfinx.mesh.to_string(cell_type),
         x=coordinates,
         lvar=int(basix.LagrangeVariant.equispaced),
-        degree=int(1),
+        degree=degree,
         partition_graph=None,
     )
 
@@ -372,8 +415,8 @@ def read_meshtags_data(
 
             if len(entity_blocks) > 0:
                 # Extract markers directly from entity-blocks
-                connectivity_arrays, cell_type, entity_block_index = _extract_connectivity_data(
-                    entity_blocks
+                connectivity_arrays, (cell_type, degree), entity_block_index = (
+                    _extract_connectivity_data(entity_blocks)
                 )
                 marked_entities = np.vstack(connectivity_arrays)
                 entity_values = np.zeros(marked_entities.shape[0], dtype=np.int64)
@@ -386,23 +429,29 @@ def read_meshtags_data(
                     for i, index in enumerate(entity_block_index):
                         entity_values[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
                 else:
+                    num_dofs_per_cell = basix.ufl.element(
+                        "Lagrange", dolfinx.mesh.to_string(cell_type), degree
+                    ).dim
+                    assert num_dofs_per_cell == marked_entities.shape[1]
                     marked_entities = np.zeros((0, marked_entities.shape[1]), dtype=np.int64)
                     entity_values = np.zeros(0, dtype=np.int64)
             elif name == "facet" and "ss_prop1" in infile.variables.keys():
                 # If we haven't found the cell type as a block, we should be extracting facets
                 # (from side-sets), then we need the parent cell
-                _tdim, entity_blocks = _get_entity_blocks(infile, "cell")
+                tdim, entity_blocks = _get_entity_blocks(infile, "cell")
                 cell_types = []
                 for entity_block in entity_blocks:
                     cell_types.append(_get_cell_type(entity_block))
                 for cell in cell_types:
                     assert cell_types[0] == cell, "Mixed cell types not supported"
-                cell_type = cell_types[0]
-
+                cell_type, degree = cell_types[0]
                 local_facet_index = _side_set_to_vertex_map[dolfinx.mesh.to_string(cell_type)]
                 if "num_side_sets" not in infile.dimensions:
-                    num_vertices_per_facet = len(local_facet_index[0])
-                    marked_entities = np.zeros((0, num_vertices_per_facet), dtype=np.int64)
+                    facet_type = dolfinx.cpp.mesh.cell_entity_type(cell_type, tdim - 1, 0)
+                    num_dofs_per_cell = basix.ufl.element(
+                        "Lagrange", dolfinx.mesh.to_string(facet_type), degree
+                    ).dim
+                    marked_entities = np.zeros((0, num_dofs_per_cell), dtype=np.int64)
                     entity_values = np.zeros(0, dtype=np.int64)
                 else:
                     # Extract facet values
@@ -430,8 +479,16 @@ def read_meshtags_data(
                         marked_entities = np.vstack(facet_indices)
                         entity_values = np.array(facet_values, dtype=np.int64).flatten()
             else:
+                # If we found no blocks (for instance for facets, we search through the cells)
+                tdim, entity_blocks = _get_entity_blocks(infile, "cell")
+                search_dim = tdim - 1 if name == "facet" else tdim
+                cell_type, degree = _get_cell_type(entity_blocks[0])
+                facet_type = dolfinx.cpp.mesh.cell_entity_type(cell_type, search_dim, 0)
+                num_dofs_per_cell = basix.ufl.element(
+                    "Lagrange", dolfinx.mesh.to_string(facet_type), degree
+                ).dim
                 # If we cannot find any information about the blocks we send nothing
-                marked_entities = np.zeros((0, 0), dtype=np.int64)
+                marked_entities = np.zeros((0, num_dofs_per_cell), dtype=np.int64)
                 entity_values = np.zeros(0, dtype=np.int64)
         # Broadcast information read by this process to other processes
         (dim, _, _) = comm.bcast(
