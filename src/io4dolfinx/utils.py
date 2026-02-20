@@ -14,9 +14,11 @@ from pathlib import Path
 
 from mpi4py import MPI
 
+import basix.ufl
 import dolfinx
 import numpy as np
 import numpy.typing as npt
+import ufl
 from packaging.version import Version
 
 __all__ = [
@@ -27,6 +29,7 @@ __all__ = [
     "unroll_dofmap",
     "compute_insert_position",
     "unroll_insert_position",
+    "reconstruct_mesh",
 ]
 
 
@@ -196,3 +199,62 @@ def compute_dofmap_pos(
     local_cell[indicator] = cell_indicator[markers].reshape(-1)
     dof_pos[indicator] = local_indices[markers].reshape(-1)
     return local_cell, dof_pos
+
+
+def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) -> dolfinx.mesh.Mesh:
+    """
+    Make a copy of a mesh and potentially change the element of the coordinate element.
+
+    Note:
+        The topology is shared with the original mesh but the geometry is reconstructed.
+
+    Args:
+        mesh: Mesh to reconstruct
+        coordinate_element_degree: Degree to use for coordinate element
+
+    Returns:
+        The new mesh
+
+    """
+    # Extract cell properties
+    ud = mesh.ufl_domain()
+    assert ud is not None
+    c_el = ud.ufl_coordinate_element()
+    family = c_el.family_name
+    lvar = c_el.lagrange_variant
+    ct = c_el.cell_type
+
+    # Create new UFL element
+    new_c_el = basix.ufl.element(
+        family,
+        ct,
+        coordinate_element_degree,
+        shape=(mesh.geometry.dim,),
+        lagrange_variant=lvar,
+        dtype=mesh.geometry.x.dtype,
+    )
+
+    # Extract new node coordinates
+    V_tmp = dolfinx.fem.functionspace(mesh, new_c_el)
+    gdim = mesh.geometry.dim
+    x = V_tmp.tabulate_dof_coordinates()[:, :gdim]
+
+    # Create new geoemtry
+    geom_imap = V_tmp.dofmap.index_map
+    geom_dofmap = V_tmp.dofmap.list
+    num_nodes_local = geom_imap.size_local + geom_imap.num_ghosts
+    original_input_indices = geom_imap.local_to_global(np.arange(num_nodes_local, dtype=np.int32))
+    coordinate_element = dolfinx.fem.coordinate_element(
+        mesh.topology.cell_type, coordinate_element_degree, lvar, dtype=mesh.geometry.x.dtype
+    )
+    # Could use create_geometry here when things are fixed
+    geom = dolfinx.mesh.Geometry(
+        mesh.geometry._cpp_object.__class__(
+            geom_imap, geom_dofmap, coordinate_element._cpp_object, x, original_input_indices
+        )
+    )
+
+    # Create new mesh
+    new_top = mesh.topology
+    cpp_mesh = mesh._cpp_object.__class__(mesh.comm, new_top._cpp_object, geom._cpp_object)
+    return dolfinx.mesh.Mesh(cpp_mesh, ufl.Mesh(new_c_el))
