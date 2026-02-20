@@ -31,6 +31,7 @@ from .readers import (
     read_point_data,
 )
 from .snapshot import snapshot_checkpoint
+from .utils import reconstruct_mesh
 
 meta = metadata("io4dolfinx")
 __version__ = meta["Version"]
@@ -62,4 +63,5 @@ __all__ = [
     "get_backend",
     "write_cell_data",
     "write_point_data",
+    "reconstruct_mesh",
 ]
