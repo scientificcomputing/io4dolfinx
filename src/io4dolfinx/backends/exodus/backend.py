@@ -8,7 +8,7 @@ Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Remi Delaporte-Mathurin,
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from mpi4py import MPI
 
@@ -205,6 +205,64 @@ def write_mesh(
     raise NotImplementedError("The Exodus backend cannot write meshes.")
 
 
+def _read_mesh_geometry(infile: netCDF4.Dataset) -> tuple[int, npt.NDArray[np.floating]]:
+    # use page 171 of manual to extract data
+    num_nodes = infile.dimensions["num_nodes"].size
+    gdim = infile.dimensions["num_dim"].size
+
+    # Get coordinates of mesh
+    coord_var = infile.variables.get("coord")
+    if coord_var is None:
+        coordinates = np.zeros((num_nodes, gdim), dtype=np.float64)
+        for i, coord in enumerate(["x", "y", "z"]):
+            coord_i = infile.variables.get(f"coord{coord}")
+            if coord_i is not None:
+                coordinates[: coord_i.size, i] = coord_i[:]
+    else:
+        coordinates = np.asarray(coord_var)
+    return gdim, coordinates
+
+
+def _get_entity_blocks(
+    infile: netCDF4.Dataset, search_type: Literal["cell", "facet"]
+) -> tuple[int, list[netCDF4.Variable]]:
+    # use page 171 of manual to extract data
+    num_blocks = infile.dimensions["num_el_blk"].size
+
+    # Get element connectivity
+    all_connectivity_variables = [infile.variables[f"connect{i + 1}"] for i in range(num_blocks)]
+
+    # Compute max topological dimension in mesh and find the correct
+    max_tdim = _compute_tdim(max(all_connectivity_variables, key=_compute_tdim))
+
+    # Extract only the connectivity blocks that we need
+    if search_type == "cell":
+        search_dim = max_tdim
+    elif search_type == "facet":
+        search_dim = max_tdim - 1
+    else:
+        raise RuntimeError(f"Unknown entity type: {search_type}")
+    return search_dim, list(
+        filter(lambda el: _compute_tdim(el) == search_dim, all_connectivity_variables)
+    )
+
+
+def _extract_connectivity_data(
+    entity_blocks: list[netCDF4.Variable],
+) -> tuple[list[npt.NDArray[np.int64]], dolfinx.mesh.CellType, list[int]]:
+    connectivity_arrays = []
+    cell_types = []
+    entity_block_index = []
+    for entity_block in entity_blocks:
+        connectivity_arrays.append(entity_block[:] - 1)
+        cell_types.append(_get_cell_type(entity_block))
+        entity_block_index.append(int(entity_block.name.removeprefix("connect")) - 1)
+    for cell in cell_types:
+        assert cell_types[0] == cell, "Mixed cell types not supported"
+    cell_type = cell_types[0]
+    return connectivity_arrays, cell_type, entity_block_index
+
+
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Intracomm,
@@ -225,53 +283,21 @@ def read_mesh_data(
     check_file_exists(filename)
     with netCDF4.Dataset(filename, "r") as infile:
         if comm.rank == 0:
-            # use page 171 of manual to extract data
-            num_nodes = infile.dimensions["num_nodes"].size
-            gdim = infile.dimensions["num_dim"].size
-            num_blocks = infile.dimensions["num_el_blk"].size
+            gdim, coordinates = _read_mesh_geometry(infile)
 
-            # Get coordinates of mesh
-            coord_var = infile.variables.get("coord")
-            if coord_var is None:
-                coordinates = np.zeros((num_nodes, gdim), dtype=np.float64)
-                for i, coord in enumerate(["x", "y", "z"]):
-                    coord_i = infile.variables.get(f"coord{coord}")
-                    if coord_i is not None:
-                        coordinates[: coord_i.size, i] = coord_i[:]
-            else:
-                coordinates = np.asarray(coord_var)
-            # Get element connectivity
-            all_connectivity_variables = [
-                infile.variables[f"connect{i + 1}"] for i in range(num_blocks)
-            ]
-
-            # Compute max topological dimension in mesh and find the correct
-            max_tdim = _compute_tdim(max(all_connectivity_variables, key=_compute_tdim))
-
-            # Extract only the connectivity blocks that we need
-            entity_blocks = list(
-                filter(lambda el: _compute_tdim(el) == max_tdim, all_connectivity_variables)
-            )
+            _tdim, entity_blocks = _get_entity_blocks(infile, "cell")
             if len(entity_blocks) > 0:
                 # Extract markers directly from entity-blocks
-                connectivity_arrays = []
-                cell_types = []
-                num_entities = []
-                entity_block_index = []
-                for entity_block in entity_blocks:
-                    connectivity_arrays.append(entity_block[:] - 1)
-                    num_entities.append(entity_block.shape[0])
-                    cell_types.append(_get_cell_type(entity_block))
-                    entity_block_index.append(int(entity_block.name.removeprefix("connect")) - 1)
-                for cell in cell_types:
-                    assert cell_types[0] == cell, "Mixed cell types not supported"
-                cell_type = cell_types[0]
+                connectivity_arrays, cell_type, _entity_block_index = _extract_connectivity_data(
+                    entity_blocks
+                )
 
                 cells = np.vstack(connectivity_arrays)
                 if isinstance(cells, np.ma.MaskedArray):
                     cells = cells.filled()
             else:
                 raise ValueError(f"No blocks found in {filename}")
+
             perm = dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1])
             cells = cells[:, perm]
             cell_type, gdim, xtype, num_dofs_per_cell = comm.bcast(
@@ -328,51 +354,27 @@ def read_meshtags_data(
     """
     if comm.rank == 0:
         with netCDF4.Dataset(filename, "r") as infile:
-            # use page 171 of manual to extract data
-            num_blocks = infile.dimensions["num_el_blk"].size
-
-            # Extract all connectivity blocks
-            all_connectivity_variables = [
-                infile.variables[f"connect{i + 1}"] for i in range(num_blocks)
-            ]
-
             # Compute max topological dimension in mesh and find the correct
-            max_tdim = _compute_tdim(max(all_connectivity_variables, key=_compute_tdim))
-            if name == "cell":
-                search_dim = max_tdim
-            elif name == "facet":
-                search_dim = max_tdim - 1
+            if name == "cell" or name == "facet":
+                search_dim, entity_blocks = _get_entity_blocks(
+                    infile, cast(Literal["cell", "facet"], name)
+                )
             else:
-                raise ValueError(f"Only name 'cell' or 'facet' is supported, got '{name}'")
-
-            # Extract only the connectivity blocks that we need
-            entity_blocks = list(
-                filter(lambda el: _compute_tdim(el) == search_dim, all_connectivity_variables)
-            )
+                raise RuntimeError("Expected name='cell' or 'facet' got {name}")
 
             if len(entity_blocks) > 0:
                 # Extract markers directly from entity-blocks
-                connectivity_arrays = []
-                cell_types = []
-                num_entities = []
-                entity_block_index = []
-                for entity_block in entity_blocks:
-                    connectivity_arrays.append(entity_block[:] - 1)
-                    num_entities.append(entity_block.shape[0])
-                    cell_types.append(_get_cell_type(entity_block))
-                    entity_block_index.append(int(entity_block.name.removeprefix("connect")) - 1)
-                for cell in cell_types:
-                    assert cell_types[0] == cell, "Mixed cell types not supported"
-                cell_type = cell_types[0]
-
+                connectivity_arrays, cell_type, entity_block_index = _extract_connectivity_data(
+                    entity_blocks
+                )
                 marked_entities = np.vstack(connectivity_arrays)
                 entity_values = np.zeros(marked_entities.shape[0], dtype=np.int64)
                 if "eb_prop1" in infile.variables.keys():
                     block_values = infile.variables["eb_prop1"][:]
 
                     # First check if entities are in eb_prop1
-                    insert_offset = np.zeros(len(num_entities) + 1, dtype=np.int64)
-                    insert_offset[1:] = np.cumsum(num_entities)
+                    insert_offset = np.zeros(len(connectivity_arrays) + 1, dtype=np.int64)
+                    insert_offset[1:] = np.cumsum([c_arr.shape[0] for c_arr in connectivity_arrays])
                     for i, index in enumerate(entity_block_index):
                         entity_values[insert_offset[i] : insert_offset[i + 1]] = block_values[index]
                 else:
@@ -381,9 +383,7 @@ def read_meshtags_data(
             elif name == "facet" and "ss_prop1" in infile.variables.keys():
                 # If we haven't found the cell type as a block, we should be extracting facets
                 # (from side-sets), then we need the parent cell
-                entity_blocks = list(
-                    filter(lambda el: _compute_tdim(el) == max_tdim, all_connectivity_variables)
-                )
+                _tdim, entity_blocks = _get_entity_blocks(infile, "cell")
                 cell_types = []
                 for entity_block in entity_blocks:
                     cell_types.append(_get_cell_type(entity_block))
@@ -630,7 +630,7 @@ def read_cell_data(
             node_names = netCDF4.chartostring(raw_names)
             if name not in node_names:
                 raise ValueError(
-                    f"Point data with name {name} not found in file.",
+                    f"Cell data with name {name} not found in file.",
                     f"Available variables: {node_names}",
                 )
             index = np.flatnonzero(name == node_names)[0] + 1
@@ -662,10 +662,12 @@ def read_cell_data(
                 num_components = dataset.shape[1]
     # Broadcast num components to all other ranks
     num_components = comm.bcast(num_components, root=0)
+
     # Zero data on all other processes
     if comm.rank != 0:
         dataset = np.zeros((0, num_components), dtype=np.float64)
     _time = float(time) if time is not None else None
+
     topology = read_mesh_data(filename, comm, _time, False, backend_args=None).cells
     return topology, dataset
 
@@ -683,7 +685,13 @@ def read_function_names(
     Returns:
         A list of function names.
     """
-    raise NotImplementedError("The Exodus backend does not support reading function names.")
+    with netCDF4.Dataset(filename, "r") as infile:
+        function_names: list[str] = []
+        for key in ["name_elem_var", "name_nod_var"]:
+            raw_names = infile.variables[key][:].data
+            decoded_names = netCDF4.chartostring(raw_names)
+            function_names.extend(decoded_names)
+    return function_names
 
 
 def write_data(
@@ -705,11 +713,3 @@ def write_data(
         backend_args: The backend arguments
     """
     raise NotImplementedError("Exodus has not implemented this yet")
-
-
-def getNames(model, key):
-    # name of the element variables
-    name_var = []
-    for vname in np.ma.getdata(model.variables[key][:]).astype("U8"):
-        name_var.append("".join(vname))
-    return name_var
