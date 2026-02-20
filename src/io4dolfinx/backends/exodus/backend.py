@@ -184,7 +184,7 @@ def read_timestamps(
         comm: MPI communicator
         function_name: Name of the function to read time-stamps for
         backend_args: Arguments for backend, for instance file type.
-        backend: What backend to use for writing.
+
     Returns:
         The time-stamps
     """
