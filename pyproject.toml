@@ -26,6 +26,7 @@ dev = ["pdbpp", "ipython", "mypy", "ruff"]
 h5py = ["h5py"]
 pyvista = ["pyvista"]
 xdmf = ["h5py"]
+exodus = ["netcdf4"]
 docs = [
     "jupyter-book<2.0.0",
     "ipyparallel",

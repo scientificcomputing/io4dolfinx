@@ -433,5 +433,9 @@ def get_backend(backend: str) -> IOBackend:
         from .vtkhdf import backend as VTKDHFInterface
 
         return VTKDHFInterface
+    elif backend == "exodus":
+        from .exodus import backend as EXODUSInterface
+
+        return EXODUSInterface
     else:
         return import_module(backend)
