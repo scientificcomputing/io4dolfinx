@@ -438,15 +438,19 @@ def read_meshtags_data(
             elif name == "facet" and "ss_prop1" in infile.variables.keys():
                 # If we haven't found the cell type as a block, we should be extracting facets
                 # (from side-sets), then we need the parent cell
-                _tdim, entity_blocks = _get_entity_blocks(infile, "cell")
+                tdim, entity_blocks = _get_entity_blocks(infile, "cell")
                 cell_types = []
                 for entity_block in entity_blocks:
                     cell_types.append(_get_cell_type(entity_block))
                 for cell in cell_types:
                     assert cell_types[0] == cell, "Mixed cell types not supported"
-                cell_type = cell_types[0][0]
+                cell_type, degree = cell_types[0]
                 local_facet_index = _side_set_to_vertex_map[dolfinx.mesh.to_string(cell_type)]
                 if "num_side_sets" not in infile.dimensions:
+                    facet_type = dolfinx.cpp.mesh.cell_entity_type(cell_type, tdim - 1, 0)
+                    num_dofs_per_cell = basix.ufl.element(
+                        "Lagrange", dolfinx.mesh.to_string(facet_type), degree
+                    ).dim
                     marked_entities = np.zeros((0, num_dofs_per_cell), dtype=np.int64)
                     entity_values = np.zeros(0, dtype=np.int64)
                 else:
