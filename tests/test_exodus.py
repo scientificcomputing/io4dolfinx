@@ -3,6 +3,7 @@ from enum import Enum
 
 from mpi4py import MPI
 
+import numpy as np
 import pytest
 
 import io4dolfinx
@@ -62,4 +63,26 @@ def test_read_mesh_point_data(tmp_path):
         pytest.skip("No internet connection")
 
     mesh = io4dolfinx.read_mesh(filename, MPI.COMM_WORLD, backend="exodus")
-    io4dolfinx.read_point_data(filename, name="u", mesh=mesh, backend="exodus", time=1.0)
+    u = io4dolfinx.read_point_data(filename, name="u", mesh=mesh, backend="exodus", time=1.0)
+    assert mesh.topology.index_map(mesh.topology.dim).size_global == 4
+    assert mesh.geometry.index_map().size_global == 9
+    assert np.isclose(mesh.comm.allreduce(np.max(u.x.array), op=MPI.MAX), 1.1140844375981802)
+
+
+def test_read_second_order_mesh(tmp_path):
+    tmp_path = MPI.COMM_WORLD.bcast(tmp_path, root=0)
+    filename = tmp_path / "box-test_out_nek0.e"
+    url = "https://github.com/neams-th-coe/cardinal/blob/devel/test/tests/deformation/simple-cube/gold/box-test_out_nek0.e?raw=true"
+    status = download_file_if_not_exists(url, filename)
+    if status == DownloadStatus.no_connection:
+        pytest.skip("No internet connection")
+
+    mesh = io4dolfinx.read_mesh(filename, MPI.COMM_WORLD, backend="exodus", time=5)
+    assert mesh.topology.index_map(mesh.topology.dim).size_global == 64
+    assert mesh.geometry.index_map().size_global == 1728
+
+    u_x = io4dolfinx.read_point_data(filename, name="disp_x", mesh=mesh, backend="exodus", time=5.0)
+    ref_min = -0.7699306351843485
+    ref_max = 0.7699306351843485
+    assert np.isclose(mesh.comm.allreduce(np.min(u_x.x.array), op=MPI.MIN), ref_min)
+    assert np.isclose(mesh.comm.allreduce(np.max(u_x.x.array), op=MPI.MAX), ref_max)
