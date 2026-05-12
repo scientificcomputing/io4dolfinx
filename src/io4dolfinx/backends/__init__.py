@@ -439,3 +439,22 @@ def get_backend(backend: str) -> IOBackend:
         return EXODUSInterface
     else:
         return import_module(backend)
+
+
+BUILTIN_BAKENDS = ("h5py", "adios2", "pyvista", "xdmf", "vtkhdf", "exodus")
+
+
+def list_builtin_backends() -> list[str]:
+    """List available builtin backends.
+
+    Returns:
+        List of available backends
+    """
+    lst = []
+    for backend in BUILTIN_BAKENDS:
+        try:
+            get_backend(backend)
+        except ImportError:
+            continue
+        lst.append(backend)
+    return lst
