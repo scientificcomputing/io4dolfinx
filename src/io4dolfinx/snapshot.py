@@ -33,7 +33,7 @@ def snapshot_checkpoint(
     :param file: The file to write to or read from
     :param mode: Either read or write
     """
-    logger.info(f"Performing snapshot checkpoint with mode {mode} on file {file}")
+    logger.debug(f"Performing snapshot checkpoint with mode {mode} on file {file}")
     logger.debug(f"Using backend {backend} with arguments {backend_args}")
     backend_cls = get_backend(backend)
     default_args = backend_cls.get_default_backend_args(backend_args)

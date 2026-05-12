@@ -73,7 +73,7 @@ def write_attributes(
         backend_args: Arguments for backend, for instance file type.
         backend: What backend to use for writing.
     """
-    logger.info(f"Writing attributes to {filename} for attribute {name}")
+    logger.debug(f"Writing attributes to {filename} for attribute {name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to write attributes")
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
@@ -98,7 +98,7 @@ def read_attributes(
     Returns:
         The attributes
     """
-    logger.info(f"Reading attributes from {filename} for attribute {name}")
+    logger.debug(f"Reading attributes from {filename} for attribute {name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read attributes")
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
@@ -124,7 +124,7 @@ def read_timestamps(
     Returns:
         The time-stamps
     """
-    logger.info(f"Reading time-stamps from {filename} for function {function_name}")
+    logger.debug(f"Reading time-stamps from {filename} for function {function_name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read time-stamps")
     check_file_exists(filename)
     backend_cls = get_backend(backend)
@@ -155,7 +155,7 @@ def write_meshtags(
         backend_args: Option to IO backend.
         backend: IO backend
     """
-    logger.info(f"Writing meshtags to {filename} for meshtag {meshtag_name or meshtags.name}")
+    logger.debug(f"Writing meshtags to {filename} for meshtag {meshtag_name or meshtags.name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to write meshtags")
 
     # Extract data from meshtags (convert to global geometry node indices for each entity)
@@ -223,7 +223,7 @@ def read_meshtags(
     Returns:
         The meshtags
     """
-    logger.info(f"Reading meshtags from {filename} for meshtag {meshtag_name}")
+    logger.debug(f"Reading meshtags from {filename} for meshtag {meshtag_name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read meshtags")
     check_file_exists(filename)
     backend_cls = get_backend(backend)
@@ -262,7 +262,7 @@ def read_function(
         time: Time-stamp associated with checkpoint
         name: If not provided, `u.name` is used to search through the input file for the function
     """
-    logger.info(
+    logger.debug(
         f"Reading function checkpoint from {filename} for function {name or u.name} at time {time}"
     )
     logger.debug(
@@ -418,7 +418,7 @@ def read_mesh(
     Returns:
         The distributed mesh
     """
-    logger.info(f"Reading mesh from {filename}")
+    logger.debug(f"Reading mesh from {filename}")
     logger.debug(
         f"Using {backend} backend with arguments {backend_args}, "
         f"time {time} and read_from_partition {read_from_partition}"
@@ -500,7 +500,7 @@ def write_mesh(
 
         store_partition_info: Store mesh partitioning (including ghosting) to file
     """
-    logger.info(f"Writing mesh to {filename}")
+    logger.debug(f"Writing mesh to {filename}")
     logger.debug(f"Preparing mesh data for storage storing partition info: {store_partition_info}")
     mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
     logger.debug(
@@ -539,7 +539,7 @@ def write_function(
         backend_args: Arguments to the IO backend.
         backend: The backend to use
     """
-    logger.info(
+    logger.debug(
         f"Writing function checkpoint to {filename} for function {name or u.name} at time {time}"
     )
     logger.debug(
@@ -619,7 +619,7 @@ def read_function_names(
     Returns:
         A list of function names.
     """
-    logger.info(f"Reading function names from {filename}")
+    logger.debug(f"Reading function names from {filename}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read function names")
     check_file_exists(filename)
     backend_cls = get_backend(backend)
@@ -645,7 +645,7 @@ def write_point_data(
         backend_args: The backend arguments
         backend: Which backend to use.
     """
-    logger.info(f"Writing point data to {filename} for function {u.name} at time {time}")
+    logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
     V = create_geometry_function_space(u.function_space.mesh, int(np.prod(u.ufl_shape)))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
@@ -684,7 +684,7 @@ def write_cell_data(
         mode: Append or write
         backend_args: The backend arguments
     """
-    logger.info(f"Writing cell data to {filename} for function {u.name} at time {time}")
+    logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
     V = dolfinx.fem.functionspace(u.function_space.mesh, ("DG", 0, u.ufl_shape))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)

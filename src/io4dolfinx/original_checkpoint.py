@@ -363,7 +363,7 @@ def write_function_on_input_mesh(
         backend_args: Arguments to backend
         backend: Choice of backend module
     """
-    logger.info(
+    logger.debug(
         f"Writing function on input mesh to {filename} at time {time} with name {name or u.name}"
     )
     logger.debug(f"Using backend {backend} with arguments {backend_args} and mode {mode}")
@@ -406,7 +406,7 @@ def write_mesh_input_order(
         backend_args: Arguments to backend
         backend: Choice of backend module
     """
-    logger.info(f"Writing mesh in input order to {filename} at time {time}")
+    logger.debug(f"Writing mesh in input order to {filename} at time {time}")
     logger.debug(f"Using backend {backend} with arguments {backend_args} and mode {mode}")
     mesh_data = create_original_mesh_data(mesh)
     fname = Path(filename)
