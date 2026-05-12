@@ -44,6 +44,14 @@ _arbitrary_lagrange_vtk = {
     74: "pyramid",
 }
 
+_quadratric_vtk = {
+    21: "interval",
+    22: "triangle",
+    23: "quadrilateral",
+    24: "tetrahedron",
+    25: "hexahedron",
+}
+
 
 read_mode = ReadMode.serial
 
@@ -161,9 +169,14 @@ def read_mesh_data(
         if (cell_type := cell_types[0]) in _first_order_vtk.keys():
             cell_type = _first_order_vtk[cell_type]
             order = 1
+        elif cell_type in _quadratric_vtk.keys():
+            cell_type = _quadratric_vtk[cell_type]
+            order = 2
         elif cell_type in _arbitrary_lagrange_vtk.keys():
             cell_type = _arbitrary_lagrange_vtk[cell_type]
             order = _cell_degree(cell_type, cells.shape[1])
+        else:
+            raise NotImplementedError(f"Cell type {cell_type} not supported in Pyvista backend.")
         perm = dolfinx.cpp.io.perm_vtk(dolfinx.mesh.to_type(cell_type), cells.shape[1])
         cells = cells[:, perm]
         lvar = int(basix.LagrangeVariant.equispaced)
