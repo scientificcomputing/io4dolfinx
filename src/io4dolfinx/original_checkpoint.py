@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import typing
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from .utils import (
 )
 
 __all__ = ["write_function_on_input_mesh", "write_mesh_input_order"]
+logger = logging.getLogger(__name__)
 
 
 def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
@@ -361,6 +363,10 @@ def write_function_on_input_mesh(
         backend_args: Arguments to backend
         backend: Choice of backend module
     """
+    logger.debug(
+        f"Writing function on input mesh to {filename} at time {time} with name {name or u.name}"
+    )
+    logger.debug(f"Using backend {backend} with arguments {backend_args} and mode {mode}")
     mesh = u.function_space.mesh
     function_data = create_function_data_on_original_mesh(u, name)
     fname = Path(filename)
@@ -400,6 +406,8 @@ def write_mesh_input_order(
         backend_args: Arguments to backend
         backend: Choice of backend module
     """
+    logger.debug(f"Writing mesh in input order to {filename} at time {time}")
+    logger.debug(f"Using backend {backend} with arguments {backend_args} and mode {mode}")
     mesh_data = create_original_mesh_data(mesh)
     fname = Path(filename)
 

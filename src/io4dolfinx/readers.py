@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import typing
 from pathlib import Path
@@ -30,6 +31,7 @@ from .utils import (
 )
 
 __all__ = ["read_mesh_from_legacy_h5", "read_function_from_legacy_h5", "read_point_data"]
+logger = logging.getLogger(__name__)
 
 
 def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.int64]:
@@ -164,6 +166,8 @@ def read_mesh_from_legacy_h5(
         max_facet_to_cell_links: Maximum number of cells a facet
             can be connected to.
     """
+    logger.debug(f"Reading mesh from {filename} at group {group}")
+    logger.debug(f"Using backend {backend} with max_facet_to_cell_links {max_facet_to_cell_links}")
     # Make sure we use the HDF5File and check that the file is present
     check_file_exists(filename)
 
@@ -240,7 +244,8 @@ def read_function_from_legacy_h5(
             the function is saved as a regular function (i.e with `HDF5File.write`)
         backend: The IO backend
     """
-
+    logger.debug(f"Reading function from {filename} at group {group}")
+    logger.debug(f"Using backend {backend} with group {group} and step {step}")
     # Make sure we use the HDF5File and check that the file is present
     filename = pathlib.Path(filename)
     if filename.suffix == ".xdmf":
@@ -402,6 +407,8 @@ def read_point_data(
         coordinate element (up to shape).
     """
 
+    logger.debug(f"Reading point data from {filename} with name {name} at time {time}")
+    logger.debug(f"Using backend {backend} with arguments {backend_args}")
     backend_cls = get_backend(backend)
     dataset, local_range_start = backend_cls.read_point_data(
         filename=filename, name=name, comm=mesh.comm, time=time, backend_args=backend_args
