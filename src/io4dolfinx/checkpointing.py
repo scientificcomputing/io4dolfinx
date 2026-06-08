@@ -139,6 +139,7 @@ def write_meshtags(
     meshtag_name: typing.Optional[str] = None,
     backend_args: dict[str, Any] | None = None,
     backend: str = "adios2",
+    on_input_mesh: bool = False,
 ):
     """
     Write meshtags associated with input mesh to file.
@@ -154,6 +155,8 @@ def write_meshtags(
         meshtag_name: Name of the meshtag. If None, the meshtag name is used.
         backend_args: Option to IO backend.
         backend: IO backend
+        on_input_mesh: If True, the meshtags are written with the node ordering
+            of the input mesh.
     """
     logger.debug(f"Writing meshtags to {filename} for meshtag {meshtag_name or meshtags.name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to write meshtags")
@@ -175,16 +178,20 @@ def write_meshtags(
         num_dofs_per_entity = dof_layout.num_entity_closure_dofs(dim)
     else:
         num_dofs_per_entity = len(dof_layout.entity_closure_dofs(dim, 0))
-
+    mesh.topology.create_connectivity(dim, mesh.topology.dim)
+    mesh.topology.create_connectivity(0, mesh.topology.dim)
     entities_to_geometry = dolfinx.cpp.mesh.entities_to_geometry(
         mesh._cpp_object, dim, local_tag_entities, False
     )
 
-    indices = (
-        mesh.geometry.index_map()
-        .local_to_global(entities_to_geometry.reshape(-1))
-        .reshape(entities_to_geometry.shape)
-    )
+    if on_input_mesh:
+        indices = mesh.geometry.input_global_indices[entities_to_geometry]
+    else:
+        indices = (
+            mesh.geometry.index_map()
+            .local_to_global(entities_to_geometry.reshape(-1))
+            .reshape(entities_to_geometry.shape)
+        )
     name = meshtag_name or meshtags.name
 
     tag_ct = dolfinx.cpp.mesh.cell_entity_type(mesh.topology.cell_type, dim, 0).name
