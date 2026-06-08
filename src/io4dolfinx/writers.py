@@ -37,7 +37,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
 
     # Convert local connectivity to globa l connectivity
     g_imap = mesh.geometry.index_map()
-    g_dmap = mesh.geometry.dofmap
+    g_dmap = compat.dofmap(mesh)
     num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
     cell_range = mesh.topology.index_map(mesh.topology.dim).local_range

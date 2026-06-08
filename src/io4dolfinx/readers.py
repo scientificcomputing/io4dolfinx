@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import typing
 from pathlib import Path
@@ -19,6 +20,7 @@ import numpy as np
 import numpy.typing as npt
 import ufl
 
+from . import compat
 from .backends import ReadMode, get_backend
 from .comm_helpers import send_dofs_and_recv_values
 from .utils import (
@@ -30,6 +32,7 @@ from .utils import (
 )
 
 __all__ = ["read_mesh_from_legacy_h5", "read_function_from_legacy_h5", "read_point_data"]
+logger = logging.getLogger(__name__)
 
 
 def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.int64]:
@@ -164,6 +167,8 @@ def read_mesh_from_legacy_h5(
         max_facet_to_cell_links: Maximum number of cells a facet
             can be connected to.
     """
+    logger.debug(f"Reading mesh from {filename} at group {group}")
+    logger.debug(f"Using backend {backend} with max_facet_to_cell_links {max_facet_to_cell_links}")
     # Make sure we use the HDF5File and check that the file is present
     check_file_exists(filename)
 
@@ -240,7 +245,8 @@ def read_function_from_legacy_h5(
             the function is saved as a regular function (i.e with `HDF5File.write`)
         backend: The IO backend
     """
-
+    logger.debug(f"Reading function from {filename} at group {group}")
+    logger.debug(f"Using backend {backend} with group {group} and step {step}")
     # Make sure we use the HDF5File and check that the file is present
     filename = pathlib.Path(filename)
     if filename.suffix == ".xdmf":
@@ -340,7 +346,7 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     """Reconstruct a vector space with the N components using the geometry dofmap to ensure
     a 1-1 mapping between mesh nodes and DOFs."""
     geom_imap = mesh.geometry.index_map()
-    geom_dofmap = mesh.geometry.dofmap
+    geom_dofmap = compat.dofmap(mesh)
     ufl_domain = mesh.ufl_domain()
     assert ufl_domain is not None
     sub_el = ufl_domain.ufl_coordinate_element().sub_elements[0]
@@ -402,6 +408,8 @@ def read_point_data(
         coordinate element (up to shape).
     """
 
+    logger.debug(f"Reading point data from {filename} with name {name} at time {time}")
+    logger.debug(f"Using backend {backend} with arguments {backend_args}")
     backend_cls = get_backend(backend)
     dataset, local_range_start = backend_cls.read_point_data(
         filename=filename, name=name, comm=mesh.comm, time=time, backend_args=backend_args
@@ -413,7 +421,7 @@ def read_point_data(
     V = create_geometry_function_space(mesh, num_components)
     uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
     # Assume that mesh is first order for now
-    x_dofmap = mesh.geometry.dofmap
+    x_dofmap = compat.dofmap(mesh)
     igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
 
     # This is dependent on how the data is read in. If distributed equally this is correct

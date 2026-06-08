@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import typing
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,8 @@ __all__ = [
     "write_attributes",
 ]
 
+logger = logging.getLogger(__name__)
+
 
 def write_attributes(
     filename: Path | str,
@@ -70,6 +73,8 @@ def write_attributes(
         backend_args: Arguments for backend, for instance file type.
         backend: What backend to use for writing.
     """
+    logger.debug(f"Writing attributes to {filename} for attribute {name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to write attributes")
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
     backend_cls.write_attributes(filename, comm, name, attributes, backend_args)
@@ -93,6 +98,8 @@ def read_attributes(
     Returns:
         The attributes
     """
+    logger.debug(f"Reading attributes from {filename} for attribute {name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read attributes")
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
     return backend_cls.read_attributes(filename, comm, name, backend_args)
@@ -117,6 +124,8 @@ def read_timestamps(
     Returns:
         The time-stamps
     """
+    logger.debug(f"Reading time-stamps from {filename} for function {function_name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read time-stamps")
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
@@ -149,6 +158,8 @@ def write_meshtags(
         on_input_mesh: If True, the meshtags are written with the node ordering
             of the input mesh.
     """
+    logger.debug(f"Writing meshtags to {filename} for meshtag {meshtag_name or meshtags.name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to write meshtags")
 
     # Extract data from meshtags (convert to global geometry node indices for each entity)
     tag_entities = meshtags.indices
@@ -219,6 +230,8 @@ def read_meshtags(
     Returns:
         The meshtags
     """
+    logger.debug(f"Reading meshtags from {filename} for meshtag {meshtag_name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read meshtags")
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
@@ -256,6 +269,12 @@ def read_function(
         time: Time-stamp associated with checkpoint
         name: If not provided, `u.name` is used to search through the input file for the function
     """
+    logger.debug(
+        f"Reading function checkpoint from {filename} for function {name or u.name} at time {time}"
+    )
+    logger.debug(
+        f"Using {backend} backend with arguments {backend_args} to read function checkpoint"
+    )
     check_file_exists(filename)
 
     mesh = u.function_space.mesh
@@ -263,7 +282,10 @@ def read_function(
     if name is None:
         name = u.name
 
-    # ----------------------Step 1---------------------------------
+    check_file_exists(filename)
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+
     # Compute index of input cells and get cell permutation
     num_owned_cells = mesh.topology.index_map(mesh.topology.dim).size_local
     input_cells = mesh.topology.original_cell_index[:num_owned_cells]
@@ -272,7 +294,6 @@ def read_function(
 
     # Compute mesh->input communicator
     # 1.1 Compute mesh->input communicator
-    backend_cls = get_backend(backend)
     owners: npt.NDArray[np.int32]
     if backend_cls.read_mode == ReadMode.serial:
         owners = np.zeros(input_cells, dtype=np.int32)
@@ -284,12 +305,6 @@ def read_function(
     # -------------------Step 2------------------------------------
     # Send and receive global cell index and cell perm
     inc_cells, inc_perms = send_and_recv_cell_perm(input_cells, cell_perm, owners, mesh.comm)
-
-    # -------------------Step 3-----------------------------------
-    # Read dofmap from file and compute dof owners
-    check_file_exists(filename)
-    backend_cls = get_backend(backend)
-    backend_args = backend_cls.get_default_backend_args(backend_args)
 
     input_dofmap = backend_cls.read_dofmap(filename, comm, name, backend_args)
 
@@ -410,6 +425,11 @@ def read_mesh(
     Returns:
         The distributed mesh
     """
+    logger.debug(f"Reading mesh from {filename}")
+    logger.debug(
+        f"Using {backend} backend with arguments {backend_args}, "
+        f"time {time} and read_from_partition {read_from_partition}"
+    )
     # Read in data in a distributed fashin
     check_file_exists(filename)
     backend_cls = get_backend(backend)
@@ -487,8 +507,13 @@ def write_mesh(
 
         store_partition_info: Store mesh partitioning (including ghosting) to file
     """
+    logger.debug(f"Writing mesh to {filename}")
+    logger.debug(f"Preparing mesh data for storage storing partition info: {store_partition_info}")
     mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
-
+    logger.debug(
+        f"Write mesh using {backend} backend, with arguments {backend_args}, "
+        f"mode {mode} and time {time}"
+    )
     _internal_mesh_writer(
         filename,
         mesh.comm,
@@ -521,6 +546,13 @@ def write_function(
         backend_args: Arguments to the IO backend.
         backend: The backend to use
     """
+    logger.debug(
+        f"Writing function checkpoint to {filename} for function {name or u.name} at time {time}"
+    )
+    logger.debug(
+        f"Extracting data from function and dofmap for storage using {backend} "
+        f"backend with arguments {backend_args}"
+    )
     dofmap = u.function_space.dofmap
     values = u.x.array
     mesh = u.function_space.mesh
@@ -594,6 +626,9 @@ def read_function_names(
     Returns:
         A list of function names.
     """
+    logger.debug(f"Reading function names from {filename}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read function names")
+    check_file_exists(filename)
     backend_cls = get_backend(backend)
     return backend_cls.read_function_names(filename, comm, backend_args=backend_args)
 
@@ -617,6 +652,7 @@ def write_point_data(
         backend_args: The backend arguments
         backend: Which backend to use.
     """
+    logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
     V = create_geometry_function_space(u.function_space.mesh, int(np.prod(u.ufl_shape)))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
@@ -627,6 +663,9 @@ def write_point_data(
     data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
     ad = ArrayData(
         name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Point"
+    )
+    logger.debug(
+        f"Using {backend} backend with arguments {backend_args} and mode {mode} to write point data"
     )
     backend_cls = get_backend(backend)
     return backend_cls.write_data(
@@ -652,6 +691,7 @@ def write_cell_data(
         mode: Append or write
         backend_args: The backend arguments
     """
+    logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
     V = dolfinx.fem.functionspace(u.function_space.mesh, ("DG", 0, u.ufl_shape))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
@@ -661,11 +701,14 @@ def write_cell_data(
     num_dofs_local = V.dofmap.index_map.size_local
     data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
 
-    backend_cls = get_backend(backend)
     ad = ArrayData(
         name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Cell"
     )
+    logger.debug(
+        f"Using {backend} backend with arguments {backend_args} and mode {mode} to write cell data"
+    )
     backend_cls = get_backend(backend)
+
     return backend_cls.write_data(
         filename, comm=comm, mode=mode, time=time, array_data=ad, backend_args=backend_args
     )
