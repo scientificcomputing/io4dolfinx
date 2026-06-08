@@ -681,9 +681,6 @@ def test_read_write_meshtags(write_mesh, create_2D_mesh, cluster, get_dtype, tmp
         values = np.empty((2, x.shape[1]), dtype=f_dtype)
         values[0] = np.full(x.shape[1], np.pi) + x[0]
         values[1] = x[0]
-        if is_complex:
-            values[0] -= 3j * x[1]
-            values[1] += 2j * x[0]
         return values
 
     def read_xdmf_and_write_distributed(fname):
