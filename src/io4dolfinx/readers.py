@@ -20,6 +20,7 @@ import numpy as np
 import numpy.typing as npt
 import ufl
 
+from . import compat
 from .backends import ReadMode, get_backend
 from .comm_helpers import send_dofs_and_recv_values
 from .utils import (
@@ -345,7 +346,7 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     """Reconstruct a vector space with the N components using the geometry dofmap to ensure
     a 1-1 mapping between mesh nodes and DOFs."""
     geom_imap = mesh.geometry.index_map()
-    geom_dofmap = mesh.geometry.dofmap
+    geom_dofmap = compat.dofmap(mesh)
     ufl_domain = mesh.ufl_domain()
     assert ufl_domain is not None
     sub_el = ufl_domain.ufl_coordinate_element().sub_elements[0]
@@ -420,7 +421,7 @@ def read_point_data(
     V = create_geometry_function_space(mesh, num_components)
     uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
     # Assume that mesh is first order for now
-    x_dofmap = mesh.geometry.dofmap
+    x_dofmap = compat.dofmap(mesh)
     igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
 
     # This is dependent on how the data is read in. If distributed equally this is correct

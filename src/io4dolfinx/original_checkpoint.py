@@ -90,8 +90,8 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
 
     # Get original node index for all nodes (including ghosts) and convert dofmap to these indices
     original_node_index = mesh.geometry.input_global_indices
-    _, num_nodes_per_cell = mesh.geometry.dofmap.shape
-    local_geometry_dofmap = mesh.geometry.dofmap[:num_owned_cells, :]
+    _, num_nodes_per_cell = compat.dofmap(mesh).shape
+    local_geometry_dofmap = compat.dofmap(mesh)[:num_owned_cells, :]
     global_geometry_dofmap = original_node_index[local_geometry_dofmap.reshape(-1)]
 
     # Unroll insert position for geometry dofmap
