@@ -13,7 +13,7 @@ jobs:
   create-dolfin-data:
     env:
       data_dir: "legacy"
-  
+
     runs-on: "ubuntu-latest"
     container: ghcr.io/scientificcomputing/fenics:2024-02-19
     steps:

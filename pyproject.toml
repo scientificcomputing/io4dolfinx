@@ -6,7 +6,7 @@ name = "io4dolfinx"
 version = "1.2.0"
 description = "Checkpointing functionality for DOLFINx meshes/functions with ADIOS2"
 authors = [
-    { name = "Jørgen S. Dokken", email = "dokken@simula.no" }, 
+    { name = "Jørgen S. Dokken", email = "dokken@simula.no" },
     { name = "Henrik N.T. Finsberg", email = "henriknf@simula.no" }
 ]
 license = { file = "LICENSE" }
@@ -15,11 +15,11 @@ dependencies = ["fenics-dolfinx>=0.10.0", "packaging"]
 
 [project.optional-dependencies]
 test = [
-    "pytest", 
-    "coverage", 
-    "ipyparallel", 
-    "io4dolfinx[h5py]", 
-    "io4dolfinx[pyvista]", 
+    "pytest",
+    "coverage",
+    "ipyparallel",
+    "io4dolfinx[h5py]",
+    "io4dolfinx[pyvista]",
     "io4dolfinx[xdmf]"
 ]
 dev = ["pdbpp", "ipython", "mypy", "ruff"]

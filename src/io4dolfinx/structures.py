@@ -1,3 +1,4 @@
+"""Internal library classes for storing mesh and function data"""
 # Copyright (C) 2024 Jørgen Schartum Dokken
 #
 # This file is part of io4dolfinx
@@ -12,7 +13,6 @@ import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import AdjacencyList
 
-"""Internal library classes for storing mesh and function data"""
 __all__ = ["MeshData", "FunctionData", "ReadMeshData", "MeshTagsData"]
 
 
