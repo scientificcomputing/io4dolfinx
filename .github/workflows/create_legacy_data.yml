@@ -17,7 +17,7 @@ jobs:
     runs-on: "ubuntu-latest"
     container: ghcr.io/scientificcomputing/fenics:2024-02-19
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Create datasets
       run: python3 ./tests/create_legacy_data.py --output-dir=$data_dir
