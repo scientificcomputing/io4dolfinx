@@ -8,7 +8,7 @@
 
 from importlib.metadata import metadata
 
-from .backends import FileMode, get_backend
+from .backends import FileMode, get_backend, set_default_backend
 from .checkpointing import (
     read_attributes,
     read_function,
@@ -55,12 +55,12 @@ __all__ = [
     "write_function_on_input_mesh",
     "write_mesh_input_order",
     "write_attributes",
-    "write_data",
     "read_attributes",
     "read_function_names",
     "read_point_data",
     "read_timestamps",
     "get_backend",
+    "set_default_backend",
     "write_cell_data",
     "write_point_data",
     "reconstruct_mesh",

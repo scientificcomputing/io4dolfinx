@@ -346,7 +346,7 @@ def write_function_on_input_mesh(
     name: typing.Optional[str] = None,
     mode: FileMode = FileMode.append,
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Write function checkpoint (to be read with the input mesh).
@@ -388,7 +388,7 @@ def write_mesh_input_order(
     mesh: dolfinx.mesh.Mesh,
     time: float = 0.0,
     mode: FileMode = FileMode.write,
-    backend: str = "adios2",
+    backend: str | None = None,
     backend_args: dict[str, typing.Any] | None = None,
 ):
     """

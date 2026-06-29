@@ -11,7 +11,18 @@ import numpy.typing as npt
 
 from ..structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 
-__all__ = ["FileMode", "IOBackend", "get_backend"]
+__all__ = ["FileMode", "IOBackend", "get_backend", "set_default_backend"]
+
+_DEFAULT_BACKEND = "adios2"
+
+
+def set_default_backend(backend: str):
+    """Set the global default backend for io4dolfinx."""
+    global _DEFAULT_BACKEND
+    if backend not in BUILTIN_BAKENDS:
+        # Optional: You can choose to warn or raise an error if it's not a known backend
+        pass
+    _DEFAULT_BACKEND = backend
 
 
 class ReadMode(Enum):
@@ -404,7 +415,7 @@ class IOBackend(Protocol):
         ...
 
 
-def get_backend(backend: str) -> IOBackend:
+def get_backend(backend: str | None = None) -> IOBackend:
     """Get backend class from backend name.
 
     Args:
@@ -413,6 +424,9 @@ def get_backend(backend: str) -> IOBackend:
     Returns:
         Backend class
     """
+    if backend is None:
+        backend = _DEFAULT_BACKEND
+
     if backend == "h5py":
         from .h5py import backend as H5PYInterface
 
