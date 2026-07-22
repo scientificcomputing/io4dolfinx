@@ -27,6 +27,11 @@ def set_default_backend(backend: str):
     _DEFAULT_BACKEND = backend
 
 
+def get_default_backend():
+    """Get the global default backend for io4dolfinx."""
+    return _DEFAULT_BACKEND
+
+
 class ReadMode(Enum):
     serial = 10  # This means that all data is read in on root rank
 
