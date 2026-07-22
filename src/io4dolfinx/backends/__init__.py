@@ -20,8 +20,10 @@ def set_default_backend(backend: str):
     """Set the global default backend for io4dolfinx."""
     global _DEFAULT_BACKEND
     if backend not in BUILTIN_BAKENDS:
-        # Optional: You can choose to warn or raise an error if it's not a known backend
-        pass
+        try:
+            get_backend(backend)
+        except ImportError as e:
+            raise ImportError(f"Backend {backend} not found.") from e
     _DEFAULT_BACKEND = backend
 
 
