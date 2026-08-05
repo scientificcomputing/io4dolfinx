@@ -62,7 +62,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
             consensus_tag = 1202
             cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks(consensus_tag)
         else:
-            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks()
+            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks()  # type: ignore[call-arg]
         num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
         cell_offsets = cell_map.offsets[: num_cells_local + 1]
         if cell_offsets[-1] == 0:
@@ -72,7 +72,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
 
         # Compute adjacency with current process as first entry
         ownership_array = np.full(num_cells_local + cell_offsets[-1], -1, dtype=np.int32)
-        ownership_offset = cell_offsets + np.arange(len(cell_offsets), dtype=np.int32)
+        ownership_offset = (cell_offsets + np.arange(len(cell_offsets))).astype(np.int32)
         ownership_array[ownership_offset[:-1]] = mesh.comm.rank
         insert_position = np.flatnonzero(ownership_array == -1)
         ownership_array[insert_position] = cell_array
