@@ -35,7 +35,7 @@ __all__ = ["read_mesh_from_legacy_h5", "read_function_from_legacy_h5", "read_poi
 logger = logging.getLogger(__name__)
 
 
-def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.int64]:
+def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int | np.int64) -> npt.NDArray[np.int64]:
     """
     Map xxxyyyzzz to xyzxyz
     """
@@ -67,10 +67,10 @@ def send_cells_and_receive_dofmap_index(
     output_owners: npt.NDArray[np.int32],
     input_cells: npt.NDArray[np.int64],
     dofmap_pos: npt.NDArray[np.int32],
-    num_cells_global: np.int64,
+    num_cells_global: int | np.int64,
     dofmap_path: str,
     xdofmap_path: str,
-    bs: int,
+    bs: int | np.int64,
     backend: str,
 ) -> npt.NDArray[np.int64]:
     """
@@ -360,6 +360,12 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
         ufl_el = basix.ufl.blocked_element(sub_el, shape=(N,))
         value_shape = (N,)
 
+    _fe_constructor: (
+        type[dolfinx.cpp.fem.FiniteElement_float32] | type[dolfinx.cpp.fem.FiniteElement_float64]
+    )
+    _fem_constructor: (
+        type[dolfinx.cpp.fem.FunctionSpace_float32] | type[dolfinx.cpp.fem.FunctionSpace_float64]
+    )
     if ufl_el.dtype == np.float32:
         _fe_constructor = dolfinx.cpp.fem.FiniteElement_float32
         _fem_constructor = dolfinx.cpp.fem.FunctionSpace_float32
@@ -371,15 +377,15 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     try:
         cpp_el = _fe_constructor(ufl_el.basix_element._e, block_shape=value_shape, symmetric=False)
     except TypeError:
-        cpp_el = _fe_constructor(ufl_el.basix_element._e, block_size=N, symmetric=False)
+        cpp_el = _fe_constructor(ufl_el.basix_element._e, block_size=N, symmetric=False)  # type: ignore[call-overload]
     dof_layout = dolfinx.cpp.fem.create_element_dof_layout(cpp_el, [])
     cpp_dofmap = dolfinx.cpp.fem.DofMap(dof_layout, geom_imap, N, adj_list, N)
 
     # Create function space
     try:
-        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap)
+        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap)  # type: ignore[arg-type]
     except TypeError:
-        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap, value_shape=value_shape)
+        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap, value_shape=value_shape)  # type: ignore[call-overload]
 
     return dolfinx.fem.FunctionSpace(mesh, ufl_el, cpp_space)
 

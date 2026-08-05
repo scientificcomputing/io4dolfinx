@@ -111,7 +111,7 @@ def unroll_insert_position(
     return unrolled_ip
 
 
-def compute_local_range(comm: MPI.Intracomm, N: np.int64):
+def compute_local_range(comm: MPI.Intracomm, N: int | np.int64):
     """
     Divide a set of `N` objects into `M` partitions, where `M` is
     the size of the MPI communicator `comm`.
@@ -133,7 +133,7 @@ def compute_local_range(comm: MPI.Intracomm, N: np.int64):
 
 
 def index_owner(
-    comm: MPI.Intracomm, indices: npt.NDArray[np.int64], N: np.int64
+    comm: MPI.Intracomm, indices: npt.NDArray[np.int64], N: int | np.int64
 ) -> npt.NDArray[np.int32]:
     """
     Find which rank (local to comm) which owns an `index`, given that
@@ -250,11 +250,15 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
     # Could use create_geometry here when things are fixed
     geom = dolfinx.mesh.Geometry(
         type(mesh.geometry._cpp_object)(
-            geom_imap, geom_dofmap, coordinate_element._cpp_object, x, original_input_indices
+            geom_imap,
+            geom_dofmap,
+            coordinate_element._cpp_object,  # type: ignore[arg-type]
+            x,
+            original_input_indices,
         )
     )
 
     # Create new mesh
     new_top = mesh.topology
-    cpp_mesh = type(mesh._cpp_object)(mesh.comm, new_top._cpp_object, geom._cpp_object)
+    cpp_mesh = type(mesh._cpp_object)(mesh.comm, new_top._cpp_object, geom._cpp_object)  # type: ignore[arg-type]
     return dolfinx.mesh.Mesh(cpp_mesh, ufl.Mesh(new_c_el))
