@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mpi4py import MPI
 
@@ -18,7 +18,6 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 import ufl
-from packaging.version import Version
 
 from . import compat
 from .backends import FileMode, ReadMode, get_backend
@@ -453,21 +452,36 @@ def read_mesh(
         dtype=dist_in_data.x.dtype,
     )
     domain = ufl.Mesh(element)
+    PartitionerType = Callable[
+        [MPI.Comm, int, list[dolfinx.mesh.CellType], list[npt.NDArray[np.int64]]],
+        dolfinx.cpp.graph.AdjacencyList_int32,
+    ]
+    partitioner: PartitionerType
     if (partition_graph := dist_in_data.partition_graph) is not None:
 
-        def partitioner(comm: MPI.Intracomm, n, m, topo):
-            assert len(topo[0]) % (len(partition_graph.offsets) - 1) == 0
-            if Version(dolfinx.__version__) > Version("0.9.0"):
-                return partition_graph._cpp_object
+        def _custom_partitioner(
+            comm: MPI.Comm,
+            nparts: int,
+            cell_types: list[dolfinx.mesh.CellType],
+            local_graph: list[npt.NDArray[np.int64]],
+        ) -> dolfinx.cpp.graph.AdjacencyList_int32:
+            assert len(local_graph[0]) % (len(partition_graph.offsets) - 1) == 0
+            if hasattr(partition_graph, "_cpp_object"):
+                cpp_obj = partition_graph._cpp_object
+                assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
+                return cpp_obj
             else:
+                assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
                 return partition_graph
+
+        partitioner = _custom_partitioner
     else:
         try:
             partitioner = dolfinx.cpp.mesh.create_cell_partitioner(
                 ghost_mode, max_facet_to_cell_links=max_facet_to_cell_links
             )
         except TypeError:
-            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)
+            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)  # type: ignore[call-overload]
 
         # Should change to the commented code below when we require python
         # minimum version to be >=3.12 see https://github.com/python/cpython/pull/116198

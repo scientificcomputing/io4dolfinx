@@ -856,6 +856,8 @@ def write_meshtags(
         del offset_data
 
         # Permute and store topology data
+        if data.cell_type is None:
+            raise ValueError("Cannot write meshtags without cell-type information")
         dx_ct = dolfinx.mesh.to_type(data.cell_type)
         top_perm = np.argsort(dolfinx.cpp.io.perm_vtk(dx_ct, num_dofs_per_cell))
         topology_data = data.indices[:, top_perm].flatten()
