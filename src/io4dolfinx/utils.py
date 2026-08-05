@@ -10,6 +10,7 @@ Vectorized numpy operations used internally in io4dolfinx
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 from mpi4py import MPI
@@ -216,49 +217,67 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
         The new mesh
 
     """
-    # Extract cell properties
-    ud = mesh.ufl_domain()
-    assert ud is not None
-    c_el = ud.ufl_coordinate_element()
-    family = c_el.family_name
-    lvar = c_el.lagrange_variant
-    ct = c_el.cell_type
-
-    # Create new UFL element
-    new_c_el = basix.ufl.element(
-        family,
-        ct,
-        coordinate_element_degree,
-        shape=(mesh.geometry.dim,),
-        lagrange_variant=lvar,
-        dtype=mesh.geometry.x.dtype,
+    warnings.warn(
+        "reconstruct_mesh is deprecated and will be removed in a future release. "
+        + "Use dolfinx.fem.interpolate_geometry instead, available from DOLFINx>=0.11.",
+        category=DeprecationWarning,
+        stacklevel=2,
     )
+    if not hasattr(dolfinx.fem, "interpolate_geometry"):
+        # Extract cell properties
+        ud = mesh.ufl_domain()
+        assert ud is not None
+        c_el = ud.ufl_coordinate_element()
+        family = c_el.family_name
+        lvar = c_el.lagrange_variant
+        ct = c_el.cell_type
 
-    # Extract new node coordinates
-    V_tmp = dolfinx.fem.functionspace(mesh, new_c_el)
-    gdim = mesh.geometry.dim
-    x = V_tmp.tabulate_dof_coordinates()[:, :gdim]
-
-    # Create new geoemtry
-    geom_imap = V_tmp.dofmap.index_map
-    geom_dofmap = V_tmp.dofmap.list
-    num_nodes_local = geom_imap.size_local + geom_imap.num_ghosts
-    original_input_indices = geom_imap.local_to_global(np.arange(num_nodes_local, dtype=np.int32))
-    coordinate_element = dolfinx.fem.coordinate_element(
-        mesh.topology.cell_type, coordinate_element_degree, lvar, dtype=mesh.geometry.x.dtype
-    )
-    # Could use create_geometry here when things are fixed
-    geom = dolfinx.mesh.Geometry(
-        type(mesh.geometry._cpp_object)(
-            geom_imap,
-            geom_dofmap,
-            coordinate_element._cpp_object,  # type: ignore[arg-type]
-            x,
-            original_input_indices,
+        # Create new UFL element
+        new_c_el = basix.ufl.element(
+            family,
+            ct,
+            coordinate_element_degree,
+            shape=(mesh.geometry.dim,),
+            lagrange_variant=lvar,
+            dtype=mesh.geometry.x.dtype,
         )
-    )
 
-    # Create new mesh
-    new_top = mesh.topology
-    cpp_mesh = type(mesh._cpp_object)(mesh.comm, new_top._cpp_object, geom._cpp_object)  # type: ignore[arg-type]
-    return dolfinx.mesh.Mesh(cpp_mesh, ufl.Mesh(new_c_el))
+        # Extract new node coordinates
+        V_tmp = dolfinx.fem.functionspace(mesh, new_c_el)
+        gdim = mesh.geometry.dim
+        x = V_tmp.tabulate_dof_coordinates()[:, :gdim]
+
+        # Create new geoemtry
+        geom_imap = V_tmp.dofmap.index_map
+        geom_dofmap = V_tmp.dofmap.list
+        num_nodes_local = geom_imap.size_local + geom_imap.num_ghosts
+        original_input_indices = geom_imap.local_to_global(
+            np.arange(num_nodes_local, dtype=np.int32)
+        )
+        coordinate_element = dolfinx.fem.coordinate_element(
+            mesh.topology.cell_type, coordinate_element_degree, lvar, dtype=mesh.geometry.x.dtype
+        )
+        # Could use create_geometry here when things are fixed
+        geom = dolfinx.mesh.Geometry(
+            type(mesh.geometry._cpp_object)(
+                geom_imap,
+                geom_dofmap,
+                coordinate_element._cpp_object,  # type: ignore[arg-type]
+                x,
+                original_input_indices,
+            )
+        )
+
+        # Create new mesh
+        new_top = mesh.topology
+        cpp_mesh = type(mesh._cpp_object)(mesh.comm, new_top._cpp_object, geom._cpp_object)  # type: ignore[arg-type]
+        return dolfinx.mesh.Mesh(cpp_mesh, ufl.Mesh(new_c_el))
+    else:
+        # Use the new interpolate_geometry function
+        cmap = dolfinx.fem.coordinate_element(
+            mesh.topology.cell_type,
+            coordinate_element_degree,
+            dtype=mesh.geometry.x.dtype,
+            variant=mesh.geometry.cmap.variant,
+        )
+        return dolfinx.fem.interpolate_geometry(mesh, cmap)
