@@ -60,7 +60,7 @@ def write_attributes(
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """Write attributes to file.
 
@@ -84,7 +84,7 @@ def read_attributes(
     comm: MPI.Intracomm,
     name: str,
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ) -> dict[str, typing.Any]:
     """Read attributes from file.
 
@@ -109,7 +109,7 @@ def read_timestamps(
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
     """
     Read time-stamps from a checkpoint file.
@@ -137,7 +137,7 @@ def write_meshtags(
     meshtags: dolfinx.mesh.MeshTags,
     meshtag_name: typing.Optional[str] = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
     on_input_mesh: bool = False,
 ):
     """
@@ -216,7 +216,7 @@ def read_meshtags(
     mesh: dolfinx.mesh.Mesh,
     meshtag_name: str,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ) -> dolfinx.mesh.MeshTags:
     """
     Read meshtags from file and return a :class:`dolfinx.mesh.MeshTags` object.
@@ -257,7 +257,7 @@ def read_function(
     time: float = 0.0,
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Read checkpoint from file and fill it into `u`.
@@ -405,7 +405,7 @@ def read_mesh(
     time: float | str | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
     max_facet_to_cell_links: int = 2,
 ) -> dolfinx.mesh.Mesh:
     """
@@ -425,10 +425,8 @@ def read_mesh(
         The distributed mesh
     """
     logger.debug(f"Reading mesh from {filename}")
-    logger.debug(
-        f"Using {backend} backend with arguments {backend_args}, "
-        f"time {time} and read_from_partition {read_from_partition}"
-    )
+    logger.debug(f"Using {backend} backend with arguments {backend_args}")
+    logger.debug(f"Time {time} and read_from_partition {read_from_partition}")
     # Read in data in a distributed fashin
     check_file_exists(filename)
     backend_cls = get_backend(backend)
@@ -510,7 +508,7 @@ def write_mesh(
     time: float = 0.0,
     store_partition_info: bool = False,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Write a mesh to file.
@@ -524,10 +522,8 @@ def write_mesh(
     logger.debug(f"Writing mesh to {filename}")
     logger.debug(f"Preparing mesh data for storage storing partition info: {store_partition_info}")
     mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
-    logger.debug(
-        f"Write mesh using {backend} backend, with arguments {backend_args}, "
-        f"mode {mode} and time {time}"
-    )
+    logger.debug(f"Write mesh using {backend} backend, with arguments {backend_args}")
+    logger.debug(f"Mode {mode} and time {time}")
     _internal_mesh_writer(
         filename,
         mesh.comm,
@@ -546,7 +542,7 @@ def write_function(
     mode: FileMode = FileMode.append,
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Write function checkpoint to file.
@@ -560,13 +556,9 @@ def write_function(
         backend_args: Arguments to the IO backend.
         backend: The backend to use
     """
-    logger.debug(
-        f"Writing function checkpoint to {filename} for function {name or u.name} at time {time}"
-    )
-    logger.debug(
-        f"Extracting data from function and dofmap for storage using {backend} "
-        f"backend with arguments {backend_args}"
-    )
+    n = u.name if name is None else name
+    logger.debug(f"Writing function checkpoint to {filename} for function {n} at time {time}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args}")
     dofmap = u.function_space.dofmap
     values = u.x.array
     mesh = u.function_space.mesh
