@@ -24,7 +24,7 @@ If you prefer to use a different backend (such as `h5py`) across your entire app
 
 ## Usage
 
-Use the `io4dolfinx.set_default_backend` function at the start of your script to change the backend globally. 
+Use the `io4dolfinx.set_default_backend` function at the start of your script to change the backend globally.
 
 ```python
 import dolfinx

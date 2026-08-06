@@ -1,3 +1,7 @@
+"""
+Helpers for sending and receiving values for checkpointing
+"""
+
 from __future__ import annotations
 
 from mpi4py import MPI
@@ -13,9 +17,6 @@ __all__ = [
     "send_dofs_and_recv_values",
     "numpy_to_mpi",
 ]
-"""
-Helpers for sending and receiving values for checkpointing
-"""
 
 numpy_to_mpi = {
     np.float64: MPI.DOUBLE,
