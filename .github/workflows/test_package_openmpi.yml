@@ -39,12 +39,12 @@ jobs:
 
     strategy:
       matrix:
-        adios2: ["v2.10.2", "v2.11.0"] # "default",  Removed as HDF5 2.0 in dev env is broken with adios2<2.11
+        adios2: ["v2.10.2", "v2.11.0", "v2.12.1"] # "default",  Removed as HDF5 2.0 in dev env is broken with adios2<2.11
         container:
           - ghcr.io/fenics/test-env:current-openmpi
           - ghcr.io/fenics/test-env:current-mpich
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Update pip
         run: python3 -m pip install  --upgrade pip

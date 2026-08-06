@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mpi4py import MPI
 
@@ -18,7 +18,6 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 import ufl
-from packaging.version import Version
 
 from . import compat
 from .backends import FileMode, ReadMode, get_backend
@@ -61,7 +60,7 @@ def write_attributes(
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """Write attributes to file.
 
@@ -85,7 +84,7 @@ def read_attributes(
     comm: MPI.Intracomm,
     name: str,
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ) -> dict[str, typing.Any]:
     """Read attributes from file.
 
@@ -110,7 +109,7 @@ def read_timestamps(
     comm: MPI.Intracomm,
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
     """
     Read time-stamps from a checkpoint file.
@@ -138,7 +137,7 @@ def write_meshtags(
     meshtags: dolfinx.mesh.MeshTags,
     meshtag_name: typing.Optional[str] = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
     on_input_mesh: bool = False,
 ):
     """
@@ -217,7 +216,7 @@ def read_meshtags(
     mesh: dolfinx.mesh.Mesh,
     meshtag_name: str,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ) -> dolfinx.mesh.MeshTags:
     """
     Read meshtags from file and return a :class:`dolfinx.mesh.MeshTags` object.
@@ -258,7 +257,7 @@ def read_function(
     time: float = 0.0,
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Read checkpoint from file and fill it into `u`.
@@ -406,7 +405,7 @@ def read_mesh(
     time: float | str | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
     max_facet_to_cell_links: int = 2,
 ) -> dolfinx.mesh.Mesh:
     """
@@ -426,10 +425,8 @@ def read_mesh(
         The distributed mesh
     """
     logger.debug(f"Reading mesh from {filename}")
-    logger.debug(
-        f"Using {backend} backend with arguments {backend_args}, "
-        f"time {time} and read_from_partition {read_from_partition}"
-    )
+    logger.debug(f"Using {backend} backend with arguments {backend_args}")
+    logger.debug(f"Time {time} and read_from_partition {read_from_partition}")
     # Read in data in a distributed fashin
     check_file_exists(filename)
     backend_cls = get_backend(backend)
@@ -455,21 +452,36 @@ def read_mesh(
         dtype=dist_in_data.x.dtype,
     )
     domain = ufl.Mesh(element)
+    PartitionerType = Callable[
+        [MPI.Comm, int, list[dolfinx.mesh.CellType], list[npt.NDArray[np.int64]]],
+        dolfinx.cpp.graph.AdjacencyList_int32,
+    ]
+    partitioner: PartitionerType
     if (partition_graph := dist_in_data.partition_graph) is not None:
 
-        def partitioner(comm: MPI.Intracomm, n, m, topo):
-            assert len(topo[0]) % (len(partition_graph.offsets) - 1) == 0
-            if Version(dolfinx.__version__) > Version("0.9.0"):
-                return partition_graph._cpp_object
+        def _custom_partitioner(
+            comm: MPI.Comm,
+            nparts: int,
+            cell_types: list[dolfinx.mesh.CellType],
+            local_graph: list[npt.NDArray[np.int64]],
+        ) -> dolfinx.cpp.graph.AdjacencyList_int32:
+            assert len(local_graph[0]) % (len(partition_graph.offsets) - 1) == 0
+            if hasattr(partition_graph, "_cpp_object"):
+                cpp_obj = partition_graph._cpp_object
+                assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
+                return cpp_obj
             else:
+                assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
                 return partition_graph
+
+        partitioner = _custom_partitioner
     else:
         try:
             partitioner = dolfinx.cpp.mesh.create_cell_partitioner(
                 ghost_mode, max_facet_to_cell_links=max_facet_to_cell_links
             )
         except TypeError:
-            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)
+            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)  # type: ignore[call-overload]
 
         # Should change to the commented code below when we require python
         # minimum version to be >=3.12 see https://github.com/python/cpython/pull/116198
@@ -496,7 +508,7 @@ def write_mesh(
     time: float = 0.0,
     store_partition_info: bool = False,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Write a mesh to file.
@@ -510,10 +522,8 @@ def write_mesh(
     logger.debug(f"Writing mesh to {filename}")
     logger.debug(f"Preparing mesh data for storage storing partition info: {store_partition_info}")
     mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
-    logger.debug(
-        f"Write mesh using {backend} backend, with arguments {backend_args}, "
-        f"mode {mode} and time {time}"
-    )
+    logger.debug(f"Write mesh using {backend} backend, with arguments {backend_args}")
+    logger.debug(f"Mode {mode} and time {time}")
     _internal_mesh_writer(
         filename,
         mesh.comm,
@@ -532,7 +542,7 @@ def write_function(
     mode: FileMode = FileMode.append,
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Write function checkpoint to file.
@@ -546,13 +556,9 @@ def write_function(
         backend_args: Arguments to the IO backend.
         backend: The backend to use
     """
-    logger.debug(
-        f"Writing function checkpoint to {filename} for function {name or u.name} at time {time}"
-    )
-    logger.debug(
-        f"Extracting data from function and dofmap for storage using {backend} "
-        f"backend with arguments {backend_args}"
-    )
+    n = u.name if name is None else name
+    logger.debug(f"Writing function checkpoint to {filename} for function {n} at time {time}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args}")
     dofmap = u.function_space.dofmap
     values = u.x.array
     mesh = u.function_space.mesh

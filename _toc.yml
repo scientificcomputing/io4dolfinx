@@ -7,6 +7,7 @@ parts:
     - file: "docs/installation"
     - file: "docs/quickstart"
     - file: "docs/adding_backend"
+    - file: "docs/default_backend"
     - file: "docs/migration_guide"
     - file: "docs/testing.md"
     - file: "docs/reading_legacy_data"

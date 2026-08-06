@@ -89,13 +89,22 @@ import dolfinx
 from io4dolfinx.structures import MeshData, FunctionData, MeshTagsData, ReadMeshData
 from io4dolfinx.backends import FileMode
 
+
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
     return arguments or {}
 
-def write_mesh(filename: Path | str, comm: MPI.Intracomm, mesh: MeshData,
-               backend_args: dict[str, Any] | None, mode: FileMode, time: float):
+
+def write_mesh(
+    filename: Path | str,
+    comm: MPI.Intracomm,
+    mesh: MeshData,
+    backend_args: dict[str, Any] | None,
+    mode: FileMode,
+    time: float,
+):
     # Implementation here
     pass
+
 
 # ... Implement all other methods defined in IOBackend ...
 ```

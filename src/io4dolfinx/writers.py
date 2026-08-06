@@ -62,7 +62,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
             consensus_tag = 1202
             cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks(consensus_tag)
         else:
-            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks()
+            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks()  # type: ignore[call-arg]
         num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
         cell_offsets = cell_map.offsets[: num_cells_local + 1]
         if cell_offsets[-1] == 0:
@@ -72,7 +72,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
 
         # Compute adjacency with current process as first entry
         ownership_array = np.full(num_cells_local + cell_offsets[-1], -1, dtype=np.int32)
-        ownership_offset = cell_offsets + np.arange(len(cell_offsets), dtype=np.int32)
+        ownership_offset = (cell_offsets + np.arange(len(cell_offsets))).astype(np.int32)
         ownership_array[ownership_offset[:-1]] = mesh.comm.rank
         insert_position = np.flatnonzero(ownership_array == -1)
         ownership_array[insert_position] = cell_array
@@ -114,18 +114,19 @@ def write_mesh(
     time: float = 0.0,
     mode: FileMode = FileMode.write,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
-    Write a mesh to file using ADIOS2
+    Write a mesh to file
 
     Args:
-        comm: MPI communicator used in storage
-        mesh: Internal data structure for the mesh data to save to file
         filename: Path to file to write to
-        engine: ADIOS2 engine to use
-        mode: ADIOS2 mode to use (write or append)
-        io_name: Internal name used for the ADIOS IO object
+        comm: MPI communicator used in storage
+        mesh_data: Internal data structure for the mesh data to save to file
+        time: Time stamp associated with mesh
+        mode: File mode to use (write or append)
+        backend_args: Arguments for the backend
+        backend: Backend to use
     """
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
@@ -139,19 +140,19 @@ def write_function(
     time: float = 0.0,
     mode: FileMode = FileMode.append,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
-    Write a function to file using ADIOS2
+    Write a function to file
 
     Args:
+        filename: Path to file to write to
         comm: MPI communicator used in storage
         u: Internal data structure for the function data to save to file
-        filename: Path to file to write to
-        engine: ADIOS2 engine to use
-        mode: ADIOS2 mode to use (write or append)
         time: Time stamp associated with function
-        io_name: Internal name used for the ADIOS IO object
+        mode: File mode to use (write or append)
+        backend_args: Arguments for the backend
+        backend: Backend to use
     """
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
