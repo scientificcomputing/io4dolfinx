@@ -15,7 +15,7 @@ jobs:
       adios4dolfinx_version: "0.7.1"
     runs-on: "ubuntu-latest"
     container: ghcr.io/fenics/dolfinx/dolfinx:v0.7.3
-  
+
     steps:
       - uses: actions/checkout@v7
 

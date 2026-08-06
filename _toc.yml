@@ -11,7 +11,7 @@ parts:
     - file: "docs/migration_guide"
     - file: "docs/testing.md"
     - file: "docs/reading_legacy_data"
-    
+
   - caption: Introduction to IPyParallel
     chapters:
     - file: "docs/ipyparallel_intro"

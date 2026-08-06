@@ -171,5 +171,3 @@ the `backend` argument to most functions.
 
 
 5.  **`xdmf`**: Basic support for reading XDMF data.
-
-
