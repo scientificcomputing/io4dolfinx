@@ -23,7 +23,7 @@ def snapshot_checkpoint(
     file: Path,
     mode: FileMode,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """Read or write a snapshot checkpoint
 
