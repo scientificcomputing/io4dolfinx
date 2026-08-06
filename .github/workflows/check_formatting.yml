@@ -20,7 +20,8 @@ on:
     branches:
       - main
   schedule:
-    - cron: "0 8 * * *"
+    - cron: "0 8 * * 1" # every Monday at 8:00 UTC
+
 
 env:
   DEB_PYTHON_INSTALL_LAYOUT: deb_system
