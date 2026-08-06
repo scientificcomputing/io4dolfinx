@@ -308,7 +308,7 @@ def read_mesh_data(
                 raise ValueError(f"No blocks found in {filename}")
 
             if degree == 1:
-                perm = dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1])
+                perm = np.array(dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1]), dtype=np.int32)
             elif cell_type == dolfinx.mesh.CellType.hexahedron and degree == 2:
                 # Ordering from Fig 4.14 of: https://sandialabs.github.io/seacas-docs/exodusII-new.pdf
                 dolfinx_to_exodus = np.array(
@@ -342,7 +342,7 @@ def read_mesh_data(
                         25,
                     ]
                 )
-                perm = np.argsort(dolfinx_to_exodus)
+                perm = np.argsort(dolfinx_to_exodus).astype(np.uint16)
             else:
                 raise NotImplementedError(
                     "Reading Exodus2 mesh with {cell_type} of order {degree} is not supported."

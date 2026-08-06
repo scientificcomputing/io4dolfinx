@@ -35,7 +35,7 @@ def send_dofmap_and_recv_values(
     dest_size: npt.NDArray[np.int32],
     input_cells: npt.NDArray[np.int64],
     dofmap_pos: npt.NDArray[np.int32],
-    num_cells_global: np.int64,
+    num_cells_global: int | np.int64,
     values: npt.NDArray[valid_function_types],
     dofmap_offsets: npt.NDArray[np.int32],
 ) -> npt.NDArray[valid_function_types]:
