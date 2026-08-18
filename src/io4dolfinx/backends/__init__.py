@@ -75,7 +75,7 @@ class IOBackend(Protocol):
     def write_attributes(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         attributes: dict[str, np.ndarray],
         backend_args: dict[str, Any] | None,
@@ -93,7 +93,7 @@ class IOBackend(Protocol):
     def read_attributes(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         backend_args: dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -112,7 +112,7 @@ class IOBackend(Protocol):
     def read_timestamps(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         function_name: str,
         backend_args: dict[str, Any] | None,
     ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
@@ -131,7 +131,7 @@ class IOBackend(Protocol):
     def write_mesh(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         mesh: MeshData,
         backend_args: dict[str, Any] | None,
         mode: FileMode,
@@ -152,7 +152,7 @@ class IOBackend(Protocol):
     def write_meshtags(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         data: MeshTagsData,
         backend_args: dict[str, Any] | None,
     ):
@@ -168,7 +168,7 @@ class IOBackend(Protocol):
     def read_mesh_data(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         read_from_partition: bool,
         backend_args: dict[str, Any] | None,
@@ -189,7 +189,7 @@ class IOBackend(Protocol):
     def read_meshtags_data(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         backend_args: dict[str, Any] | None,
     ) -> MeshTagsData:
@@ -208,7 +208,7 @@ class IOBackend(Protocol):
     def read_dofmap(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         backend_args: dict[str, Any] | None,
     ) -> dolfinx.graph.AdjacencyList:
@@ -227,7 +227,7 @@ class IOBackend(Protocol):
     def read_dofs(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         time: float,
         backend_args: dict[str, Any] | None,
@@ -248,7 +248,7 @@ class IOBackend(Protocol):
         """
 
     def read_cell_perms(
-        self, comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
+        self, comm: MPI.Comm, filename: Path | str, backend_args: dict[str, Any] | None
     ) -> npt.NDArray[np.uint32]:
         """
         Read cell permutation from file with given communicator,
@@ -267,7 +267,7 @@ class IOBackend(Protocol):
     def write_function(
         self,
         filename: Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         u: FunctionData,
         time: float,
         mode: FileMode,
@@ -285,7 +285,7 @@ class IOBackend(Protocol):
         """
 
     def read_legacy_mesh(
-        self, filename: Path | str, comm: MPI.Intracomm, group: str
+        self, filename: Path | str, comm: MPI.Comm, group: str
     ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
         """Read in the mesh topology, geometry and (optionally) cell type from a
         legacy DOLFIN HDF5-file.
@@ -320,7 +320,7 @@ class IOBackend(Protocol):
 
     def read_hdf5_array(
         self,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         filename: Path | str,
         group: str,
         backend_args: dict[str, Any] | None,
@@ -344,7 +344,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         name: str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         backend_args: dict[str, Any] | None,
     ) -> tuple[np.ndarray, int]:
@@ -362,7 +362,7 @@ class IOBackend(Protocol):
         ...
 
     def read_function_names(
-        self, filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+        self, filename: Path | str, comm: MPI.Comm, backend_args: dict[str, Any] | None
     ) -> list[str]:
         """Read all function names from a file.
 
@@ -380,7 +380,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         name: str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         backend_args: dict[str, Any] | None,
     ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
@@ -403,7 +403,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         array_data: ArrayData,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         mode: FileMode,
         backend_args: dict[str, Any] | None,

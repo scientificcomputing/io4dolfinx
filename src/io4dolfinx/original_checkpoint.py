@@ -52,6 +52,7 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
     cell_destinations, _send_cells_per_proc = np.unique(output_cell_owner, return_counts=True)
     send_cells_per_proc = _send_cells_per_proc.astype(np.int32)
     del _send_cells_per_proc
+    assert isinstance(mesh.comm, MPI.Intracomm)
     cell_to_output_comm = mesh.comm.Create_dist_graph(
         [mesh.comm.rank],
         [len(cell_destinations)],
@@ -232,6 +233,7 @@ def create_function_data_on_original_mesh(
     cell_destinations, _send_cells_per_proc = np.unique(output_cell_owner, return_counts=True)
     send_cells_per_proc = _send_cells_per_proc.astype(np.int32)
     del _send_cells_per_proc
+    assert isinstance(mesh.comm, MPI.Intracomm)
     cell_to_output_comm = mesh.comm.Create_dist_graph(
         [mesh.comm.rank],
         [len(cell_destinations)],
@@ -290,6 +292,7 @@ def create_function_data_on_original_mesh(
     # Convert imap index to global index
     imap_global = dofmap.index_map.local_to_global(dmap_loc)
     dofmap_global = (imap_global * index_map_bs + dmap_rem).reshape(unrolled_dofmap.shape)
+    assert len(dofmap_global.shape) >= 2
     num_dofs_per_cell = dofmap_global.shape[1]
     dofmap_insert_position = unroll_insert_position(cell_insert_position, num_dofs_per_cell)
 

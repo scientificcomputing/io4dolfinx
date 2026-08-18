@@ -168,6 +168,7 @@ def write_meshtags(
     local_values = meshtags.values[: len(local_tag_entities)]
 
     num_saved_tag_entities = len(local_tag_entities)
+    assert isinstance(mesh.comm, MPI.Intracomm)
     local_start = mesh.comm.exscan(num_saved_tag_entities, op=MPI.SUM)
     local_start = local_start if mesh.comm.rank != 0 else 0
     global_num_tag_entities = mesh.comm.allreduce(num_saved_tag_entities, op=MPI.SUM)
@@ -376,8 +377,9 @@ def read_function(
 
     unique_owners, owner_count = np.unique(owners, return_counts=True)
     # FIXME: In C++ use NBX to find neighbourhood
+    assert isinstance(V.mesh.comm, MPI.Intracomm)
     sub_comm = V.mesh.comm.Create_dist_graph(
-        [V.mesh.comm.rank], [len(unique_owners)], unique_owners, reorder=False
+        [V.mesh.comm.rank], [len(unique_owners)], unique_owners.tolist(), reorder=False
     )
     source, dest, _ = sub_comm.Get_dist_neighbors()
     sub_comm.Free()
@@ -605,7 +607,7 @@ def write_function(
         dofmap_range=dofmap_imap.local_range,
         global_dofs_in_dofmap=dofmap_imap.size_global,
         values=values[:num_dofs_local].copy(),
-        dof_range=local_dof_range,
+        dof_range=(local_dof_range[0], local_dof_range[1]),
         num_dofs_global=num_dofs_global,
         name=name or u.name,
     )

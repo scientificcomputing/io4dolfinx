@@ -117,7 +117,7 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
 
 def read_mesh_data(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None = None,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
@@ -197,7 +197,7 @@ def read_mesh_data(
 def read_point_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[np.ndarray, int]:
@@ -255,7 +255,7 @@ def read_point_data(
 def read_cell_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
@@ -301,7 +301,7 @@ def read_cell_data(
 
 def write_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, Any] | None,
@@ -320,7 +320,7 @@ def write_attributes(
 
 def read_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -340,7 +340,7 @@ def read_attributes(
 
 def read_timestamps(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     function_name: str,
     backend_args: dict[str, Any] | None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
@@ -359,7 +359,7 @@ def read_timestamps(
 
 
 def read_function_names(
-    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+    filename: Path | str, comm: MPI.Comm, backend_args: dict[str, Any] | None
 ) -> list[str]:
     """Read all function names from a file.
 
@@ -394,7 +394,7 @@ def read_function_names(
 
 def write_mesh(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     mesh: MeshData,
     backend_args: dict[str, Any] | None,
     mode: FileMode,
@@ -416,7 +416,7 @@ def write_mesh(
 
 def write_meshtags(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     data: MeshTagsData,
     backend_args: dict[str, Any] | None,
 ):
@@ -433,7 +433,7 @@ def write_meshtags(
 
 def read_meshtags_data(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> MeshTagsData:
@@ -453,7 +453,7 @@ def read_meshtags_data(
 
 def read_dofmap(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> dolfinx.graph.AdjacencyList:
@@ -473,7 +473,7 @@ def read_dofmap(
 
 def read_dofs(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     time: float,
     backend_args: dict[str, Any] | None,
@@ -496,7 +496,7 @@ def read_dofs(
 
 
 def read_cell_perms(
-    comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
+    comm: MPI.Comm, filename: Path | str, backend_args: dict[str, Any] | None
 ) -> npt.NDArray[np.uint32]:
     """
     Read cell permutation from file with given communicator,
@@ -516,7 +516,7 @@ def read_cell_perms(
 
 def write_function(
     filename: Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     u: FunctionData,
     time: float,
     mode: FileMode,
@@ -537,7 +537,7 @@ def write_function(
 
 
 def read_legacy_mesh(
-    filename: Path | str, comm: MPI.Intracomm, group: str
+    filename: Path | str, comm: MPI.Comm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
     """Read in the mesh topology, geometry and (optionally) cell type from a
     legacy DOLFIN HDF5-file.
@@ -574,7 +574,7 @@ def snapshot_checkpoint(
 
 
 def read_hdf5_array(
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     filename: Path | str,
     group: str,
     backend_args: dict[str, Any] | None,
@@ -599,7 +599,7 @@ def read_hdf5_array(
 def write_data(
     filename: Path | str,
     array_data: ArrayData,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     mode: FileMode,
     backend_args: dict[str, Any] | None,

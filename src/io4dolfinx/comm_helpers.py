@@ -29,7 +29,7 @@ numpy_to_mpi = {
 
 
 def send_dofmap_and_recv_values(
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     source_ranks: npt.NDArray[np.int32],
     dest_ranks: npt.NDArray[np.int32],
     output_owners: npt.NDArray[np.int32],
@@ -78,6 +78,7 @@ def send_dofmap_and_recv_values(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros(len(source_ranks), dtype=np.int32)
+    assert isinstance(comm, MPI.Intracomm)
     mesh_to_data_comm = comm.Create_dist_graph_adjacent(
         source_ranks.tolist(), dest_ranks.tolist(), reorder=False
     )
@@ -132,7 +133,7 @@ def send_and_recv_cell_perm(
     cells: npt.NDArray[np.int64],
     perms: npt.NDArray[np.uint32],
     cell_owners: npt.NDArray[np.int32],
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.uint32]]:
     """
     Send global cell index and permutation to corresponding entry in `dest_ranks`.
@@ -146,7 +147,7 @@ def send_and_recv_cell_perm(
     dest_ranks, _dest_size = np.unique(cell_owners, return_counts=True)
     dest_size = _dest_size.astype(np.int32)
     del _dest_size
-
+    assert isinstance(comm, MPI.Intracomm)
     mesh_to_data = comm.Create_dist_graph(
         [comm.rank], [len(dest_ranks)], dest_ranks.tolist(), reorder=False
     )
@@ -189,7 +190,7 @@ def send_and_recv_cell_perm(
 def send_dofs_and_recv_values(
     input_dofmap: npt.NDArray[np.int64],
     dofmap_owners: npt.NDArray[np.int32],
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     input_array: npt.NDArray[valid_function_types],
     array_start: int,
 ):
@@ -207,6 +208,7 @@ def send_dofs_and_recv_values(
     dest_size = _dest_size.astype(np.int32)
     del _dest_size
 
+    assert isinstance(comm, MPI.Intracomm)
     dofmap_to_values = comm.Create_dist_graph(
         [comm.rank], [len(dest_ranks)], dest_ranks.tolist(), reorder=False
     )

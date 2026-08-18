@@ -60,7 +60,7 @@ def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int | np.int64) -> npt.N
 
 def send_cells_and_receive_dofmap_index(
     filename: pathlib.Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     source_ranks: npt.NDArray[np.int32],
     dest_ranks: npt.NDArray[np.int32],
     dest_size: npt.NDArray[np.int32],
@@ -80,6 +80,7 @@ def send_cells_and_receive_dofmap_index(
     check_file_exists(filename)
 
     recv_size = np.zeros(len(source_ranks), dtype=np.int32)
+    assert isinstance(comm, MPI.Intracomm)
     mesh_to_data_comm = comm.Create_dist_graph_adjacent(
         source_ranks.tolist(), dest_ranks.tolist(), reorder=False
     )
@@ -148,7 +149,7 @@ def send_cells_and_receive_dofmap_index(
 
 def read_mesh_from_legacy_h5(
     filename: pathlib.Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     group: str,
     cell_type: str = "tetrahedron",
     backend: str | None = None,
@@ -224,7 +225,7 @@ def read_mesh_from_legacy_h5(
 
 def read_function_from_legacy_h5(
     filename: pathlib.Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     u: dolfinx.fem.Function,
     group: str = "mesh",
     step: typing.Optional[int] = None,
@@ -279,8 +280,9 @@ def read_function_from_legacy_h5(
 
     unique_owners, owner_count = np.unique(owners, return_counts=True)
     # FIXME: In C++ use NBX to find neighbourhood
+    assert isinstance(mesh.comm, MPI.Intracomm)
     _tmp_comm = mesh.comm.Create_dist_graph(
-        [mesh.comm.rank], [len(unique_owners)], unique_owners, reorder=False
+        [mesh.comm.rank], [len(unique_owners)], unique_owners.tolist(), reorder=False
     )
     source, dest, _ = _tmp_comm.Get_dist_neighbors()
     _tmp_comm.Free()
