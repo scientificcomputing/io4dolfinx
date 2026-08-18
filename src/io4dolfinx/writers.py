@@ -117,7 +117,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
 
 def write_mesh(
     filename: Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     mesh_data: MeshData,
     time: float = 0.0,
     mode: FileMode = FileMode.write,
@@ -143,7 +143,7 @@ def write_mesh(
 
 def write_function(
     filename: Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     u: FunctionData,
     time: float = 0.0,
     mode: FileMode = FileMode.append,
