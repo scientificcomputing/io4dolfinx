@@ -785,7 +785,7 @@ def write_function(
     cell_permutations_exists = False
     dofmap_exists = False
     XDofmap_exists = False
-    if mode == adios2.Mode.Append:
+    if adios_mode == adios2.Mode.Append:
         cell_permutations_exists = check_variable_exists(
             adios, filename, "CellPermutations", engine=engine
         )
