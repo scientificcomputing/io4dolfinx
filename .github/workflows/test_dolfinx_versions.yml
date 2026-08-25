@@ -31,4 +31,4 @@ jobs:
     # Call the reusable workflow
     uses: ./.github/workflows/test_workflow.yml
     with:
-      dolfinx_tag: ${{ matrix.tag }}
+      tag: ${{ matrix.tag }}
