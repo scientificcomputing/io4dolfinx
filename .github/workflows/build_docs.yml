@@ -51,7 +51,7 @@ jobs:
            python3 -m pip install  --upgrade pip setuptools
            python3 -m pip install --no-binary=h5py h5py
            python3 -m pip install . --group docs
-           
+
       - name: Install dependencies
         run: python3 -m pip install -e . --no-build-isolation
 
