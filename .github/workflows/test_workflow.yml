@@ -52,7 +52,8 @@ jobs:
         run: python3 -m pip install --upgrade pip
 
       - name: Install build requirements
-        run: python3 -m pip install -r build-requirements.txt  --no-build-isolation
+        run: python3 -m pip install --group build --no-build-isolation
+
 
       # Note: We assume the caller workflow has already uploaded these artifacts
       - name: Download legacy mpich data
