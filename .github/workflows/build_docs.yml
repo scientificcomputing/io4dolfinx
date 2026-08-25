@@ -50,7 +50,7 @@ jobs:
         run: python3 -m pip install  --upgrade pip setuptools
 
       - name: Install dependencies
-        run: python3 -m pip install --no-binary=h5py  -e ".[docs]"
+        run: python3 -m pip install --no-binary=h5py  -e ".[docs]" --no-build-isolation
 
       - name: Build docs
         run: jupyter book build .
