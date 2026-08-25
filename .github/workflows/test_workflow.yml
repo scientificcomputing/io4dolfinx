@@ -24,6 +24,8 @@ env:
   OMPI_ALLOW_RUN_AS_ROOT: 1
   OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
   PRTE_MCA_rmaps_default_mapping_policy: :oversubscribe
+  CC: mpicc
+  CXX: mpicxx
 
 jobs:
   get_image_tag:
