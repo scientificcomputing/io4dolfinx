@@ -44,9 +44,9 @@ test = [
     "io4dolfinx[xdmf]"
 ]
 dev = [
-    "pdbpp", 
-    "ipython", 
-    "mypy", 
+    "pdbpp",
+    "ipython",
+    "mypy",
     "ruff"
 ]
 docs = [
