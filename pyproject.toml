@@ -1,12 +1,13 @@
 [build-system]
 requires = [
-    "scikit-build-core[pyproject]>=0.11.0",
-    "nanobind>=1.3.2,<3.0",  # Temporary cap as 0.11 seems to struggle with nanobind 3.0.0
     "setuptools>=77.0.3",
+    "wheel",
+    "scikit-build-core[pyproject]>=0.11.0",
+    "nanobind>=1.3.2,<3.0",  # Temporary cap on nanobind for stable dolfinx
     "packaging>=24.2",
     "pkgconfig"
 ]
-build-backend = "scikit_build_core.build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "io4dolfinx"

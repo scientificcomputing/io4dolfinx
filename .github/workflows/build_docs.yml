@@ -46,11 +46,12 @@ jobs:
       # This action sets the current path to the root of your github repo
       - uses: actions/checkout@v7
 
-      - name: Update pip
-        run: python3 -m pip install  --upgrade pip setuptools
-
+      - name: Update pip and extra deps
+        run: |
+           python3 -m pip install  --upgrade pip setuptools
+           python3 -m pip install . --group docs --no-build-isolation
       - name: Install dependencies
-        run: python3 -m pip install --no-binary=h5py  -e ".[docs]" --no-build-isolation
+        run: python3 -m pip install --no-binary=h5py  -e . --no-build-isolation
 
       - name: Build docs
         run: jupyter book build .
