@@ -49,9 +49,11 @@ jobs:
       - name: Update pip and extra deps
         run: |
            python3 -m pip install  --upgrade pip setuptools
-           python3 -m pip install . --group docs --no-build-isolation
+           python3 -m pip install --no-binary=h5py h5py
+           python3 -m pip install . --group docs
+           
       - name: Install dependencies
-        run: python3 -m pip install --no-binary=h5py  -e . --no-build-isolation
+        run: python3 -m pip install -e . --no-build-isolation
 
       - name: Build docs
         run: jupyter book build .
