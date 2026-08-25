@@ -96,7 +96,8 @@ jobs:
 
       - name: Install package
         run: |
-          python3 -m pip install h5py --no-binary=h5py
+          python3 -m pip install "Cython>=3.0.11" "pkgconfig>=1.5.5"
+          python3 -m pip install h5py --no-binary=h5py --no-build-isolation
           python3 -m pip install --group dev --group test
           python3 -m pip install . --no-build-isolation
 
