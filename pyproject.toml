@@ -3,7 +3,7 @@ requires = [
     "setuptools>=77.0.3",
     "wheel",
     "scikit-build-core[pyproject]>=0.11.0",
-    "nanobind>=1.3.2,<3.0",  # Temporary cap on nanobind for stable dolfinx
+    "nanobind>=1.3.2,<2.15",  # Temporary cap on nanobind for stable dolfinx
     "packaging>=24.2",
     "pkgconfig"
 ]
