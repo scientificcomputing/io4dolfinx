@@ -68,8 +68,6 @@ jobs:
           name: legacy_checkpoint_mpich
           path: ./legacy_checkpoint
 
-
-
       - name: Install DOLFINx (stable)
         if: needs.get_image_tag.outputs.image == 'stable'
         uses: jorgensd/actions/install-dolfinx@v0.4
@@ -98,8 +96,8 @@ jobs:
 
       - name: Install package
         run: |
-          python3 -m pip install h5py --no-build-isolation --no-binary=h5py
-          python3 -m pip install . --group test --no-build-isolation
+          python3 -m pip install h5py --no-binary=h5py
+          python3 -m pip install --group dev --group test
           python3 -m pip install . --no-build-isolation
 
       - name: Show adios2 version
