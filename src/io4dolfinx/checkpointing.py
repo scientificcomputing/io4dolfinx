@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import typing
 from pathlib import Path
@@ -458,7 +459,7 @@ def read_mesh(
         [MPI.Comm, int, list[dolfinx.mesh.CellType], list[npt.NDArray[np.int64]]],
         dolfinx.cpp.graph.AdjacencyList_int32,
     ]
-    partitioner: PartitionerType
+    partitioner: dolfinx.mesh.PartitioningFunc | PartitionerType
     if (partition_graph := dist_in_data.partition_graph) is not None:
 
         def _custom_partitioner(
@@ -478,21 +479,28 @@ def read_mesh(
 
         partitioner = _custom_partitioner
     else:
-        try:
-            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(
-                ghost_mode, max_facet_to_cell_links=max_facet_to_cell_links
-            )
-        except TypeError:
-            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)  # type: ignore[call-overload]
+        if not hasattr(dolfinx.mesh, "create_cell_partitioner"):
+            partitioner = dolfinx.graph.partitioner()
+        else:
+            sig = inspect.signature(dolfinx.mesh.create_cell_partitioner)
+            part_kwargs = {}
 
-        # Should change to the commented code below when we require python
-        # minimum version to be >=3.12 see https://github.com/python/cpython/pull/116198
-        # import inspect
-        # sig = inspect.signature(dolfinx.mesh.create_cell_partitioner)
-        # part_kwargs = {}
-        # if "max_facet_to_cell_links" in list(sig.parameters.keys()):
-        #     part_kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
-        # partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode, **part_kwargs)
+            if "max_facet_to_cell_links" in sig.parameters:
+                part_kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
+
+            partitioner = dolfinx.mesh.create_cell_partitioner(ghost_mode, **part_kwargs)
+
+    mesh_args: dict[str, Any] = {}
+    mesh_sig = inspect.signature(dolfinx.mesh.create_mesh)
+    if "max_facet_to_cell_links" in mesh_sig.parameters:
+        mesh_args["max_facet_to_cell_links"] = max_facet_to_cell_links
+    if "ghost_mode" in mesh_sig.parameters:
+        mesh_args["ghost_mode"] = ghost_mode
+    # TODO: Add more options here later
+    if "cell_weights" in mesh_sig.parameters:
+        mesh_args["cell_weights"] = None  # No cell weights provided, default to None
+    if "num_threads" in mesh_sig.parameters:
+        mesh_args["num_threads"] = 1  # Default to 1 thread, can be adjusted if needed
 
     return dolfinx.mesh.create_mesh(
         comm,
@@ -500,6 +508,7 @@ def read_mesh(
         x=dist_in_data.x,
         e=domain,
         partitioner=partitioner,
+        **mesh_args,
     )
 
 
