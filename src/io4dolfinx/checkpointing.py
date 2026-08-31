@@ -19,6 +19,7 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 import ufl
+from packaging.version import Version
 
 from . import compat
 from .backends import FileMode, ReadMode, get_backend
@@ -461,23 +462,47 @@ def read_mesh(
     ]
     partitioner: dolfinx.mesh.PartitioningFunc | PartitionerType
     if (partition_graph := dist_in_data.partition_graph) is not None:
+        if Version(dolfinx.__version__) <= Version("0.11"):
 
-        def _custom_partitioner(
-            comm: MPI.Comm,
-            nparts: int,
-            cell_types: list[dolfinx.mesh.CellType],
-            local_graph: list[npt.NDArray[np.int64]],
-        ) -> dolfinx.cpp.graph.AdjacencyList_int32:
-            assert len(local_graph[0]) % (len(partition_graph.offsets) - 1) == 0
-            if hasattr(partition_graph, "_cpp_object"):
-                cpp_obj = partition_graph._cpp_object
-                assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
-                return cpp_obj
-            else:
-                assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
-                return partition_graph
+            def _custom_partitioner_old(
+                comm: MPI.Comm,
+                nparts: int,
+                cell_types: list[dolfinx.mesh.CellType],
+                local_graph: list[npt.NDArray[np.int64]],
+                *args,
+                **kwargs,
+            ) -> dolfinx.cpp.graph.AdjacencyList_int32:
+                assert len(local_graph[0]) % (len(partition_graph.offsets) - 1) == 0
+                if hasattr(partition_graph, "_cpp_object"):
+                    cpp_obj = partition_graph._cpp_object
+                    assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
+                    return cpp_obj
+                else:
+                    assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
+                    return partition_graph
 
-        partitioner = _custom_partitioner
+            partitioner = _custom_partitioner_old
+        else:
+
+            def _custom_partitioner_new(
+                comm: MPI.Comm,
+                n: int,
+                dual_graph: dolfinx.cpp.graph.AdjacencyList_int64,
+                cell_weights: Any | None,
+                edge_weights: Any | None,
+                ghosting: bool,
+            ) -> dolfinx.cpp.graph.AdjacencyList_int32:
+                # FIXME: Add some asserts here?
+                # assert len(dual_graph[0]) % (len(partition_graph.offsets) - 1) == 0
+                if hasattr(partition_graph, "_cpp_object"):
+                    cpp_obj = partition_graph._cpp_object
+                    assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
+                    return cpp_obj
+                else:
+                    assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
+                    return partition_graph
+
+            partitioner = _custom_partitioner_new
     else:
         if not hasattr(dolfinx.mesh, "create_cell_partitioner"):
             partitioner = dolfinx.graph.partitioner()
