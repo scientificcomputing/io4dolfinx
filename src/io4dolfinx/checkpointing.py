@@ -19,7 +19,6 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 import ufl
-from packaging.version import Version
 
 from . import compat
 from .backends import FileMode, ReadMode, get_backend
@@ -456,53 +455,30 @@ def read_mesh(
         dtype=dist_in_data.x.dtype,
     )
     domain = ufl.Mesh(element)
-    PartitionerType = Callable[
-        [MPI.Comm, int, list[dolfinx.mesh.CellType], list[npt.NDArray[np.int64]]],
-        dolfinx.cpp.graph.AdjacencyList_int32,
-    ]
-    partitioner: dolfinx.mesh.PartitioningFunc | PartitionerType
+    # `dolfinx.mesh.PartitioningFunc` is not available in all supported
+    # versions of DOLFINx, and the accepted callback signature varies (see
+    # below), so type the callback permissively.
+    partitioner: Callable[..., dolfinx.cpp.graph.AdjacencyList_int32]
     if (partition_graph := dist_in_data.partition_graph) is not None:
-        if Version(dolfinx.__version__) <= Version("0.11"):
+        # The arguments DOLFINx passes to a partitioner callback have changed
+        # over time: 0.11 calls it with
+        # ``(comm, nparts, cell_types, local_graph)``, while newer versions call
+        # it with ``(comm, nparts, dual_graph, cell_weights, edge_weights,
+        # ghosting)`` (see https://github.com/FEniCS/dolfinx/pull/4403).
+        # We read the partitioning from file, so the returned graph does not
+        # depend on any of these arguments. Accept them all and stay agnostic to
+        # the calling convention rather than branching on `dolfinx.__version__`,
+        # which does not distinguish pre-releases and post-releases reliably.
+        def _custom_partitioner(*args: Any, **kwargs: Any) -> dolfinx.cpp.graph.AdjacencyList_int32:
+            if hasattr(partition_graph, "_cpp_object"):
+                cpp_obj = partition_graph._cpp_object
+                assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
+                return cpp_obj
+            else:
+                assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
+                return partition_graph
 
-            def _custom_partitioner_old(
-                comm: MPI.Comm,
-                nparts: int,
-                cell_types: list[dolfinx.mesh.CellType],
-                local_graph: list[npt.NDArray[np.int64]],
-                *args,
-                **kwargs,
-            ) -> dolfinx.cpp.graph.AdjacencyList_int32:
-                assert len(local_graph[0]) % (len(partition_graph.offsets) - 1) == 0
-                if hasattr(partition_graph, "_cpp_object"):
-                    cpp_obj = partition_graph._cpp_object
-                    assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
-                    return cpp_obj
-                else:
-                    assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
-                    return partition_graph
-
-            partitioner = _custom_partitioner_old
-        else:
-
-            def _custom_partitioner_new(
-                comm: MPI.Comm,
-                n: int,
-                dual_graph: dolfinx.cpp.graph.AdjacencyList_int64,
-                cell_weights: Any | None,
-                edge_weights: Any | None,
-                ghosting: bool,
-            ) -> dolfinx.cpp.graph.AdjacencyList_int32:
-                # FIXME: Add some asserts here?
-                # assert len(dual_graph[0]) % (len(partition_graph.offsets) - 1) == 0
-                if hasattr(partition_graph, "_cpp_object"):
-                    cpp_obj = partition_graph._cpp_object
-                    assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
-                    return cpp_obj
-                else:
-                    assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
-                    return partition_graph
-
-            partitioner = _custom_partitioner_new
+        partitioner = _custom_partitioner
     else:
         if not hasattr(dolfinx.mesh, "create_cell_partitioner"):
             partitioner = dolfinx.graph.partitioner()
