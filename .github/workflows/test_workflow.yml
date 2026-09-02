@@ -68,23 +68,9 @@ jobs:
           name: legacy_checkpoint_mpich
           path: ./legacy_checkpoint
 
-      # DOLFINx 0.11.x (release branch) passes a cffi cdata object where the
-      # nanobind bindings expect a C++ integer. nanobind 2.14.0 requires the
-      # `__index__` protocol for implicit integer conversion, which cffi cdata
-      # does not implement, so every `dolfinx.fem.form` call fails with
-      # "TypeError: __init__(): incompatible function arguments".
-      # Fixed on DOLFINx main by https://github.com/FEniCS/dolfinx/pull/4371,
-      # not (yet) backported to the release branch, so constrain nanobind when
-      # building the stable bindings. Remove once the fix is in a release.
-      - name: Constrain nanobind for stable DOLFINx
-        if: needs.get_image_tag.outputs.image == 'stable'
-        run: |
-          echo "nanobind<2.14" > "$GITHUB_WORKSPACE/constraints.txt"
-          echo "PIP_CONSTRAINT=$GITHUB_WORKSPACE/constraints.txt" >> $GITHUB_ENV
-
       - name: Install DOLFINx (stable)
         if: needs.get_image_tag.outputs.image == 'stable'
-        uses: jorgensd/actions/install-dolfinx@v0.4
+        uses: jorgensd/actions/install-dolfinx@main
         with:
           adios2: default
           petsc_arch: linux-gnu-real64-32
