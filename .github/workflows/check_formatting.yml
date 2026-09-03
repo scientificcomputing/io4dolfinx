@@ -43,11 +43,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Update pip
-        run: python3 -m pip install  --upgrade pip setuptools
+      - name: Update pip and install build deps
+        run: |
+          python3 -m pip install  --upgrade pip setuptools
+          python3 -m pip install . --group dev --no-build-isolation
 
       - name: Install code
-        run: python3 -m pip install  .[dev]
+        run: python3 -m pip install  . --no-build-isolation
 
       - name: Check code formatting with ruff
         run: |
