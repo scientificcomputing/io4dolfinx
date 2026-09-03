@@ -14,7 +14,6 @@ import pathlib
 
 import dolfin
 import numpy as np
-import ufl_legacy as ufl
 
 
 def create_reference_data(
@@ -31,7 +30,12 @@ def create_reference_data(
     W = dolfin.VectorFunctionSpace(mesh, family, degree)
     x = dolfin.SpatialCoordinate(mesh)
 
-    f0 = ufl.conditional(ufl.gt(x[0], 0.5), x[1], 2 * x[0])
+    # NOTE: f0 must be exactly representable in the (family, degree) function space above.
+    # Legacy dolfin (FIAT-based quadrature) and current dolfinx (basix-based quadrature)
+    # use different quadrature rules, so a non-polynomial (e.g. conditional) integrand
+    # would project to slightly different values in each toolchain, making bit-exact
+    # comparisons in test_legacy_readers.py inherently flaky across dolfinx versions.
+    f0 = x[0] ** 2 + 2 * x[1] * x[2] - x[1]
     v0 = dolfin.project(f0, V)
     w0 = dolfin.interpolate(dolfin.Expression(("x[0]", "3*x[2]", "7*x[1]"), degree=1), W)
 
