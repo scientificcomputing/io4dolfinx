@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 def write_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, typing.Any] | None = None,
@@ -82,7 +82,7 @@ def write_attributes(
 
 def read_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, typing.Any] | None = None,
     backend: str | None = None,
@@ -107,7 +107,7 @@ def read_attributes(
 
 def read_timestamps(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
     backend: str | None = None,
@@ -403,7 +403,7 @@ def read_function(
 
 def read_mesh(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     ghost_mode: dolfinx.mesh.GhostMode = dolfinx.mesh.GhostMode.shared_facet,
     time: float | str | None = 0.0,
     read_from_partition: bool = False,
@@ -630,7 +630,7 @@ def write_function(
 
 def read_function_names(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     backend_args: dict[str, Any] | None = None,
     backend: str = "h5py",
 ) -> list[str]:

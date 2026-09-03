@@ -216,7 +216,7 @@ def read_function_time_dep():
 def _generate_reference_map(
     mesh: dolfinx.mesh.Mesh,
     meshtag: dolfinx.mesh.MeshTags,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     root: int,
 ) -> typing.Optional[dict[str, tuple[int, npt.NDArray]]]:
     """

@@ -21,7 +21,7 @@ You should import these to type-hint your implementation correctly:
 
 ## Implementation Checklist
 
-Your backend module must implement the functions listed below. Note that `comm` is always an {py:class}`MPI.Intracomm<mpi4py.MPI.Intracomm>` and `filename` is a
+Your backend module must implement the functions listed below. Note that `comm` is always an {py:class}`MPI.Comm<mpi4py.MPI.Comm>` and `filename` is a
 {py:class}`pathlib.Path` or {py:class}`str`.
 
 ### General Configuration
@@ -96,7 +96,7 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
 
 def write_mesh(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     mesh: MeshData,
     backend_args: dict[str, Any] | None,
     mode: FileMode,
