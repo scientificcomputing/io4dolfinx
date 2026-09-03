@@ -70,7 +70,7 @@ jobs:
 
       - name: Install DOLFINx (stable)
         if: needs.get_image_tag.outputs.image == 'stable'
-        uses: jorgensd/actions/install-dolfinx@main
+        uses: jorgensd/actions/install-dolfinx@v0.4
         with:
           adios2: default
           petsc_arch: linux-gnu-real64-32
