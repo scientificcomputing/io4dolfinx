@@ -1,17 +1,49 @@
-name: Test
+name: Test package
 
 on:
   workflow_call:
     inputs:
-      dolfinx_tag:
+      tag:
+        description: "Tag of DOLFINx docker image"
+        default: "nightly"
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of DOLFINx docker image"
+        default: "nightly"
+        required: true
+        type: string
+env:
+  DEB_PYTHON_INSTALL_LAYOUT: deb_system
+  DEFAULT_TAG: nightly
+  HDF5_MPI: "ON"
+  HDF5_INCLUDEDIR: "/usr/include/hdf5/openmpi"
+  H5PY_SETUP_REQUIRES: 0
+  OMPI_ALLOW_RUN_AS_ROOT: 1
+  OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
+  PRTE_MCA_rmaps_default_mapping_policy: :oversubscribe
+  CC: mpicc
+  CXX: mpicxx
 
 jobs:
+  get_image_tag:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.docker_tag.outputs.image }}
+    steps:
+      - id: docker_tag
+        run: echo "image=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
+
   test-code:
     runs-on: ubuntu-24.04
     # The container tag is now dynamic based on the input passed by the caller
-    container: ghcr.io/fenics/dolfinx/dolfinx:${{ inputs.dolfinx_tag }}
+    container: ghcr.io/fenics/test-env:current
+    needs:
+      [get_image_tag]
+    env:
+      working-directory: ./src
 
     steps:
       - uses: actions/checkout@v7
@@ -20,7 +52,8 @@ jobs:
         run: python3 -m pip install --upgrade pip
 
       - name: Install build requirements
-        run: python3 -m pip install -r build-requirements.txt
+        run: python3 -m pip install --group build --no-build-isolation
+
 
       # Note: We assume the caller workflow has already uploaded these artifacts
       - name: Download legacy mpich data
@@ -35,10 +68,38 @@ jobs:
           name: legacy_checkpoint_mpich
           path: ./legacy_checkpoint
 
+      - name: Install DOLFINx (stable)
+        if: needs.get_image_tag.outputs.image == 'stable'
+        uses: jorgensd/actions/install-dolfinx@v0.4
+        with:
+          adios2: default
+          petsc_arch: linux-gnu-real64-32
+          dolfinx: release
+          basix: release
+          ufl: release
+          ffcx: release
+          working-directory: ${{ env.working-directory}}
+
+      - name: Install DOLFINx (nightly)
+        if: needs.get_image_tag.outputs.image == 'nightly'
+        uses: jorgensd/actions/install-dolfinx@v0.4
+        with:
+          adios2: default
+          petsc_arch: linux-gnu-real64-32
+          working-directory: ${{ env.working-directory}}
+
+      - name: Configure HDF5 MPI Environment
+        run: |
+          # Evaluate architecture dynamically and write to GITHUB_ENV
+          ARCH_TRIPLET=$(gcc -print-multiarch)
+          echo "HDF5_LIBDIR=/usr/lib/${ARCH_TRIPLET}/hdf5/openmpi" >> $GITHUB_ENV
+
       - name: Install package
         run: |
-          HDF5_MPI=ON HDF5_PKGCONFIG_NAME="hdf5" python3 -m pip install h5py --no-build-isolation --no-binary=h5py
-          python3 -m pip install .[test]
+          python3 -m pip install "Cython>=3.0.11" "pkgconfig>=1.5.5"
+          python3 -m pip install h5py --no-binary=h5py --no-build-isolation
+          python3 -m pip install --group dev --group test
+          python3 -m pip install . --no-build-isolation
 
       - name: Show adios2 version
         run: python3 -c "import adios2; print(adios2.__version__)"
@@ -65,6 +126,6 @@ jobs:
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
-          name: code-coverage-report-${{ inputs.dolfinx_tag }}
+          name: code-coverage-report-${{ inputs.tag }}
           path: htmlcov
           if-no-files-found: error
