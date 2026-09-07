@@ -18,7 +18,7 @@ from io4dolfinx.utils import check_file_exists, compute_local_range
 
 from .. import FileMode, ReadMode
 from ..h5py.backend import convert_file_mode, h5pyfile
-from ..pyvista.backend import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
+from ..vtk_cell_types import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
 
 read_mode = ReadMode.parallel
 
@@ -349,7 +349,7 @@ def write_attributes(
         attributes: Dictionary of attributes to write
         backend_args: Arguments to backend
     """
-    raise NotImplementedError("The Pyvista backend cannot write attributes.")
+    raise NotImplementedError("The VTKHDF backend cannot write attributes.")
 
 
 def read_attributes(
@@ -369,7 +369,7 @@ def read_attributes(
     Returns:
         Dictionary of attributes read from file
     """
-    raise NotImplementedError("The Pyvista backend cannot read attributes.")
+    raise NotImplementedError("The VTKHDF backend cannot read attributes.")
 
 
 def read_timestamps(
@@ -1000,7 +1000,7 @@ def read_dofmap(
     Returns:
         Dofmap as an AdjacencyList
     """
-    raise NotImplementedError("The Pyvista backend cannot make checkpoints.")
+    raise NotImplementedError("The VTKHDF backend cannot make checkpoints.")
 
 
 def read_dofs(
@@ -1024,7 +1024,7 @@ def read_dofs(
         and the global starting point on the process.
         Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
     """
-    raise NotImplementedError("The Pyvista backend cannot make checkpoints.")
+    raise NotImplementedError("The VTKHDF backend cannot make checkpoints.")
 
 
 def read_cell_perms(
