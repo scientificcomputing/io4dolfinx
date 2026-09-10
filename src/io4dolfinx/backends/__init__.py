@@ -458,6 +458,11 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .exodus import backend as EXODUSInterface
 
         return EXODUSInterface
+
+    elif backend == "nastran":
+        from .nastran import backend as NASTRANInterface
+
+        return NASTRANInterface
     else:
         return import_module(backend)
 
