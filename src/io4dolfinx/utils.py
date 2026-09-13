@@ -174,9 +174,19 @@ def compute_dofmap_pos(
     Compute a map from each owned dof in the dofmap to a single cell owned by the
     process, and the relative position of the dof.
 
+    .. note::
+        Every owned dof must be reachable from a cell owned by the process. This
+        holds for a mesh created by :func:`dolfinx.mesh.create_mesh`, but not
+        necessarily for one created by :func:`dolfinx.mesh.create_submesh`, which
+        builds its vertex map allowing owner changes: a rank may own a vertex --
+        and therefore a dof -- that is only incident to cells it ghosts. Such
+        dofs cannot be assigned a position and raise rather than silently
+        yielding an arbitrary one.
+
     :param V: The function space
     :returns: The tuple (`cells`, `dof_pos`) where each array is the size of the
         number of owned dofs (unrolled for block size)
+    :raises RuntimeError: If an owned dof is not contained in any owned cell.
     """
     dofs = V.dofmap.list
     mesh = V.mesh
@@ -184,10 +194,12 @@ def compute_dofmap_pos(
     dofmap_bs = V.dofmap.bs
     num_owned_dofs = V.dofmap.index_map.size_local * V.dofmap.index_map_bs
 
-    local_cell = np.empty(
-        num_owned_dofs, dtype=np.int32
+    # Initialize to -1 rather than leaving uninitialized, so that a dof that is
+    # never visited below is detectable instead of holding arbitrary memory.
+    local_cell = np.full(
+        num_owned_dofs, -1, dtype=np.int32
     )  # Local cell index for each dof owned by process
-    dof_pos = np.empty(num_owned_dofs, dtype=np.int32)  # Position in dofmap for said dof
+    dof_pos = np.full(num_owned_dofs, -1, dtype=np.int32)  # Position in dofmap for said dof
 
     unrolled_dofmap = unroll_dofmap(dofs[:num_owned_cells, :], dofmap_bs)
     markers = unrolled_dofmap < num_owned_dofs
@@ -199,6 +211,17 @@ def compute_dofmap_pos(
     indicator = unrolled_dofmap[markers].reshape(-1)
     local_cell[indicator] = cell_indicator[markers].reshape(-1)
     dof_pos[indicator] = local_indices[markers].reshape(-1)
+
+    num_unreachable = int(np.count_nonzero(local_cell < 0))
+    if num_unreachable > 0:
+        raise RuntimeError(
+            f"{num_unreachable} of {num_owned_dofs} owned dofs are not contained in any"
+            " cell owned by this process, so their position in the dofmap is undefined."
+            " This happens on meshes created with `dolfinx.mesh.create_submesh`, which"
+            " may move vertex ownership to a process that does not own an incident cell."
+            " Read the function on a standalone mesh (see `io4dolfinx.read_submesh`)"
+            " rather than on a mesh derived with `create_submesh`."
+        )
     return local_cell, dof_pos
 
 
