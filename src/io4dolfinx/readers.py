@@ -35,6 +35,21 @@ __all__ = ["read_mesh_from_legacy_h5", "read_function_from_legacy_h5", "read_poi
 logger = logging.getLogger(__name__)
 
 
+def _with_mesh_name(
+    backend_args: dict[str, Any] | None, mesh_name: str | None
+) -> dict[str, Any] | None:
+    """Select which mesh in the file a backend call refers to.
+
+    See :func:`io4dolfinx.checkpointing._with_mesh_name`; duplicated here to keep
+    :mod:`io4dolfinx.readers` free of a circular import.
+    """
+    if mesh_name is None:
+        return backend_args
+    args = dict(backend_args) if backend_args else {}
+    args["name"] = mesh_name
+    return args
+
+
 def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int | np.int64) -> npt.NDArray[np.int64]:
     """
     Map xxxyyyzzz to xyzxyz
@@ -399,6 +414,7 @@ def read_point_data(
     time: float | None = None,
     backend_args: dict[str, Any] | None = None,
     backend: str = "xdmf",
+    mesh_name: str | None = None,
 ) -> dolfinx.fem.Function:
     """Read data from the nodes of a mesh.
 
@@ -410,12 +426,15 @@ def read_point_data(
         name: Name of point data
         mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
         time: Time-step to read from.
+        mesh_name: Name of the mesh in the file the data belongs to. Defaults
+            to the mesh written without an explicit name.
 
     Returns:
         A function in the space equivalent to the mesh
         coordinate element (up to shape).
     """
 
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading point data from {filename} with name {name} at time {time}")
     logger.debug(f"Using backend {backend} with arguments {backend_args}")
     backend_cls = get_backend(backend)
@@ -465,6 +484,7 @@ def read_cell_data(
     time: float | None = None,
     backend_args: dict[str, Any] | None = None,
     backend: str = "xdmf",
+    mesh_name: str | None = None,
 ) -> dolfinx.fem.Function:
     """Read data from the nodes of a mesh.
 
@@ -476,10 +496,13 @@ def read_cell_data(
         name: Name of point data
         mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
         time: Time-step to read from.
+        mesh_name: Name of the mesh in the file the data belongs to. Defaults
+            to the mesh written without an explicit name.
 
     Returns:
         A function in a DG-0 space on the mesh. The cells not found in input is set to zero.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
 
     backend_cls = get_backend(backend)
 

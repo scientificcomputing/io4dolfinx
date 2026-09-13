@@ -11,7 +11,7 @@ import numpy.typing as npt
 
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
-from .. import FileMode, ReadMode
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
 from .helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
@@ -28,12 +28,68 @@ read_mode = ReadMode.parallel
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
     """Get default arguements (sets engine to BP4)."""
-    args = arguments or {}
+    args = dict(arguments) if arguments else {}  # Copy: do not mutate the caller's dict
     if "engine" not in args.keys():
         args["engine"] = "BP4"
     if "legacy" not in args.keys():
         args["legacy"] = False  # Only used for legacy HDF5 meshtags
+    if "name" not in args.keys():
+        args["name"] = DEFAULT_MESH_NAME
     return args
+
+
+def mesh_prefix(backend_args: dict[str, Any] | None) -> str:
+    """ADIOS2 variable-name prefix for the mesh named in ``backend_args``.
+
+    The default mesh gets an *empty* prefix, so that it is stored under exactly
+    the names used before checkpoints could hold more than one mesh. Files
+    written by earlier versions therefore stay readable, and a file holding only
+    the default mesh stays readable by them. Any other mesh is namespaced under
+    ``"<name>/"``.
+
+    .. note::
+        This is io4dolfinx's own checkpoint schema, not ADIOS2's VTX
+        visualization schema -- no ``vtk.xml`` attribute is written, and these
+        files are not readable by ParaView's VTX reader whether they hold one
+        mesh or several. VTX supports only a single mesh per file, so holding
+        several here costs nothing that was ever available. For a
+        visualizable file with several meshes use the ``vtkhdf`` backend, whose
+        ``MultiBlockDataSet`` is designed for it.
+
+    Args:
+        backend_args: Arguments to backend
+
+    Returns:
+        The prefix to prepend to every variable and attribute name of that mesh.
+    """
+    name = get_mesh_name(backend_args)
+    return "" if name == DEFAULT_MESH_NAME else f"{name}/"
+
+
+def _seek_step(adios_file, variable: str, start: int = 0) -> int:
+    """Advance the reader to the first step at or after ``start`` holding ``variable``.
+
+    With several meshes in one file a step no longer holds every variable, so a
+    reader cannot assume the one it wants is in step 0. Leaves the file *inside*
+    the matching step (the caller is responsible for ``EndStep``).
+
+    Args:
+        adios_file: The open :class:`ADIOSFile`
+        variable: Name of the variable to seek
+        start: First step to consider
+
+    Returns:
+        Index of the step holding ``variable``.
+
+    Raises:
+        KeyError: If no step holds ``variable``.
+    """
+    for i in range(start, adios_file.file.Steps()):
+        adios_file.file.BeginStep()
+        if variable in adios_file.io.AvailableVariables().keys():
+            return i
+        adios_file.file.EndStep()
+    raise KeyError(f"'{variable}' not found in file")
 
 
 def convert_file_mode(mode: FileMode) -> adios2.Mode:  # type: ignore[override]
@@ -141,6 +197,7 @@ def read_timestamps(
 
     adios = adios2.ADIOS(comm)
     backend_args = get_default_backend_args(backend_args)
+    prefix = mesh_prefix(backend_args)
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -148,7 +205,7 @@ def read_timestamps(
         engine=backend_args["engine"],
         io_name="TimestepReader",
     ) as adios_file:
-        time_name = f"{function_name}_time"
+        time_name = f"{prefix}{function_name}_time"
         time_stamps = []
         for _ in range(adios_file.file.Steps()):
             adios_file.file.BeginStep()
@@ -188,10 +245,22 @@ def write_mesh(
     backend_args = get_default_backend_args(backend_args)
     if "io_name" not in backend_args.keys():
         backend_args["io_name"] = "MeshWriter"
+    prefix = mesh_prefix(backend_args)
 
     mode = convert_file_mode(mode)
     gdim = mesh.local_geometry.shape[1]
     adios = adios2.ADIOS(comm)
+
+    # Topology is constant in time and written once. In append mode it may
+    # already be present either because this mesh was written at an earlier time
+    # step, or because a *different* mesh was written first -- so the test is
+    # whether this mesh's topology exists, not whether the file is new.
+    topology_exists = False
+    if mode == adios2.Mode.Append:
+        topology_exists = check_variable_exists(
+            adios, filename, f"{prefix}Topology", engine=backend_args["engine"]
+        )
+
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -203,7 +272,7 @@ def write_mesh(
         adios_file.file.BeginStep()
         # Write geometry
         pointvar = adios_file.io.DefineVariable(
-            "Points",
+            f"{prefix}Points",
             mesh.local_geometry,
             shape=[mesh.num_nodes_global, gdim],
             start=[mesh.local_geometry_pos[0], 0],
@@ -211,16 +280,18 @@ def write_mesh(
         )
         adios_file.file.Put(pointvar, mesh.local_geometry, adios2.Mode.Sync)
 
-        if mode == adios2.Mode.Write:
-            adios_file.io.DefineAttribute("CellType", mesh.cell_type)
-            adios_file.io.DefineAttribute("Degree", np.array([mesh.degree], dtype=np.int32))
+        if not topology_exists:
+            adios_file.io.DefineAttribute(f"{prefix}CellType", mesh.cell_type)
             adios_file.io.DefineAttribute(
-                "LagrangeVariant", np.array([mesh.lagrange_variant], dtype=np.int32)
+                f"{prefix}Degree", np.array([mesh.degree], dtype=np.int32)
+            )
+            adios_file.io.DefineAttribute(
+                f"{prefix}LagrangeVariant", np.array([mesh.lagrange_variant], dtype=np.int32)
             )
             # Write topology (on;y on first write as topology is constant)
             num_dofs_per_cell = mesh.local_topology.shape[1]
             dvar = adios_file.io.DefineVariable(
-                "Topology",
+                f"{prefix}Topology",
                 mesh.local_topology,
                 shape=[mesh.num_cells_global, num_dofs_per_cell],
                 start=[mesh.local_topology_pos[0], 0],
@@ -235,7 +306,7 @@ def write_mesh(
             if mesh.store_partition:
                 assert mesh.partition_range is not None
                 par_data = adios_file.io.DefineVariable(
-                    "PartitioningData",
+                    f"{prefix}PartitioningData",
                     mesh.ownership_array,
                     shape=[mesh.partition_global],
                     start=[mesh.partition_range[0]],
@@ -246,7 +317,7 @@ def write_mesh(
                 adios_file.file.Put(par_data, mesh.ownership_array)
                 assert mesh.ownership_offset is not None
                 par_offset = adios_file.io.DefineVariable(
-                    "PartitioningOffset",
+                    f"{prefix}PartitioningOffset",
                     mesh.ownership_offset,
                     shape=[mesh.num_cells_global + 1],
                     start=[mesh.local_topology_pos[0]],
@@ -255,15 +326,16 @@ def write_mesh(
                 adios_file.file.Put(par_offset, mesh.ownership_offset)
                 assert mesh.partition_processes is not None
                 adios_file.io.DefineAttribute(
-                    "PartitionProcesses", np.array([mesh.partition_processes], dtype=np.int32)
+                    f"{prefix}PartitionProcesses",
+                    np.array([mesh.partition_processes], dtype=np.int32),
                 )
-        if mode == adios2.Mode.Append and mesh.store_partition:
+        if topology_exists and mesh.store_partition:
             warnings.warn("Partitioning data is not written in append mode")
 
         # Add time step to file
         t_arr = np.array([time], dtype=np.float64)
         time_var = adios_file.io.DefineVariable(
-            "MeshTime",
+            f"{prefix}MeshTime",
             t_arr,
             shape=[1],
             start=[0],
@@ -300,6 +372,7 @@ def read_mesh_data(
     legacy = backend_args.get("legacy", False)
     io_name = backend_args.get("io_name", "MeshReader")
     engine = backend_args["engine"]
+    prefix = mesh_prefix(backend_args)
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -307,12 +380,14 @@ def read_mesh_data(
         engine=engine,
         io_name=io_name,
     ) as adios_file:
-        # Get time independent mesh variables (mesh topology and cell type info) first
-        adios_file.file.BeginStep()
-        # Get mesh topology (distributed)
-        if "Topology" not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Mesh topology not found at Topology in {filename}")
-        topology = adios_file.io.InquireVariable("Topology")
+        # Get time independent mesh variables (mesh topology and cell type info)
+        # first. With several meshes in the file this mesh's topology need not be
+        # in step 0, so seek the step holding it.
+        try:
+            step = _seek_step(adios_file, f"{prefix}Topology")
+        except KeyError as e:
+            raise KeyError(f"Mesh topology not found at {prefix}Topology in {filename}") from e
+        topology = adios_file.io.InquireVariable(f"{prefix}Topology")
         shape = topology.Shape()
         local_range = compute_local_range(comm, shape[0])
         topology.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
@@ -321,31 +396,33 @@ def read_mesh_data(
 
         # Check validity of partitioning information
         if read_from_partition:
-            if "PartitionProcesses" not in adios_file.io.AvailableAttributes().keys():
+            if f"{prefix}PartitionProcesses" not in adios_file.io.AvailableAttributes().keys():
                 raise KeyError(f"Partitioning information not found in {filename}")
-            par_num_procs = adios_file.io.InquireAttribute("PartitionProcesses")
+            par_num_procs = adios_file.io.InquireAttribute(f"{prefix}PartitionProcesses")
             num_procs = par_num_procs.Data()[0]
             if num_procs != comm.size:
                 raise ValueError(f"Number of processes in file ({num_procs})!=({comm.size=})")
 
         # Get mesh cell type
-        if "CellType" not in adios_file.io.AvailableAttributes().keys():
-            raise KeyError(f"Mesh cell type not found at CellType in {filename}")
-        celltype = adios_file.io.InquireAttribute("CellType")
+        if f"{prefix}CellType" not in adios_file.io.AvailableAttributes().keys():
+            raise KeyError(f"Mesh cell type not found at {prefix}CellType in {filename}")
+        celltype = adios_file.io.InquireAttribute(f"{prefix}CellType")
         cell_type = celltype.DataString()[0]
 
         # Get basix info
-        if "LagrangeVariant" not in adios_file.io.AvailableAttributes().keys():
+        if f"{prefix}LagrangeVariant" not in adios_file.io.AvailableAttributes().keys():
             raise KeyError(f"Mesh LagrangeVariant not found in {filename}")
-        lvar = adios_file.io.InquireAttribute("LagrangeVariant").Data()[0]
-        if "Degree" not in adios_file.io.AvailableAttributes().keys():
+        lvar = adios_file.io.InquireAttribute(f"{prefix}LagrangeVariant").Data()[0]
+        if f"{prefix}Degree" not in adios_file.io.AvailableAttributes().keys():
             raise KeyError(f"Mesh degree not found in {filename}")
-        degree = adios_file.io.InquireAttribute("Degree").Data()[0]
+        degree = adios_file.io.InquireAttribute(f"{prefix}Degree").Data()[0]
 
         if not legacy:
-            time_name = "MeshTime"
-            for i in range(adios_file.file.Steps()):
-                if i > 0:
+            # Geometry for this time stamp is written in the same step as the
+            # topology or a later one, so resume the scan from there.
+            time_name = f"{prefix}MeshTime"
+            for i in range(step, adios_file.file.Steps()):
+                if i > step:
                     adios_file.file.BeginStep()
                 if time_name in adios_file.io.AvailableVariables().keys():
                     arr = adios_file.io.InquireVariable(time_name)
@@ -366,9 +443,9 @@ def read_mesh_data(
                 raise KeyError(f"No data associated with {time_name}={time} found in {filename}")
 
         # Get mesh geometry
-        if "Points" not in adios_file.io.AvailableVariables().keys():
-            raise KeyError(f"Mesh coordinates not found at Points in {filename}")
-        geometry = adios_file.io.InquireVariable("Points")
+        if f"{prefix}Points" not in adios_file.io.AvailableVariables().keys():
+            raise KeyError(f"Mesh coordinates not found at {prefix}Points in {filename}")
+        geometry = adios_file.io.InquireVariable(f"{prefix}Points")
         x_shape = geometry.Shape()
         geometry_range = compute_local_range(comm, x_shape[0])
         geometry.SetSelection(
@@ -390,8 +467,8 @@ def read_mesh_data(
             adios,
             comm,
             filename,
-            "PartitioningData",
-            "PartitioningOffset",
+            f"{prefix}PartitioningData",
+            f"{prefix}PartitioningOffset",
             backend_args["engine"],
         )
     else:
@@ -424,6 +501,7 @@ def write_meshtags(
     backend_args = {} if backend_args is None else backend_args
     io_name = backend_args.get("io_name", "MeshTagWriter")
     engine = backend_args.get("engine", "BP4")
+    prefix = mesh_prefix(backend_args)
     adios = adios2.ADIOS(comm)
     with ADIOSFile(
         adios=adios,
@@ -436,7 +514,7 @@ def write_meshtags(
 
         # Write meshtag topology
         topology_var = adios_file.io.DefineVariable(
-            data.name + "_topology",
+            f"{prefix}{data.name}_topology",
             data.indices,
             shape=[data.num_entities_global, data.num_dofs_per_entity],
             start=[data.local_start, 0],
@@ -447,7 +525,7 @@ def write_meshtags(
         # Write meshtag values
         vals = np.array(data.values)
         values_var = adios_file.io.DefineVariable(
-            data.name + "_values",
+            f"{prefix}{data.name}_values",
             vals,
             shape=[data.num_entities_global],
             start=[data.local_start],
@@ -456,7 +534,9 @@ def write_meshtags(
         adios_file.file.Put(values_var, vals, adios2.Mode.Sync)
 
         # Write meshtag dim
-        adios_file.io.DefineAttribute(data.name + "_dim", np.array([data.dim], dtype=np.uint8))
+        adios_file.io.DefineAttribute(
+            f"{prefix}{data.name}_dim", np.array([data.dim], dtype=np.uint8)
+        )
         adios_file.file.PerformPuts()
         adios_file.file.EndStep()
 
@@ -481,6 +561,7 @@ def read_meshtags_data(
     io_name = backend_args.get("io_name", "MeshTagsReader")
     engine = backend_args["engine"]
     legacy = backend_args["legacy"]
+    prefix = mesh_prefix(backend_args)
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -490,7 +571,7 @@ def read_meshtags_data(
     ) as adios_file:
         if not legacy:
             # Get mesh cell type
-            dim_attr_name = f"{name}_dim"
+            dim_attr_name = f"{prefix}{name}_dim"
             step = 0
             for i in range(adios_file.file.Steps()):
                 adios_file.file.BeginStep()
@@ -505,7 +586,7 @@ def read_meshtags_data(
             dim = int(m_dim.Data()[0])
 
             # Get mesh tags entites
-            topology_name = f"{name}_topology"
+            topology_name = f"{prefix}{name}_topology"
             for i in range(step, adios_file.file.Steps()):
                 if i > step:
                     adios_file.file.BeginStep()
@@ -531,7 +612,7 @@ def read_meshtags_data(
             adios_file.file.Get(topology, mesh_entities, adios2.Mode.Deferred)
 
             # Get mesh tags values
-            values_name = f"{name}_values"
+            values_name = f"{prefix}{name}_values"
             if values_name not in adios_file.io.AvailableVariables().keys():
                 raise KeyError(f"{values_name} not found")
 
@@ -594,8 +675,11 @@ def read_meshtags_data(
             adios_file.file.PerformGets()
             adios_file.file.EndStep()
 
+        # Tag values are int32 unless the caller asks for something wider. The
+        # submesh parent link stores global cell indices, which need int64.
+        values_dtype = np.dtype(backend_args.get("values_dtype", np.int32))
         return MeshTagsData(
-            name=name, values=tag_values.astype(np.int32), indices=mesh_entities, dim=dim
+            name=name, values=tag_values.astype(values_dtype), indices=mesh_entities, dim=dim
         )
 
 
@@ -614,6 +698,7 @@ def read_dofmap(
         Dofmap as an AdjacencyList
     """
     backend_args = {} if backend_args is None else backend_args
+    prefix = mesh_prefix(backend_args)
 
     # Handles legacy io4dolfinx files, modern files, and custom location of dofmap.
     legacy = backend_args.get("legacy", False)
@@ -623,13 +708,13 @@ def read_dofmap(
         if legacy:
             dofmap_path = "Dofmap"
         else:
-            dofmap_path = f"{name}_dofmap"
+            dofmap_path = f"{prefix}{name}_dofmap"
 
     if (xdofmap_path := backend_args.get("offsets", None)) is None:
         if legacy:
             xdofmap_path = "XDofmap"
         else:
-            xdofmap_path = f"{name}_XDofmap"
+            xdofmap_path = f"{prefix}{name}_XDofmap"
 
     engine = backend_args.get("engine", "BP4")
 
@@ -665,6 +750,7 @@ def read_dofs(
     legacy = backend_args.get("legacy", False)
     engine = backend_args.get("engine", "BP4")
     io_name = backend_args.get("io_name", f"{name}_FunctionReader")
+    prefix = mesh_prefix(backend_args)
     # Check that file contains the function to read
     adios = adios2.ADIOS(comm)
     check_file_exists(filename)
@@ -680,8 +766,11 @@ def read_dofs(
             variables = set(
                 sorted(
                     map(
-                        lambda x: x.split("_time")[0],
-                        filter(lambda x: x.endswith("_time"), adios_file.io.AvailableVariables()),
+                        lambda x: x[len(prefix) :].split("_time")[0],
+                        filter(
+                            lambda x: x.startswith(prefix) and x.endswith("_time"),
+                            adios_file.io.AvailableVariables(),
+                        ),
                     )
                 )
             )
@@ -691,9 +780,9 @@ def read_dofs(
     if legacy:
         array_path = "Values"
     else:
-        array_path = f"{name}_values"
+        array_path = f"{prefix}{name}_values"
 
-    time_name = f"{name}_time"
+    time_name = f"{prefix}{name}_time"
     return read_array(adios, filename, array_path, engine, comm, time, time_name, legacy=legacy)
 
 
@@ -724,9 +813,10 @@ def read_cell_perms(
     # Open ADIOS engine
     backend_args = {} if backend_args is None else backend_args
     engine = backend_args.get("engine", "BP4")
+    prefix = mesh_prefix(backend_args)
 
     cell_perms, _ = read_array(
-        adios, filename, "CellPermutations", engine=engine, comm=comm, legacy=True
+        adios, filename, f"{prefix}CellPermutations", engine=engine, comm=comm, legacy=True
     )
 
     return cell_perms.astype(np.uint32)
@@ -780,6 +870,7 @@ def write_function(
     backend_args = get_default_backend_args(backend_args)
     engine = backend_args["engine"]
     io_name = backend_args.get("io_name", "{name}_writer")
+    prefix = mesh_prefix(backend_args)
 
     adios = adios2.ADIOS(comm)
     cell_permutations_exists = False
@@ -787,10 +878,14 @@ def write_function(
     XDofmap_exists = False
     if adios_mode == adios2.Mode.Append:
         cell_permutations_exists = check_variable_exists(
-            adios, filename, "CellPermutations", engine=engine
+            adios, filename, f"{prefix}CellPermutations", engine=engine
         )
-        dofmap_exists = check_variable_exists(adios, filename, f"{u.name}_dofmap", engine=engine)
-        XDofmap_exists = check_variable_exists(adios, filename, f"{u.name}_XDofmap", engine=engine)
+        dofmap_exists = check_variable_exists(
+            adios, filename, f"{prefix}{u.name}_dofmap", engine=engine
+        )
+        XDofmap_exists = check_variable_exists(
+            adios, filename, f"{prefix}{u.name}_XDofmap", engine=engine
+        )
 
     with ADIOSFile(
         adios=adios, filename=filename, mode=adios_mode, engine=engine, io_name=io_name, comm=comm
@@ -798,9 +893,10 @@ def write_function(
         adios_file.file.BeginStep()
 
         if not cell_permutations_exists:
-            # Add mesh permutations
+            # Add mesh permutations. These belong to the mesh, not the function,
+            # so they are shared by every function on that mesh.
             pvar = adios_file.io.DefineVariable(
-                "CellPermutations",
+                f"{prefix}CellPermutations",
                 u.cell_permutations,
                 shape=[u.num_cells_global],
                 start=[u.local_cell_range[0]],
@@ -811,7 +907,7 @@ def write_function(
         if not dofmap_exists:
             # Add dofmap
             dofmap_var = adios_file.io.DefineVariable(
-                f"{u.name}_dofmap",
+                f"{prefix}{u.name}_dofmap",
                 u.dofmap_array,
                 shape=[u.global_dofs_in_dofmap],
                 start=[u.dofmap_range[0]],
@@ -822,7 +918,7 @@ def write_function(
         if not XDofmap_exists:
             # Add XDofmap
             xdofmap_var = adios_file.io.DefineVariable(
-                f"{u.name}_XDofmap",
+                f"{prefix}{u.name}_XDofmap",
                 u.dofmap_offsets,
                 shape=[u.num_cells_global + 1],
                 start=[u.local_cell_range[0]],
@@ -831,7 +927,7 @@ def write_function(
             adios_file.file.Put(xdofmap_var, u.dofmap_offsets)
 
         val_var = adios_file.io.DefineVariable(
-            f"{u.name}_values",
+            f"{prefix}{u.name}_values",
             u.values,
             shape=[u.num_dofs_global],
             start=[u.dof_range[0]],
@@ -842,7 +938,7 @@ def write_function(
         # Add time step to file
         t_arr = np.array([time], dtype=np.float64)
         time_var = adios_file.io.DefineVariable(
-            f"{u.name}_time",
+            f"{prefix}{u.name}_time",
             t_arr,
             shape=[1],
             start=[0],

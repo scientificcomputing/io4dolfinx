@@ -11,9 +11,40 @@ import numpy.typing as npt
 
 from ..structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 
-__all__ = ["FileMode", "IOBackend", "get_backend", "set_default_backend"]
+__all__ = [
+    "DEFAULT_MESH_NAME",
+    "FileMode",
+    "IOBackend",
+    "get_backend",
+    "get_mesh_name",
+    "set_default_backend",
+]
 
 _DEFAULT_BACKEND = "adios2"
+
+#: Name used for a mesh when the caller does not supply one. A file written
+#: before named meshes existed holds exactly this mesh, so backends must store
+#: it exactly as they did before (see :func:`get_mesh_name`).
+DEFAULT_MESH_NAME = "mesh"
+
+
+def get_mesh_name(backend_args: dict[str, Any] | None) -> str:
+    """Get the name of the mesh a backend call refers to.
+
+    A checkpoint may hold several meshes -- for instance a mesh and a submesh of
+    it -- distinguished by name. Backends take the name from
+    ``backend_args["name"]``.
+
+    Args:
+        backend_args: Arguments to backend, or None
+
+    Returns:
+        The mesh name, :data:`DEFAULT_MESH_NAME` if none was given.
+    """
+    if backend_args is None:
+        return DEFAULT_MESH_NAME
+    name = backend_args.get("name", DEFAULT_MESH_NAME)
+    return DEFAULT_MESH_NAME if name is None else str(name)
 
 
 def set_default_backend(backend: str):
@@ -60,6 +91,18 @@ class FileMode(Enum):
 
 # See https://peps.python.org/pep-0544/#modules-as-implementations-of-protocols
 class IOBackend(Protocol):
+    """Interface a storage backend must provide.
+
+    .. note::
+        A checkpoint may hold more than one mesh, each with its own topology,
+        geometry, meshtags, cell permutations and functions. Every method that
+        touches mesh-associated data takes the mesh it refers to from
+        ``backend_args["name"]``; use :func:`get_mesh_name` to read it, so that
+        omitting it selects :data:`DEFAULT_MESH_NAME` consistently. A backend
+        must store that default mesh exactly as it did before named meshes
+        existed, so that older checkpoints stay readable.
+    """
+
     read_mode: ReadMode
 
     def get_default_backend_args(self, arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -253,6 +296,9 @@ class IOBackend(Protocol):
         """
         Read cell permutation from file with given communicator,
         Split in continuous chunks based on number of cells in the input data.
+
+        Cell permutations belong to a mesh, not to a function, so which mesh is
+        meant is taken from ``backend_args["name"]``.
 
         Args:
             comm: MPI communicator used in storage

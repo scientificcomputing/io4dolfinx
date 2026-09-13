@@ -20,7 +20,7 @@ from dolfinx.graph import adjacencylist
 
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
-from .. import FileMode, ReadMode
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
 
 read_mode = ReadMode.parallel
 
@@ -61,7 +61,9 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
-    args = arguments or {"legacy": False}  # If meshtags is read from legacy
+    args = dict(arguments) if arguments else {}
+    args.setdefault("legacy", False)  # If meshtags is read from legacy
+    args.setdefault("name", DEFAULT_MESH_NAME)  # Which mesh in the file to act on
     return args
 
 
@@ -144,7 +146,7 @@ def read_timestamps(
         The time-stamps
     """
     check_file_exists(filename)
-    mesh_name = "mesh"
+    mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_directory = h5file[mesh_name]
         functions = mesh_directory["functions"]
@@ -172,7 +174,7 @@ def write_mesh(
     """
     backend_args = get_default_backend_args(backend_args)
     h5_mode = convert_file_mode(mode)
-    mesh_name = "mesh"
+    mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
         if mesh_name in h5file.keys() and h5_mode == "a":
             mesh_directory = h5file[mesh_name]
@@ -254,11 +256,12 @@ def read_mesh_data(
     """
 
     backend_args = get_default_backend_args(backend_args)
+    mesh_name = get_mesh_name(backend_args)
 
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        if "mesh" not in h5file.keys():
-            raise KeyError("Could not find mesh in file")
-        mesh_group = h5file["mesh"]
+        if mesh_name not in h5file.keys():
+            raise KeyError(f"Could not find mesh '{mesh_name}' in {filename}")
+        mesh_group = h5file[mesh_name]
         timestamps = mesh_group.attrs["timestamps"]
         assert time is not None
         parent_group = np.flatnonzero(np.isclose(timestamps, time))
@@ -333,10 +336,11 @@ def write_meshtags(
     """
     backend_args = get_default_backend_args(backend_args)
 
+    mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode="a", comm=comm, force_serial=False) as h5file:
-        if "mesh" not in h5file.keys():
-            raise KeyError("Could not find mesh in file")
-        mesh_group = h5file["mesh"]
+        if mesh_name not in h5file.keys():
+            raise KeyError(f"Could not find mesh '{mesh_name}' in file")
+        mesh_group = h5file[mesh_name]
         if "tags" not in mesh_group.keys():
             tags = mesh_group.create_group("tags")
         else:
@@ -394,14 +398,15 @@ def read_meshtags_data(
             dim = dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(cell_type))
             values = mesh["values"]
         else:
-            if "mesh" not in h5file.keys():
-                raise KeyError("No mesh found")
-            mesh = h5file["mesh"]
+            mesh_name = get_mesh_name(backend_args)
+            if mesh_name not in h5file.keys():
+                raise KeyError(f"No mesh '{mesh_name}' found")
+            mesh = h5file[mesh_name]
             if "tags" not in mesh.keys():
                 raise KeyError("Could not find 'tags' in file, are you sure this is a checkpoint?")
             tags = mesh["tags"]
             if name not in tags.keys():
-                raise KeyError(f"Could not find {name} in '/mesh/tags/' in {filename}")
+                raise KeyError(f"Could not find {name} in '/{mesh_name}/tags/' in {filename}")
             tag = tags[name]
 
             dim = tag.attrs["dim"]
@@ -410,7 +415,8 @@ def read_meshtags_data(
         num_entities_global = topology.shape[0]
         topology_range = compute_local_range(comm, num_entities_global)
         indices = topology[slice(*topology_range), :].astype(np.int64)
-        vals = values[slice(*topology_range)].astype(np.int32)
+        values_dtype = np.dtype(backend_args.get("values_dtype", np.int32))
+        vals = values[slice(*topology_range)].astype(values_dtype)
         return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
 
 
@@ -433,7 +439,7 @@ def read_dofmap(
         # If dofmap is read with full path, it is passed through backend_args
         dofmap_key = backend_args.get("dofmap", None)
         if dofmap_key is None:
-            mesh_name = "mesh"  # Prepare for multiple meshes
+            mesh_name = get_mesh_name(backend_args)
             if mesh_name not in h5file.keys():
                 raise KeyError(f"No mesh '{mesh_name}' found in {filename}")
             mesh = h5file[mesh_name]
@@ -490,7 +496,7 @@ def read_dofs(
         Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
     """
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_name = "mesh"  # Prepare for multiple meshes
+        mesh_name = get_mesh_name(backend_args)
         if mesh_name not in h5file.keys():
             raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
         mesh = h5file[mesh_name]
@@ -532,7 +538,7 @@ def read_cell_perms(
     """
 
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_name = "mesh"  # Prepare for multiple meshes
+        mesh_name = get_mesh_name(backend_args)
         if mesh_name not in h5file.keys():
             raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
         mesh = h5file[mesh_name]
@@ -562,7 +568,7 @@ def write_function(
         backend_args: Arguments to backend
     """
 
-    mesh_name = "mesh"  # Prepare for multiple meshes
+    mesh_name = get_mesh_name(backend_args)
     backend_args = get_default_backend_args(backend_args)
     h5_mode = convert_file_mode(mode)
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
@@ -754,7 +760,7 @@ def read_function_names(
     check_file_exists(filename)
     backend_args = get_default_backend_args(backend_args)
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_name = "mesh"  # Prepare for multiple meshes
+        mesh_name = get_mesh_name(backend_args)
         if mesh_name not in h5file.keys():
             raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
         mesh = h5file[mesh_name]

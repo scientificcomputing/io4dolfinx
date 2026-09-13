@@ -16,7 +16,7 @@ import numpy.typing as npt
 from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from io4dolfinx.utils import check_file_exists, compute_local_range
 
-from .. import FileMode, ReadMode
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode
 from ..h5py.backend import convert_file_mode, h5pyfile
 from ..pyvista.backend import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
 
@@ -34,7 +34,10 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
     Returns:
         Updated backend arguments
     """
-    args = arguments or {"name": "mesh"}
+    # `arguments or {...}` would drop the default whenever the caller passed any
+    # other argument, so set it on a copy instead.
+    args = dict(arguments) if arguments else {}
+    args.setdefault("name", DEFAULT_MESH_NAME)
     return args
 
 

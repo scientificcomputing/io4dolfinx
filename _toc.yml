@@ -21,6 +21,7 @@ parts:
     - file: "docs/partitioned_mesh"
     - file: "docs/time_dependent_mesh"
     - file: "docs/meshtags"
+    - file: "docs/submesh"
 
   - caption: Writing and reading functions
     chapters:
