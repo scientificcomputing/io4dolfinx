@@ -1,5 +1,6 @@
 from mpi4py import MPI
 
+import basix
 import dolfinx
 import numpy as np
 import pytest
@@ -458,3 +459,150 @@ def test_submesh_with_named_parent(tmp_path, backend):
     reference = dolfinx.fem.Function(V_sub)
     reference.interpolate(f)
     assert _max_error(u_sub, reference) < 1e-13
+
+
+def _curved_mesh(comm, dim, degree):
+    """A disk (dim 2) or ball (dim 3) with degree-``degree`` geometry.
+
+    Built by lifting a straight-sided box to a higher-order coordinate element
+    and then pushing the nodes onto the circle/sphere, so cell edges are genuine
+    curves rather than chords -- which is the point: it puts the interior
+    geometry nodes somewhere a first-order mesh could not represent.
+    """
+    # Degree > 2 has no default node placement, so name the variant.
+    variant = basix.LagrangeVariant.gll_isaac if degree > 2 else basix.LagrangeVariant.unset
+    if dim == 3:
+        # At least three divisions per axis, so that a cut offset from the
+        # symmetry plane still has whole cells on one side of it.
+        base = dolfinx.mesh.create_box(
+            comm,
+            [np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])],
+            [3, 3, 3],
+            ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
+        )
+    else:
+        base = dolfinx.mesh.create_rectangle(
+            comm,
+            [np.array([-1.0, -1.0]), np.array([1.0, 1.0])],
+            [4, 4],
+            ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
+        )
+    cmap = dolfinx.fem.coordinate_element(base.topology.cell_type, degree, int(variant))
+    mesh = dolfinx.fem.interpolate_geometry(base, cmap)
+
+    # Elliptical grid mapping: sends the box onto the ball, smoothly.
+    x = mesh.geometry.x
+    if dim == 3:
+        a, b, c = x[:, 0].copy(), x[:, 1].copy(), x[:, 2].copy()
+        x[:, 0] = a * np.sqrt(1 - b**2 / 2 - c**2 / 2 + b**2 * c**2 / 3)
+        x[:, 1] = b * np.sqrt(1 - c**2 / 2 - a**2 / 2 + c**2 * a**2 / 3)
+        x[:, 2] = c * np.sqrt(1 - a**2 / 2 - b**2 / 2 + a**2 * b**2 / 3)
+    else:
+        a, b = x[:, 0].copy(), x[:, 1].copy()
+        x[:, 0] = a * np.sqrt(1 - b**2 / 2)
+        x[:, 1] = b * np.sqrt(1 - a**2 / 2)
+    return mesh
+
+
+@pytest.mark.parametrize("dim", [2, 3])
+@pytest.mark.parametrize("degree", [2, 4])
+@pytest.mark.parametrize("codim", [0, 1])
+def test_point_data_on_curved_submesh(tmp_path, dim, degree, codim):
+    """Point data on a submesh of a curved, higher-order mesh.
+
+    Point data lives on the geometry nodes, so a degree-4 mesh puts most of it on
+    interior and edge nodes rather than vertices. The codim-1 case is the curved
+    boundary itself -- a manifold submesh whose cells are genuinely curved.
+    """
+    pytest.importorskip("h5py")
+    comm = MPI.COMM_WORLD
+    folder = comm.bcast(tmp_path, root=0)
+    path = folder / "curved.vtkhdf"
+
+    mesh = _curved_mesh(comm, dim, degree)
+    tdim = mesh.topology.dim
+    sub_dim = tdim - codim
+    mesh.topology.create_entities(sub_dim)
+    if codim == 0:
+        # Offset from the symmetry plane on purpose. A cut that grazes node
+        # positions makes `locate_entities` disagree between a cell's owner and
+        # the ranks ghosting it on a higher-order mesh, and `create_submesh`
+        # rejects the result with "Index owner change detected". Measured at
+        # np=3 on a degree-2 cube: 3 mismatches at `x[0] <= 0.0`, none at -0.1,
+        # with or without the curving perturbation.
+        entities = dolfinx.mesh.locate_entities(mesh, sub_dim, lambda x: x[0] <= -0.1)
+    else:
+        mesh.topology.create_connectivity(sub_dim, tdim)
+        entities = dolfinx.mesh.exterior_facet_indices(mesh.topology)
+    submesh = dolfinx.mesh.create_submesh(mesh, sub_dim, entities)[0]
+    assert submesh.geometry.cmaps[0].degree == degree
+
+    def f(x):
+        return np.sin(1.7 * x[0]) + 0.5 * x[1] - 0.3 * x[tdim - 1]
+
+    V = io4dolfinx.readers.create_geometry_function_space(submesh, 1)
+    u = dolfinx.fem.Function(V, name="u")
+    u.interpolate(f)
+    nodes_written = submesh.geometry.index_map().size_global
+    variant_written = submesh.geometry.cmaps[0].variant
+
+    io4dolfinx.write_mesh(path, submesh, mesh_name="curved", backend="vtkhdf")
+    io4dolfinx.write_point_data(
+        path,
+        u,
+        time=0.0,
+        mode=io4dolfinx.FileMode.append,
+        backend_args=None,
+        backend="vtkhdf",
+        mesh_name="curved",
+    )
+    del mesh, submesh, u
+
+    stored = io4dolfinx.read_mesh(path, comm, mesh_name="curved", backend="vtkhdf", time=0.0)
+    # The higher-order geometry must survive whole: degree, node placement and
+    # node count, not just the coordinates.
+    assert stored.geometry.cmaps[0].degree == degree
+    assert stored.geometry.cmaps[0].variant == variant_written
+    assert stored.geometry.index_map().size_global == nodes_written
+
+    read_back = io4dolfinx.read_point_data(
+        path, "u", stored, time=0.0, backend="vtkhdf", mesh_name="curved"
+    )
+    reference = dolfinx.fem.Function(read_back.function_space)
+    reference.interpolate(f)
+    assert _max_error(read_back, reference) < 1e-13
+
+
+@pytest.mark.parametrize("degree", [2, 4])
+@pytest.mark.parametrize("store", ["adios2", "h5py", "vtkhdf"])
+def test_lagrange_variant_survives_mesh_roundtrip(tmp_path, store, degree):
+    """A higher-order mesh keeps its node placement, not just its node count.
+
+    Two coordinate elements of the same degree but different Lagrange variants
+    put their nodes at different reference positions, so a checkpoint that drops
+    the variant restores a mesh whose cells curve differently between the same
+    node coordinates -- and does so silently, since every coordinate still
+    round-trips exactly.
+
+    ``vtkhdf`` is included deliberately. VTKHDF defines its higher-order cells as
+    equispaced and has no slot for a variant, so io4dolfinx records one in an
+    extra attribute; this is what pins that down.
+    """
+    pytest.importorskip("h5py")
+    comm = MPI.COMM_WORLD
+    folder = comm.bcast(tmp_path, root=0)
+    suffix = {"adios2": ".bp", "h5py": ".h5", "vtkhdf": ".vtkhdf"}[store]
+    path = folder / f"variant{suffix}"
+
+    base = dolfinx.mesh.create_rectangle(
+        comm, [np.array([-1.0, -1.0]), np.array([1.0, 1.0])], [4, 4]
+    )
+    variant = basix.LagrangeVariant.gll_isaac if degree > 2 else basix.LagrangeVariant.unset
+    cmap = dolfinx.fem.coordinate_element(base.topology.cell_type, degree, int(variant))
+    mesh = dolfinx.fem.interpolate_geometry(base, cmap)
+    written = (mesh.geometry.cmaps[0].degree, mesh.geometry.cmaps[0].variant)
+
+    io4dolfinx.write_mesh(path, mesh, backend=store)
+    read_kwargs = {"time": 0.0} if store == "vtkhdf" else {}
+    read_back = io4dolfinx.read_mesh(path, comm, backend=store, **read_kwargs)
+    assert (read_back.geometry.cmaps[0].degree, read_back.geometry.cmaps[0].variant) == written

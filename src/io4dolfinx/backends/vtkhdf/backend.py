@@ -23,6 +23,15 @@ from ..pyvista.backend import _arbitrary_lagrange_vtk, _cell_degree, _first_orde
 read_mode = ReadMode.parallel
 
 _vtk_hdf_version = np.array([2, 1], dtype=np.int32)
+#: Top-level group for metadata io4dolfinx needs but VTKHDF has no slot for.
+#: The specification reserves everything outside ``/VTKHDF`` for exactly this:
+#: "Top-level groups outside of /VTKHDF do not contain any information related to
+#: the VTK data model and are outside of the scope of this specification. They can
+#: be useful to store meta-information that could be read and written by custom
+#: VTKHDF implementation."
+_metadata_group = "/io4dolfinx"
+#: Basix Lagrange variant of a mesh's coordinate element, per mesh name.
+_lagrange_variant_attr = "LagrangeVariant"
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -127,6 +136,26 @@ def _get_time_index(hdf: h5py.Group, time: float | str, filename: str | Path) ->
     return pos[0]
 
 
+def _read_lagrange_variant(h5file, name: str) -> int:
+    """Lagrange variant of mesh ``name``, or the VTKHDF default.
+
+    A file written by anything other than io4dolfinx -- or by io4dolfinx before
+    this metadata existed -- holds VTKHDF's equispaced higher-order cells.
+
+    Args:
+        h5file: The open HDF5 file
+        name: Name of the mesh
+
+    Returns:
+        The basix Lagrange variant as an integer.
+    """
+    equispaced = int(basix.LagrangeVariant.equispaced)
+    metadata = h5file.get(_metadata_group)
+    if metadata is None or name not in metadata:
+        return equispaced
+    return int(metadata[name].attrs.get(_lagrange_variant_attr, equispaced))
+
+
 def read_mesh_data(
     filename: Path | str,
     comm: MPI.Comm,
@@ -152,6 +181,7 @@ def read_mesh_data(
         raise RuntimeError("Cannot read partition data with VTKHDF")
     with h5pyfile(filename, "r", comm=comm) as h5file:
         hdf = _get_vtk_group(h5file, backend_args["name"])
+        lagrange_variant = _read_lagrange_variant(h5file, backend_args["name"])
         if time is None:
             num_cells_global = hdf["Types"].size
             local_cell_range = compute_local_range(comm, num_cells_global)
@@ -214,11 +244,17 @@ def read_mesh_data(
     # NOTE: Currently we limit ourselfs to a single celltype, as it makes life easier,
     # other things have to change in `MeshReadData` to support this.
     num_nodes_per_cell = offset[1:] - offset[:-1]
-    unique_cells = find_all_unique_cell_types(MPI.COMM_WORLD, cell_types_local, num_nodes_per_cell)
+    unique_cells = find_all_unique_cell_types(comm, cell_types_local, num_nodes_per_cell)
     if unique_cells.shape[0] > 1:
         raise NotImplementedError("io4dolfinx does not support mixed celltype grids")
-    topology = topology.reshape(-1, num_nodes_per_cell[0])
+    if unique_cells.shape[0] == 0:
+        name = backend_args["name"]
+        raise ValueError(f"Grid '{name}' in {filename} has no cells on any process.")
+    # Take the width from the globally agreed cell type rather than from this
+    # process's own cells: a mesh with fewer cells than processes leaves some of
+    # them with nothing local to measure.
     cell_type, number_of_nodes = unique_cells[0]
+    topology = topology.reshape(-1, number_of_nodes)
     gtype = backend_args.get("dtype", points_local.dtype)
     if cell_type in _first_order_vtk.keys():
         ct = _first_order_vtk[cell_type]
@@ -230,7 +266,9 @@ def read_mesh_data(
         raise ValueError(f"Unknown VTK cell type {cell_type} in {filename}")
     perm = dolfinx.cpp.io.perm_vtk(dolfinx.mesh.to_type(ct), number_of_nodes)
     topology = topology[:, perm]
-    lvar = int(basix.LagrangeVariant.equispaced)
+    # Equispaced is the VTKHDF default; a file io4dolfinx wrote says which
+    # variant its nodes were actually placed with.
+    lvar = int(lagrange_variant)
     return ReadMeshData(
         cells=topology, cell_type=ct, x=points_local.astype(gtype), lvar=lvar, degree=degree
     )
@@ -535,6 +573,15 @@ def write_mesh(
         mesh_assembly = _create_group(assembly, name, h5_mode)
         if name not in mesh_assembly.keys():
             mesh_assembly[name] = h5py.SoftLink(f"/VTKHDF/{name}")
+
+        # VTKHDF defines its higher-order cells as equispaced and has nowhere to
+        # record a Lagrange variant, so it goes in our own top-level group, which
+        # the specification reserves for exactly this. Without it a degree>1 mesh
+        # reads back with its coordinates intact but its cells curving
+        # differently between them.
+        metadata = _create_group(h5file, _metadata_group, h5_mode)
+        mesh_metadata = _create_group(metadata, name, h5_mode)
+        mesh_metadata.attrs[_lagrange_variant_attr] = np.int32(mesh.lagrange_variant)
 
         # Write time dependent points
         number_of_points = _create_dataset(
