@@ -85,7 +85,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
         insert_position = np.flatnonzero(ownership_array == -1)
         ownership_array[insert_position] = cell_array
 
-        partition_map = dolfinx.common.IndexMap(mesh.comm, ownership_array.size)
+        partition_map = compat.index_map(mesh.comm, ownership_array.size)
         ownership_offset += partition_map.local_range[0]
         partition_range = partition_map.local_range
         partition_global = partition_map.size_global
