@@ -381,9 +381,7 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     except TypeError:
         cpp_el = _fe_constructor(ufl_el.basix_element._e, block_size=N, symmetric=False)  # type: ignore[call-overload]
     dof_layout = dolfinx.cpp.fem.create_element_dof_layout(cpp_el, [])
-    cpp_dofmap = dolfinx.cpp.fem.DofMap(
-        dof_layout, compat.cpp_index_map(geom_imap), N, adj_list, N
-    )
+    cpp_dofmap = dolfinx.cpp.fem.DofMap(dof_layout, compat.cpp_index_map(geom_imap), N, adj_list, N)
 
     # Create function space
     try:
