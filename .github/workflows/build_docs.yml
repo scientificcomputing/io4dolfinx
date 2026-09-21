@@ -27,7 +27,17 @@ env:
   ARTIFACT_NAME: docs
   PUBLISH_DIR: ./_build/html
   PIP_NO_BINARY: h5py
-
+  OMPI_ALLOW_RUN_AS_ROOT: 1
+  OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
+  PRTE_MCA_rmaps_default_mapping_policy: :oversubscribe
+  # Works around open-mpi/ompi#13918: MPI_Dist_graph_create deadlocks at
+  # random under the treematch topology component, because it exchanges edge
+  # metadata on hard-coded tags -50/-51 that the nonblocking-collective tag
+  # allocator can count down into. Selecting the basic component avoids it.
+  # Fixed upstream by open-mpi/ompi#13933, first tagged in OpenMPI v5.0.11;
+  # the image currently ships 5.0.10. MPICH ignores the variable, so it is
+  # safe to set unconditionally. Drop once the image has OpenMPI >= 5.0.11.
+  OMPI_MCA_topo: basic
 jobs:
   get_image_tag:
     runs-on: ubuntu-latest
