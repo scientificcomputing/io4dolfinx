@@ -22,6 +22,8 @@ import numpy.typing as npt
 import ufl
 from packaging.version import Version
 
+from . import compat
+
 __all__ = [
     "check_file_exists",
     "compute_local_range",
@@ -260,7 +262,7 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
         # Could use create_geometry here when things are fixed
         geom = dolfinx.mesh.Geometry(
             type(mesh.geometry._cpp_object)(
-                geom_imap,
+                compat.cpp_index_map(geom_imap),
                 geom_dofmap,
                 coordinate_element._cpp_object,  # type: ignore[arg-type]
                 x,

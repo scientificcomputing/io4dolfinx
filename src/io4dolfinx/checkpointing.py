@@ -596,7 +596,7 @@ def write_function(
     # Convert imap index to global index
     imap_global = dofmap.index_map.local_to_global(dmap_loc)
     dofmap_global = imap_global * index_map_bs + dmap_rem
-    dofmap_imap = dolfinx.common.IndexMap(mesh.comm, num_dofs_local_dmap)
+    dofmap_imap = compat.index_map(mesh.comm, num_dofs_local_dmap)
 
     # Compute dofmap offsets
     local_dofmap_offsets = np.arange(num_cells_local + 1, dtype=np.int64)
