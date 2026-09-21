@@ -44,6 +44,7 @@ jobs:
         run: echo "image=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
 
   test-code:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     # The container tag is now dynamic based on the input passed by the caller
     container: ghcr.io/fenics/test-env:current

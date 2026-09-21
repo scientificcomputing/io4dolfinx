@@ -48,6 +48,7 @@ jobs:
         run: echo "image=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
 
   build-docs:
+    timeout-minutes: 30
     needs: get_image_tag
     runs-on: ubuntu-latest
     container: ghcr.io/fenics/dolfinx/dolfinx:${{ needs.get_image_tag.outputs.image }}
