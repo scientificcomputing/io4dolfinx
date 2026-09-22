@@ -764,6 +764,132 @@ def test_point_data_on_curved_submesh(tmp_path, dim, degree, codim):
 
 
 @pytest.mark.parametrize("degree", [2, 4])
+def test_transfer_on_curved_higher_order_parent(tmp_path, backend, degree):
+    """The whole chain on a parent whose geometry is genuinely curved.
+
+    Every other transfer test uses an affine parent, where a cell's higher-order
+    nodes are collinear and a degree-4 mesh is indistinguishable from a degree-1
+    one. Here the parent is a ball, so the submesh is the curved sphere surface:
+    its cells are curves, and the geometry nodes that carry that curvature have
+    to survive the parent's round-trip, ``create_submesh`` on the re-derived
+    parent, and the interpolation the transfer performs.
+    """
+    comm = MPI.COMM_WORLD
+    folder = comm.bcast(tmp_path, root=0)
+    path = folder / f"curved_parent{SUFFIX[backend]}"
+
+    mesh = _curved_mesh(comm, 3, degree)
+    tdim = mesh.topology.dim
+    mesh.topology.create_entities(tdim - 1)
+    mesh.topology.create_connectivity(tdim - 1, tdim)
+    facets = dolfinx.mesh.exterior_facet_indices(mesh.topology)
+    submesh, cell_map, _, _ = dolfinx.mesh.create_submesh(mesh, tdim - 1, facets)
+    assert submesh.geometry.cmaps[0].degree == degree
+
+    def f(x):
+        return np.sin(1.7 * x[0]) + 0.5 * x[1] - 0.3 * x[2]
+
+    element = ("Lagrange", degree)
+    u = dolfinx.fem.Function(dolfinx.fem.functionspace(submesh, element), name="u")
+    u.interpolate(f)
+
+    io4dolfinx.write_mesh(path, mesh, backend=backend)
+    io4dolfinx.write_submesh(path, submesh, mesh, cell_map, mesh_name="shell", backend=backend)
+    io4dolfinx.write_function(
+        path, u, time=0.0, mode=io4dolfinx.FileMode.append, mesh_name="shell", backend=backend
+    )
+    del mesh, submesh, cell_map, u
+
+    parent = io4dolfinx.read_mesh(path, comm, backend=backend)
+    assert parent.geometry.cmaps[0].degree == degree
+    stored = io4dolfinx.read_mesh(path, comm, mesh_name="shell", backend=backend)
+    u_stored = dolfinx.fem.Function(dolfinx.fem.functionspace(stored, element), name="u")
+    io4dolfinx.read_function(path, u_stored, time=0.0, name="u", mesh_name="shell", backend=backend)
+
+    checkpoint = io4dolfinx.read_submesh(path, parent, mesh_name="shell", backend=backend)
+    assert checkpoint.submesh.geometry.cmaps[0].degree == degree
+    V_sub = dolfinx.fem.functionspace(checkpoint.submesh, element)
+    u_sub = dolfinx.fem.Function(V_sub, name="u")
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
+
+    reference = dolfinx.fem.Function(V_sub)
+    reference.interpolate(f)
+    assert _max_error(u_sub, reference) < 1e-12
+
+
+@pytest.mark.parametrize("degree", [1, 4])
+@pytest.mark.parametrize("kind", ["point", "cell"])
+def test_vtkhdf_visualisation_data_can_be_transferred(tmp_path, kind, degree):
+    """The vtkhdf route: read the stored submesh's data, then transfer it.
+
+    vtkhdf cannot make function checkpoints, so ``read_function`` is unavailable,
+    but ``read_point_data`` and ``read_cell_data`` return ordinary functions and
+    feed ``transfer_submesh_function`` like any other source. Point data follows
+    the mesh's coordinate element, so on a degree-4 mesh this transfers a
+    degree-4 field, not a linear one.
+    """
+    pytest.importorskip("h5py")
+    comm = MPI.COMM_WORLD
+    folder = comm.bcast(tmp_path, root=0)
+    path = folder / "vis_transfer.vtkhdf"
+
+    mesh = _curved_mesh(comm, 3, degree)
+    tdim = mesh.topology.dim
+    mesh.topology.create_entities(tdim - 1)
+    mesh.topology.create_connectivity(tdim - 1, tdim)
+    facets = dolfinx.mesh.exterior_facet_indices(mesh.topology)
+    submesh, cell_map, _, _ = dolfinx.mesh.create_submesh(mesh, tdim - 1, facets)
+
+    def f(x):
+        return np.sin(1.7 * x[0]) + 0.5 * x[1] - 0.3 * x[2]
+
+    def space(m):
+        if kind == "point":
+            return io4dolfinx.readers.create_geometry_function_space(m, 1)
+        return dolfinx.fem.functionspace(m, ("DG", 0))
+
+    u = dolfinx.fem.Function(space(submesh), name="u")
+    u.interpolate(f)
+
+    io4dolfinx.write_mesh(path, mesh, backend="vtkhdf")
+    io4dolfinx.write_submesh(
+        path,
+        submesh,
+        mesh,
+        cell_map,
+        mesh_name="shell",
+        mode=io4dolfinx.FileMode.append,
+        backend="vtkhdf",
+    )
+    writer = io4dolfinx.write_point_data if kind == "point" else io4dolfinx.write_cell_data
+    writer(
+        path,
+        u,
+        time=0.0,
+        mode=io4dolfinx.FileMode.append,
+        backend_args=None,
+        backend="vtkhdf",
+        mesh_name="shell",
+    )
+    del mesh, submesh, cell_map, u
+
+    parent = io4dolfinx.read_mesh(path, comm, backend="vtkhdf")
+    stored = io4dolfinx.read_mesh(path, comm, mesh_name="shell", backend="vtkhdf")
+    reader = io4dolfinx.read_point_data if kind == "point" else io4dolfinx.read_cell_data
+    u_stored = reader(path, "u", stored, time=0.0, backend="vtkhdf", mesh_name="shell")
+    if kind == "point":
+        assert u_stored.function_space.ufl_element().embedded_superdegree == degree
+
+    checkpoint = io4dolfinx.read_submesh(path, parent, mesh_name="shell", backend="vtkhdf")
+    u_sub = dolfinx.fem.Function(space(checkpoint.submesh), name="u")
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
+
+    reference = dolfinx.fem.Function(u_sub.function_space)
+    reference.interpolate(f)
+    assert _max_error(u_sub, reference) < 1e-12
+
+
+@pytest.mark.parametrize("degree", [2, 4])
 @pytest.mark.parametrize("store", ["adios2", "h5py", "vtkhdf"])
 def test_lagrange_variant_survives_mesh_roundtrip(tmp_path, store, degree):
     """A higher-order mesh keeps its node placement, not just its node count.
