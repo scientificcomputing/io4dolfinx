@@ -392,6 +392,7 @@ def transfer_submesh_function(
             " the counts disagree on at least one process."
             f" Here: {num_cells} cells, {len(post_code)} indices."
         )
+    post_code = np.asarray(post_code, dtype=np.int64)
     cells = np.arange(num_cells, dtype=np.int32)
 
     # Interpolation points of the destination, grouped per cell.
@@ -406,11 +407,22 @@ def transfer_submesh_function(
     # Which process holds each stored cell in the source mesh, and where.
     source_tdim = source_mesh.topology.dim
     source_imap = source_mesh.topology.index_map(source_tdim)
+    # `index_owner` asserts that its indices are in range, and that assert is
+    # local: a process tripping it would abort while every other process waited
+    # for it in the exchange below. So the range is checked collectively first.
+    num_stored = source_imap.size_global
+    out_of_range = post_code[(post_code < 0) | (post_code >= num_stored)]
+    if comm.allreduce(len(out_of_range), MPI.SUM) > 0:
+        raise ValueError(
+            f"Post codes must index cells of the stored submesh, which has"
+            f" {num_stored} of them. Out of range here: {out_of_range[:5]}."
+        )
+
     owner_rank, owner_cell = _lookup_post_code(
         comm,
         np.asarray(source_mesh.topology.original_cell_index[: source_imap.size_local]),
-        np.asarray(post_code, dtype=np.int64),
-        source_imap.size_global,
+        post_code,
+        num_stored,
     )
     # Counting owned cells only makes this an exact global tally: a ghost carries
     # the same post code as its owner and so resolves the same way, and would
