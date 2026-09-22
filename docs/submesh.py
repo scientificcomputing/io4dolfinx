@@ -97,7 +97,7 @@ u_sub = dolfinx.fem.Function(V_sub, name="u")
 io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
 # -
 
-# The {py:class}`checkpoint<io4dolfinx.SubmeshCheckpoint>` stores the 
+# The {py:class}`checkpoint<io4dolfinx.SubmeshCheckpoint>` stores the
 # {py:attr}`cell_map<io4dolfinx.SubmeshCheckpoint.cell_map>` and
 # {py:attr}`vertex_map<io4dolfinx.SubmeshCheckpoint.vertex_map>` and
 # {py:attr}`node_map<io4dolfinx.SubmeshCheckpoint.node_map>` that are
