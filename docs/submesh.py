@@ -10,9 +10,10 @@
 # renumbers the vertices, so the same cell comes back with its vertices in a
 # different order and its degrees of freedom in different positions.
 #
-# Second, `create_submesh` builds its vertex map allowing ownership to move, so
-# a process can own a vertex -- and a degree of freedom -- that is only incident
-# to cells it ghosts. Such a dof has no position in any cell that process owns,
+# Second, {py:func}`create_submesh<dolfinx.mesh.create_submesh>` builds its vertex
+# map allowing ownership to move, so a process can own a vertex and a degree of
+# freedom  that is only incident to the cells it ghosts.
+# Such a dof has no position in any cell that process owns,
 # which is exactly what the checkpoint reader needs to find it.
 #
 # So io4dolfinx never reads a function onto a re-derived submesh. It stores the
@@ -96,12 +97,18 @@ u_sub = dolfinx.fem.Function(V_sub, name="u")
 io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
 # -
 
+# The {py:class}`checkpoint<io4dolfinx.SubmeshCheckpoint>` stores the 
+# {py:attr}`cell_map<io4dolfinx.SubmeshCheckpoint.cell_map>` and
+# {py:attr}`vertex_map<io4dolfinx.SubmeshCheckpoint.vertex_map>` and
+# {py:attr}`node_map<io4dolfinx.SubmeshCheckpoint.node_map>` that are
+# similar to the ones created by {py:func}`dolfinx.mesh.create_submesh`.
+# There are also some extra attributes that are stored that are used
+# for the transfer of functions from the stored submesh to the re-derived submesh.
+
 # The transfer routes each interpolation point straight to the process and cell
 # that can evaluate it, using the cell correspondence the checkpoint already
 # records. No geometric point location is involved, so there is no search
 # tolerance to tune and nothing that can silently fail to find a point.
-#
-# The result agrees with the original to machine precision.
 
 # +
 reference = dolfinx.fem.Function(V_sub)
