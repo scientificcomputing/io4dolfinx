@@ -336,7 +336,7 @@ def read_function(
     # Compute index of input cells and get cell permutation
     num_owned_cells = mesh.topology.index_map(mesh.topology.dim).size_local
     input_cells = mesh.topology.original_cell_index[:num_owned_cells]
-    mesh.topology.create_entity_permutations()
+    compat.create_cell_permutations(mesh)
     cell_perm = mesh.topology.get_cell_permutation_info()[:num_owned_cells]
 
     # Compute mesh->input communicator
@@ -636,7 +636,7 @@ def write_function(
     values = u.x.array
     mesh = u.function_space.mesh
     comm = mesh.comm
-    mesh.topology.create_entity_permutations()
+    compat.create_cell_permutations(mesh)
     cell_perm = mesh.topology.get_cell_permutation_info()
     num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
     local_cell_range = mesh.topology.index_map(mesh.topology.dim).local_range
@@ -657,7 +657,7 @@ def write_function(
     # Convert imap index to global index
     imap_global = dofmap.index_map.local_to_global(dmap_loc)
     dofmap_global = imap_global * index_map_bs + dmap_rem
-    dofmap_imap = dolfinx.common.IndexMap(mesh.comm, num_dofs_local_dmap)
+    dofmap_imap = compat.index_map(mesh.comm, num_dofs_local_dmap)
 
     # Compute dofmap offsets
     local_dofmap_offsets = np.arange(num_cells_local + 1, dtype=np.int64)
