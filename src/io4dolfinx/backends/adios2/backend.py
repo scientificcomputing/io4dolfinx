@@ -676,7 +676,7 @@ def read_meshtags_data(
             adios_file.file.EndStep()
 
         # Tag values are int32 unless the caller asks for something wider. The
-        # submesh parent link stores global cell indices, which need int64.
+        # submesh post codes are global cell indices, which need int64.
         values_dtype = np.dtype(backend_args.get("values_dtype", np.int32))
         return MeshTagsData(
             name=name, values=tag_values.astype(values_dtype), indices=mesh_entities, dim=dim

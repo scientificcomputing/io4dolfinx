@@ -111,7 +111,7 @@ def test_submesh_roundtrip(tmp_path, backend, codim, family, degree, same_file):
     checkpoint = io4dolfinx.read_submesh(parent_file, parent, mesh_name="wall", backend=backend)
     V_sub = dolfinx.fem.functionspace(checkpoint.submesh, (family, degree))
     u_sub = dolfinx.fem.Function(V_sub)
-    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
 
     reference_sub = dolfinx.fem.Function(V_sub)
     reference_sub.interpolate(f)
@@ -164,7 +164,7 @@ def test_submesh_roundtrip_codim0_vector(tmp_path, backend, family, degree):
     checkpoint = io4dolfinx.read_submesh(parent_file, parent, mesh_name="wall", backend=backend)
     V_sub = dolfinx.fem.functionspace(checkpoint.submesh, (family, degree))
     u_sub = dolfinx.fem.Function(V_sub)
-    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
     reference_sub = dolfinx.fem.Function(V_sub)
     reference_sub.interpolate(f)
     assert _max_error(u_sub, reference_sub) < 1e-13
@@ -227,7 +227,7 @@ def test_manifold_hcurl_roundtrips_but_transfer_raises(tmp_path, backend, family
     checkpoint = io4dolfinx.read_submesh(parent_file, parent, mesh_name="wall", backend=backend)
     u_sub = dolfinx.fem.Function(dolfinx.fem.functionspace(checkpoint.submesh, (family, 1)))
     with pytest.raises(NotImplementedError, match="not supported"):
-        io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
+        io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
 
 
 @pytest.mark.parametrize("codim", [0, 1])
@@ -262,6 +262,113 @@ def test_read_submesh_supports_mixed_dimensional_assembly(tmp_path, backend, cod
     area = comm.allreduce(dolfinx.fem.assemble_scalar(form), MPI.SUM)
     expected = 0.5 if (codim == 0 and dim == 3) else 1.0
     assert np.isclose(area, expected)
+
+
+@pytest.mark.parametrize("codim", [0, 1])
+@pytest.mark.parametrize("degree", [0, 1, 2])
+def test_transfer_of_discontinuous_field(tmp_path, backend, codim, degree):
+    """A DG field that genuinely jumps inside the submesh survives the transfer.
+
+    The DG spaces tested elsewhere carry a smooth function, which cannot tell
+    whether a value came from the right cell. Here the field is discontinuous
+    across a plane of the mesh, and for degree > 0 the interpolation points sit
+    on the vertices and facets that straddle it -- the places where taking the
+    value from the neighbouring cell would go unnoticed by a continuous field.
+    Each point is evaluated in the cell its post code names, so the side is never
+    in doubt.
+    """
+    comm = MPI.COMM_WORLD
+    folder = comm.bcast(tmp_path, root=0)
+    path = folder / f"jump{SUFFIX[backend]}"
+
+    def jumpy(x):
+        # Discontinuous across x = 0.25, which is a plane of the 4x4x4 mesh.
+        return np.where(x[0] < 0.25, 3.0, -1.0)
+
+    element = ("DG", degree)
+    mesh, submesh, cell_map = _make_submesh(comm, codim)
+    u = dolfinx.fem.Function(dolfinx.fem.functionspace(submesh, element), name="u")
+    u.interpolate(jumpy)
+
+    io4dolfinx.write_mesh(path, mesh, backend=backend)
+    io4dolfinx.write_submesh(path, submesh, mesh, cell_map, mesh_name="wall", backend=backend)
+    io4dolfinx.write_function(
+        path, u, time=0.0, mode=io4dolfinx.FileMode.append, mesh_name="wall", backend=backend
+    )
+    del mesh, submesh, cell_map, u
+
+    parent = io4dolfinx.read_mesh(path, comm, backend=backend)
+    stored = io4dolfinx.read_mesh(path, comm, mesh_name="wall", backend=backend)
+    u_stored = dolfinx.fem.Function(dolfinx.fem.functionspace(stored, element), name="u")
+    io4dolfinx.read_function(path, u_stored, time=0.0, name="u", mesh_name="wall", backend=backend)
+
+    checkpoint = io4dolfinx.read_submesh(path, parent, mesh_name="wall", backend=backend)
+    V_sub = dolfinx.fem.functionspace(checkpoint.submesh, element)
+    u_sub = dolfinx.fem.Function(V_sub, name="u")
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
+
+    reference = dolfinx.fem.Function(V_sub)
+    reference.interpolate(jumpy)
+    assert _max_error(u_sub, reference) < 1e-13
+
+
+def test_interface_submesh_assembly(tmp_path, backend):
+    """A facet submesh on an interface, integrated against a parent field.
+
+    Only quantities that do not depend on which side is ``"+"`` are asserted:
+    the restrictions follow the facet-to-cell connectivity, so their assignment
+    is not a property of the mesh and no checkpoint preserves it. It is not
+    stable without IO either -- the same form on a freshly built mesh changes
+    sign between one process and three. ``abs`` of the jump is invariant; a form
+    that needs the *signed* jump has to pin the restrictions itself, e.g. by
+    ordering the integration entities by cell marker
+    (``scifem.compute_interface_data``).
+    """
+    comm = MPI.COMM_WORLD
+    folder = comm.bcast(tmp_path, root=0)
+    path = folder / f"iface{SUFFIX[backend]}"
+
+    mesh = dolfinx.mesh.create_unit_cube(
+        comm, 4, 4, 4, ghost_mode=dolfinx.mesh.GhostMode.shared_facet
+    )
+    tdim = mesh.topology.dim
+    mesh.topology.create_entities(tdim - 1)
+    facets = dolfinx.mesh.locate_entities(mesh, tdim - 1, lambda x: np.isclose(x[0], 0.5))
+    interface, cell_map, _, _ = dolfinx.mesh.create_submesh(mesh, tdim - 1, facets)
+
+    io4dolfinx.write_mesh(path, mesh, backend=backend)
+    io4dolfinx.write_submesh(
+        path, interface, mesh, cell_map, mesh_name="interface", backend=backend
+    )
+    del mesh, interface, cell_map
+
+    parent = io4dolfinx.read_mesh(path, comm, backend=backend)
+    checkpoint = io4dolfinx.read_submesh(path, parent, mesh_name="interface", backend=backend)
+
+    # A parent field with a jump of exactly 1 across the interface.
+    k = dolfinx.fem.Function(dolfinx.fem.functionspace(parent, ("DG", 0)))
+    midpoints = parent.geometry.x[parent.geometry.dofmaps[0]].mean(axis=1)
+    k.x.array[: len(midpoints)] = np.where(midpoints[:, 0] < 0.5, 1.0, 2.0)
+    k.x.scatter_forward()
+
+    ptdim = parent.topology.dim
+    parent.topology.create_entities(ptdim - 1)
+    parent.topology.create_connectivity(ptdim - 1, ptdim)
+    marked = dolfinx.mesh.locate_entities(parent, ptdim - 1, lambda x: np.isclose(x[0], 0.5))
+    tags = dolfinx.mesh.meshtags(parent, ptdim - 1, marked, np.ones(len(marked), dtype=np.int32))
+    dS = ufl.Measure("dS", domain=parent, subdomain_data=tags, subdomain_id=1)
+
+    w = dolfinx.fem.Function(dolfinx.fem.functionspace(checkpoint.submesh, ("DG", 0)))
+    w.x.array[:] = 1.0
+
+    for expr, expected in [
+        (w("+") * dS, 1.0),  # area of the interface
+        (ufl.avg(k) * w("+") * dS, 1.5),  # restriction-symmetric
+        (abs(ufl.jump(k)) * w("+") * dS, 1.0),  # restriction-invariant
+    ]:
+        form = dolfinx.fem.form(expr, entity_maps=[checkpoint.cell_map])
+        value = comm.allreduce(dolfinx.fem.assemble_scalar(form), MPI.SUM)
+        assert np.isclose(value, expected), (value, expected)
 
 
 def test_submesh_with_empty_ranks(tmp_path, backend):
@@ -313,7 +420,7 @@ def test_submesh_with_empty_ranks(tmp_path, backend):
     checkpoint = io4dolfinx.read_submesh(parent_file, parent, mesh_name="strip", backend=backend)
     V_sub = dolfinx.fem.functionspace(checkpoint.submesh, ("Lagrange", 2))
     u_sub = dolfinx.fem.Function(V_sub)
-    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
 
     reference = dolfinx.fem.Function(V_sub)
     reference.interpolate(f)
@@ -359,6 +466,89 @@ def test_named_meshes_do_not_collide(tmp_path, backend):
     ref_cube = dolfinx.fem.Function(v_cube.function_space)
     ref_cube.interpolate(lambda x: 3.0 * x[2])
     assert _max_error(v_cube, ref_cube) < 1e-13
+
+
+def test_multiple_submeshes_of_one_parent(tmp_path, backend):
+    """Several submeshes of the same parent share one file without colliding.
+
+    Two of them have the same co-dimension, so their post codes tag the same
+    dimension of the parent, and one name is a prefix of the other -- which is
+    what would break if tags were matched by prefix rather than by name.
+    """
+    comm = MPI.COMM_WORLD
+    folder = comm.bcast(tmp_path, root=0)
+    path = folder / f"many{SUFFIX[backend]}"
+
+    def f(x):
+        return np.sin(1.3 * x[0] + 0.2) + x[1] - 0.5 * x[2]
+
+    mesh = dolfinx.mesh.create_unit_cube(
+        comm, 4, 4, 4, ghost_mode=dolfinx.mesh.GhostMode.shared_facet
+    )
+    tdim = mesh.topology.dim
+    mesh.topology.create_entities(tdim - 1)
+
+    # A cell submesh and two facet submeshes, on opposite faces.
+    subs = {}
+    for name, dim, locator in [
+        ("half", tdim, lambda x: x[0] <= 0.5 + 1e-12),
+        ("wall", tdim - 1, lambda x: np.isclose(x[0], 0.0)),
+        ("wall2", tdim - 1, lambda x: np.isclose(x[0], 1.0)),
+    ]:
+        entities = dolfinx.mesh.locate_entities(mesh, dim, locator)
+        submesh, cell_map, _, _ = dolfinx.mesh.create_submesh(mesh, dim, entities)
+        subs[name] = (dim, submesh, cell_map)
+
+    io4dolfinx.write_mesh(path, mesh, backend=backend)
+    for name, (_, submesh, cell_map) in subs.items():
+        u = dolfinx.fem.Function(dolfinx.fem.functionspace(submesh, ("Lagrange", 2)), name="u")
+        u.interpolate(f)
+        io4dolfinx.write_submesh(
+            path,
+            submesh,
+            mesh,
+            cell_map,
+            mesh_name=name,
+            mode=io4dolfinx.FileMode.append,
+            backend=backend,
+        )
+        io4dolfinx.write_function(
+            path, u, time=0.0, mode=io4dolfinx.FileMode.append, mesh_name=name, backend=backend
+        )
+    expected = {
+        name: (dim, submesh.topology.index_map(dim).size_global)
+        for name, (dim, submesh, _) in subs.items()
+    }
+    del mesh, subs
+
+    parent = io4dolfinx.read_mesh(path, comm, backend=backend)
+    for name, (dim, num_cells_global) in expected.items():
+        stored = io4dolfinx.read_mesh(path, comm, mesh_name=name, backend=backend)
+        assert stored.topology.dim == dim
+        u_stored = dolfinx.fem.Function(
+            dolfinx.fem.functionspace(stored, ("Lagrange", 2)), name="u"
+        )
+        io4dolfinx.read_function(
+            path, u_stored, time=0.0, name="u", mesh_name=name, backend=backend
+        )
+
+        checkpoint = io4dolfinx.read_submesh(path, parent, mesh_name=name, backend=backend)
+        assert checkpoint.submesh.topology.dim == dim
+        assert checkpoint.submesh.topology.index_map(dim).size_global == num_cells_global
+
+        # Each submesh must come back as itself: the two facet submeshes would be
+        # indistinguishable by size alone.
+        if name == "wall":
+            assert np.all(checkpoint.submesh.geometry.x[:, 0] < 1e-12)
+        elif name == "wall2":
+            assert np.all(checkpoint.submesh.geometry.x[:, 0] > 1.0 - 1e-12)
+
+        V_sub = dolfinx.fem.functionspace(checkpoint.submesh, ("Lagrange", 2))
+        u_sub = dolfinx.fem.Function(V_sub, name="u")
+        io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
+        reference = dolfinx.fem.Function(V_sub)
+        reference.interpolate(f)
+        assert _max_error(u_sub, reference) < 1e-13
 
 
 @pytest.mark.parametrize("kind", ["point", "cell"])
@@ -454,7 +644,7 @@ def test_submesh_with_named_parent(tmp_path, backend):
     )
     V_sub = dolfinx.fem.functionspace(checkpoint.submesh, ("Lagrange", 2))
     u_sub = dolfinx.fem.Function(V_sub)
-    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
 
     reference = dolfinx.fem.Function(V_sub)
     reference.interpolate(f)

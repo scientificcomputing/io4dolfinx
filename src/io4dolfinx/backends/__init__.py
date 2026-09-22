@@ -264,7 +264,7 @@ class IOBackend(Protocol):
             backend_args: Arguments to backend
 
         Returns:
-            Dofmap as an {py:class}`dolfinx.graph.AdjacencyList`
+            Dofmap as an :class:`dolfinx.graph.AdjacencyList`
         """
 
     def read_dofs(

@@ -419,7 +419,7 @@ def read_point_data(
     """Read data from the nodes of a mesh.
 
     Note:
-        Backend has to implement {py:class}`io4dolfinx.backends.read_cell_data`.
+        Backend has to implement :meth:`io4dolfinx.backends.IOBackend.read_point_data`.
 
     Args:
         filename: Path to file
@@ -486,10 +486,10 @@ def read_cell_data(
     backend: str = "xdmf",
     mesh_name: str | None = None,
 ) -> dolfinx.fem.Function:
-    """Read data from the nodes of a mesh.
+    """Read data from the cells of a mesh.
 
     Note:
-        Backend has to implement {py:class}`io4dolfinx.backends.read_cell_data`.
+        Backend has to implement :meth:`io4dolfinx.backends.IOBackend.read_cell_data`.
 
     Args:
         filename: Path to file

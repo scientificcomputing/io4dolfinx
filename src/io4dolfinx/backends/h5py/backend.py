@@ -432,7 +432,7 @@ def read_dofmap(
         backend_args: Arguments to backend
 
     Returns:
-        Dofmap as an {py:class}`dolfinx.graph.AdjacencyList`
+        Dofmap as an :class:`dolfinx.graph.AdjacencyList`
     """
     backend_args = {} if backend_args is None else backend_args
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:

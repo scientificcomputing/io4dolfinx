@@ -55,11 +55,13 @@ u.interpolate(lambda x: np.sin(3 * x[1]) + x[2])
 # ## Writing
 #
 # The parent goes in first. {py:func}`io4dolfinx.write_submesh` then stores the
-# submesh under a name of its own, together with a *parent link*: for each stored
-# submesh cell, the parent geometry nodes of the entity it came from. That link
-# is what lets the submesh be found again in a re-partitioned parent.
+# submesh under a name of its own, together with its *post codes*: each parent
+# entity that became a submesh cell is tagged, by its parent geometry nodes, with
+# the index that cell has in the stored submesh. Addressing the entities that way
+# is what lets them be found again in a re-partitioned parent, and the values are
+# what the data is later routed by.
 #
-# The link tags entities of the parent, so it is stored alongside the parent.
+# The post codes tag entities of the parent, so they are stored alongside the parent.
 # Here everything goes in one file; pass `parent_filename` to keep the submesh in
 # a file of its own.
 
@@ -94,7 +96,7 @@ io4dolfinx.read_function(filename, u_stored, time=0.0, name="u", mesh_name="wall
 checkpoint = io4dolfinx.read_submesh(filename, parent, mesh_name="wall")
 V_sub = dolfinx.fem.functionspace(checkpoint.submesh, ("Lagrange", 2))
 u_sub = dolfinx.fem.Function(V_sub, name="u")
-io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
+io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
 # -
 
 # The {py:class}`checkpoint<io4dolfinx.SubmeshCheckpoint>` stores the
@@ -102,13 +104,36 @@ io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.stored_cells)
 # {py:attr}`vertex_map<io4dolfinx.SubmeshCheckpoint.vertex_map>` and
 # {py:attr}`node_map<io4dolfinx.SubmeshCheckpoint.node_map>` that are
 # similar to the ones created by {py:func}`dolfinx.mesh.create_submesh`.
-# There are also some extra attributes that are stored that are used
-# for the transfer of functions from the stored submesh to the re-derived submesh.
-
-# The transfer routes each interpolation point straight to the process and cell
-# that can evaluate it, using the cell correspondence the checkpoint already
-# records. No geometric point location is involved, so there is no search
-# tolerance to tune and nothing that can silently fail to find a point.
+# It also carries the
+# {py:attr}`post_code<io4dolfinx.SubmeshCheckpoint.post_code>` that the transfer
+# above was given, which is worth a word of its own.
+#
+# ## The post office
+#
+# The stored submesh and the re-derived one are partitioned independently, so
+# neither knows where the other put a given cell. What they agree on is a cell's
+# *post code*: the index it had in the stored submesh. The stored submesh knows
+# it as its ordinary `topology.original_cell_index`, being a mesh like any other.
+# The re-derived one cannot -- {py:func}`dolfinx.mesh.create_submesh` does not
+# give a submesh an original cell index, and for a submesh of co-dimension
+# greater than zero there is none to give, since the parent's input data numbers
+# cells and not facets. So the post code is what
+# {py:func}`io4dolfinx.write_submesh` tags onto the parent and
+# {py:func}`io4dolfinx.read_submesh` hands back.
+#
+# Resolving one works like posting a letter. No process holds a global table of
+# who owns what. Instead the post code itself decides which process acts as its
+# *post office*, by a rule every process applies identically
+# ({py:func}`io4dolfinx.utils.index_owner`, an equal split of the global cell range).
+# Each process publishes to the post office of every cell it owns, saying where it
+# keeps that cell; each process then asks the post office of every cell it wants.
+# Two neighbourhood exchanges, and the memory per process stays proportional to
+# the cells it actually touches.
+#
+# The reply; a rank and a local cell, is what makes the transfer a routing
+# rather than a search. Each interpolation point goes straight to the process and
+# cell that can evaluate it, so no geometric point location is involved, there is
+# no search tolerance to tune, and nothing can silently fail to find a point.
 
 # +
 reference = dolfinx.fem.Function(V_sub)
@@ -117,10 +142,6 @@ num_owned = V_sub.dofmap.index_map.size_local * V_sub.dofmap.index_map_bs
 error = np.max(np.abs(u_sub.x.array[:num_owned] - reference.x.array[:num_owned]))
 print(f"Max error after transfer: {parent.comm.allreduce(error, MPI.MAX):.3e}")
 # -
-
-# `checkpoint.cell_map` and `checkpoint.vertex_map` are genuine
-# {py:class}`dolfinx.mesh.EntityMap` objects relating the submesh to `parent`, so
-# they can be passed to {py:func}`dolfinx.fem.form`.
 
 # +
 import ufl  # noqa: E402
@@ -139,12 +160,16 @@ print(f"Area of the submesh assembled over the parent: {area:.3f}")
 # a re-derived submesh. `transfer_submesh_function` raises `NotImplementedError`
 # for them.
 #
-# The reason is worth knowing. DOLFINx cannot reconcile the reference and
-# physical value sizes of these families when `tdim < gdim`, and in this
-# particular path it does not say so: `interpolate_nonmatching` returns
-# successfully with values that are wrong. Measured on a facet submesh of a unit
-# cube, the L2 norm of an N1curl field fell from 9.096 to 4.904. The guard exists
-# so that this shows up as an error rather than as a plausible-looking result.
+# The reason is worth knowing. A finite element space on a manifold does not
+# carry its value shape in *physical* space, so DOLFINx cannot reconcile the
+# reference and physical value sizes of these families when `tdim < gdim`
+# ([FEniCS/dolfinx#3619](https://github.com/FEniCS/dolfinx/issues/3619), open at
+# the time of writing). Elsewhere that surfaces as an outright error:
+# *"Interpolation: elements have different value dimensions"*, but in this
+# particular path it does not: `interpolate_nonmatching` returns successfully
+# with values that are wrong. The guard exists so that this
+# shows up as an error rather than as a plausible-looking result, and it can be
+# lifted once that issue is fixed.
 #
 # There is no sound workaround. The stored submesh is an independent mesh,
 # derived from nothing, so a projection -- or any other form assembled between it

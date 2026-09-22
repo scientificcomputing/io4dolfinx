@@ -355,7 +355,7 @@ def write_function_on_input_mesh(
     Write function checkpoint (to be read with the input mesh).
 
     Note:
-        Requires backend to implement {py:class}`io4dolfinx.backends.write_function`.
+        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_function`.
 
     Args:
         filename: The filename to write to
@@ -398,7 +398,7 @@ def write_mesh_input_order(
     Write mesh to checkpoint file in original input ordering.
 
     Note:
-        Requires backend to implement {py:class}`io4dolfinx.backends.write_mesh`.
+        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_mesh`.
 
     Args:
         filename: The filename to write to
