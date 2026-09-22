@@ -7,6 +7,15 @@ import numpy as np
 import numpy.typing as npt
 
 
+def create_cell_permutations(mesh: dolfinx.mesh.Mesh):
+    """Create the cell permutations for the mesh."""
+    getattr(
+        mesh.topology,
+        "create_cell_permutations",
+        getattr(mesh.topology, "create_entity_permutations"),
+    )()
+
+
 def cmap(mesh: dolfinx.mesh.Mesh) -> dolfinx.fem.CoordinateElement:
     """Get the basix Cmap for the mesh."""
     if hasattr(mesh.geometry, "cmaps"):
