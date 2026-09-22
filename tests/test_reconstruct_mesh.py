@@ -1,3 +1,5 @@
+from typing import cast
+
 from mpi4py import MPI
 
 import basix.ufl
@@ -37,19 +39,21 @@ def test_reconstruct(cell_type: dolfinx.mesh.CellType, degree: int, dtype: npt.D
     cells = np.arange(num_cells_local, dtype=np.int32)
     v.interpolate(u, cells, cells)
 
-    assert new_mesh.geometry.cmap.degree == degree
+    assert new_mesh.geometry.cmaps[0].degree == degree
 
     f_ex = ufl.as_vector(f(ufl.SpatialCoordinate(new_mesh)))
 
+    one = np.array(1.0, dtype=dtype)
     local_vol = dolfinx.fem.assemble_scalar(
-        dolfinx.fem.form(dolfinx.fem.Constant(new_mesh, dtype(1.0)) * ufl.dx, dtype=dtype)
+        dolfinx.fem.form(dolfinx.fem.Constant(new_mesh, one) * ufl.dx, dtype=dtype)
     )
     vol = new_mesh.comm.allreduce(local_vol, op=MPI.SUM)
-    tol = 4e3 * degree * np.finfo(dtype).eps
+    float_dtype = cast(type[np.floating], dtype)
+    tol = 4e3 * degree * np.finfo(float_dtype).eps
     assert np.isclose(vol, 1, atol=tol, rtol=tol)
 
     local_surf = dolfinx.fem.assemble_scalar(
-        dolfinx.fem.form(dolfinx.fem.Constant(new_mesh, dtype(1.0)) * ufl.ds, dtype=dtype)
+        dolfinx.fem.form(dolfinx.fem.Constant(new_mesh, one) * ufl.ds, dtype=dtype)
     )
     surf = new_mesh.comm.allreduce(local_surf, op=MPI.SUM)
     assert np.isclose(surf, 6, atol=tol, rtol=tol)

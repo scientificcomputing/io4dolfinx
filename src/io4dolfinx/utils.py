@@ -299,10 +299,11 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
         return dolfinx.mesh.Mesh(cpp_mesh, ufl.Mesh(new_c_el))
     else:
         # Use the new interpolate_geometry function
+        assert len(mesh.geometry.cmaps) == 1, "Only single geometry maps are supported"
         cmap = dolfinx.fem.coordinate_element(
             mesh.topology.cell_type,
             coordinate_element_degree,
             dtype=mesh.geometry.x.dtype,
-            variant=mesh.geometry.cmap.variant,
+            variant=mesh.geometry.cmaps[0].variant,
         )
         return dolfinx.fem.interpolate_geometry(mesh, cmap)
