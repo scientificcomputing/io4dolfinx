@@ -18,6 +18,7 @@ __all__ = [
     "neighbourhood_ranks",
     "exchange_to_owners",
     "numpy_to_mpi",
+    "all_to_all",
 ]
 
 numpy_to_mpi = {
@@ -28,6 +29,38 @@ numpy_to_mpi = {
     np.int64: MPI.INT64_T,
     np.int32: MPI.INT32_T,
 }
+
+
+def all_to_all(comm, send_data, recv_data):
+    """
+    Exchange a single item with each neighbor in a distributed graph communicator.
+
+    Note:
+        The count is passed explicitly, and is 1 on every process. MPI-4.1 9.6.2 requires
+        the type signature of ``sendcount``/``sendtype`` at a process to equal that of
+        ``recvcount``/``recvtype`` at *any other* process in the communicator, not just at
+        its neighbors, so the count must be identical on every process whatever its degree.
+        Left implicit, mpi4py derives it as ``buffer size // degree`` and falls back to the
+        whole buffer when the degree is zero, making it rank-local: 1 where the degree is
+        nonzero, 0 where it is zero. Such a call is erroneous; Open MPI rejects it with
+        ``MPI_ERR_TRUNCATE`` while MPICH happens to accept it. See
+        https://github.com/open-mpi/ompi/issues/14452 for the discussion.
+
+        ``all_to_allv`` is not affected: the vector variant is only required to match
+        pairwise along each edge, so per-process counts may legitimately differ there.
+    """
+    dtype = numpy_to_mpi[send_data.dtype.type]
+    assert recv_data.dtype == send_data.dtype, (
+        f"Data types do not match, {recv_data.dtype} != {send_data.dtype}"
+    )
+    indegree, outdegree, _ = comm.Get_dist_neighbors_count()
+    assert (d_size := send_data.size) == outdegree, (
+        f"Number of send data {d_size} does not match number of destinations {outdegree}"
+    )
+    assert (d_size := recv_data.size) == indegree, (
+        f"Number of recv data {d_size} does not match number of sources {indegree}"
+    )
+    comm.Neighbor_alltoall([send_data, 1, dtype], [recv_data, 1, dtype])
 
 
 def send_dofmap_and_recv_values(
@@ -84,7 +117,7 @@ def send_dofmap_and_recv_values(
     mesh_to_data_comm = comm.Create_dist_graph_adjacent(
         source_ranks.tolist(), dest_ranks.tolist(), reorder=False
     )
-    mesh_to_data_comm.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data_comm, dest_size, recv_size)
 
     # Prepare data-structures for receiving
     total_incoming = sum(recv_size)
@@ -166,7 +199,7 @@ def send_and_recv_cell_perm(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros_like(source, dtype=np.int32)
-    mesh_to_data.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data, dest_size, recv_size)
 
     # Prepare data-structures for receiving
     total_incoming = sum(recv_size)
@@ -233,11 +266,7 @@ def send_dofs_and_recv_values(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros_like(source, dtype=np.int32)
-    recv_size.resize(max(len(recv_size), 1))  # Minimal resize to work with ompi
-    dest_size.resize(max(len(dest_size), 1))  # Mininal resize to work with ompi
-    dofmap_to_values.Neighbor_alltoall(dest_size, recv_size)
-    dest_size.resize(len(dest))
-    recv_size.resize(len(source))
+    all_to_all(dofmap_to_values, dest_size, recv_size)
 
     # Send input dofs to processes holding input array
     inc_dofs = np.zeros(sum(recv_size), dtype=np.int64)
@@ -337,7 +366,7 @@ def exchange_to_owners(
     forward = comm.Create_dist_graph_adjacent(
         sources.tolist(), destinations.tolist(), reorder=False
     )
-    forward.Neighbor_alltoall(send_counts, recv_counts)
+    all_to_all(forward, send_counts, recv_counts)
 
     received = []
     for array in arrays:

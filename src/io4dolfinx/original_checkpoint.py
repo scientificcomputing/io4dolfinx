@@ -15,6 +15,7 @@ from mpi4py import MPI
 import dolfinx
 import numpy as np
 
+from .comm_helpers import all_to_all
 from . import compat
 from .backends import FileMode, get_backend
 from .comm_helpers import numpy_to_mpi
@@ -64,12 +65,9 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
 
     # Compute number of recieving cells
     recv_cells_per_proc = np.zeros_like(cell_sources, dtype=np.int32)
-    if len(send_cells_per_proc) == 0:
-        send_cells_per_proc = np.zeros(1, dtype=np.int32)
-    if len(recv_cells_per_proc) == 0:
-        recv_cells_per_proc = np.zeros(1, dtype=np.int32)
     send_cells_per_proc = send_cells_per_proc.astype(np.int32)
-    cell_to_output_comm.Neighbor_alltoall(send_cells_per_proc, recv_cells_per_proc)
+    all_to_all(cell_to_output_comm, send_cells_per_proc, recv_cells_per_proc)
+
     assert recv_cells_per_proc.sum() == local_cell_range[1] - local_cell_range[0]
     # Pack and send cell indices (used for mapping topology dofmap later)
     cell_insert_position = compute_insert_position(
@@ -150,7 +148,7 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
     # Send and recieve geometry sizes
     send_coordinate_sizes = (send_nodes_per_proc * 3).astype(np.int32)
     recv_coordinate_sizes = np.zeros_like(node_sources, dtype=np.int32)
-    geometry_to_owner_comm.Neighbor_alltoall(send_coordinate_sizes, recv_coordinate_sizes)
+    all_to_all(geometry_to_owner_comm, send_coordinate_sizes, recv_coordinate_sizes)
 
     # Send node coordinates
     recv_coordinates = np.empty(recv_coordinate_sizes.sum(), dtype=mesh.geometry.x.dtype)
@@ -246,7 +244,7 @@ def create_function_data_on_original_mesh(
     # Compute number of recieving cells
     recv_cells_per_proc = np.zeros_like(cell_sources, dtype=np.int32)
     send_cells_per_proc = send_cells_per_proc.astype(np.int32)
-    cell_to_output_comm.Neighbor_alltoall(send_cells_per_proc, recv_cells_per_proc)
+    all_to_all(cell_to_output_comm, send_cells_per_proc, recv_cells_per_proc)
     assert recv_cells_per_proc.sum() == local_cell_range[1] - local_cell_range[0]
 
     # Pack and send cell indices (used for mapping topology dofmap later)

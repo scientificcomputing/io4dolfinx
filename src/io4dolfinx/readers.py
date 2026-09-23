@@ -22,7 +22,7 @@ import ufl
 
 from . import compat
 from .backends import ReadMode, get_backend
-from .comm_helpers import send_dofs_and_recv_values
+from .comm_helpers import send_dofs_and_recv_values, all_to_all
 from .utils import (
     check_file_exists,
     compute_dofmap_pos,
@@ -100,7 +100,7 @@ def send_cells_and_receive_dofmap_index(
         source_ranks.tolist(), dest_ranks.tolist(), reorder=False
     )
     # Send sizes to create data structures for receiving from NeighAlltoAllv
-    mesh_to_data_comm.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data_comm, dest_size, recv_size)
 
     # Sort output for sending and fill send data
     out_cells = np.zeros(len(output_owners), dtype=np.int64)
