@@ -22,7 +22,7 @@ import ufl
 
 from . import compat
 from .backends import ReadMode, get_backend
-from .comm_helpers import send_dofs_and_recv_values, all_to_all
+from .comm_helpers import all_to_all, send_dofs_and_recv_values
 from .utils import (
     check_file_exists,
     compute_dofmap_pos,

@@ -15,10 +15,9 @@ from mpi4py import MPI
 import dolfinx
 import numpy as np
 
-from .comm_helpers import all_to_all
 from . import compat
 from .backends import FileMode, get_backend
-from .comm_helpers import numpy_to_mpi
+from .comm_helpers import all_to_all, numpy_to_mpi
 from .structures import FunctionData, MeshData
 from .utils import (
     compute_insert_position,
