@@ -519,7 +519,7 @@ def read_dofmap(
         backend_args: Arguments to backend
 
     Returns:
-        Dofmap as an {py:class}`dolfinx.graph.AdjacencyList`
+        Dofmap as an :class:`dolfinx.graph.AdjacencyList`
     """
     raise NotImplementedError("The Exodus backend cannot read dofmap.")
 

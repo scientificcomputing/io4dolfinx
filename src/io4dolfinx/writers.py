@@ -21,7 +21,7 @@ from .structures import FunctionData, MeshData
 def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: bool) -> MeshData:
     """
     Helper function for extracting the required data from a distributed
-    {py:class}`dolfinx.mesh.Mesh`.
+    :class:`dolfinx.mesh.Mesh`.
 
     Args:
         mesh: The mesh

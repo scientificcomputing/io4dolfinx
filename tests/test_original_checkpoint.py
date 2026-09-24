@@ -704,7 +704,7 @@ def test_read_write_meshtags(write_mesh, create_2D_mesh, cluster, get_dtype, tmp
 
     query = cluster[:].apply_async(read_xdmf_and_write_distributed, fname)
     query.wait()
-    assert query.successful(), query.error
+    assert query.successful(), sum(str(e) for e in query.error)
     hash, f_dtype = query.result()[0]
     if write_mesh:
         mesh_fname = hash

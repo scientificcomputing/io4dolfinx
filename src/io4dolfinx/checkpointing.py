@@ -55,6 +55,32 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+def _with_mesh_name(
+    backend_args: dict[str, Any] | None, mesh_name: str | None
+) -> dict[str, Any] | None:
+    """Select which mesh in the file a backend call refers to.
+
+    A checkpoint may hold several meshes -- a mesh and a submesh of it, say --
+    and backends take the one to act on from ``backend_args["name"]``. This
+    folds an explicit ``mesh_name`` in without mutating the caller's dictionary.
+    ``mesh_name=None`` leaves ``backend_args`` untouched, so an existing
+    ``backend_args["name"]`` still wins and files written before named meshes
+    existed stay readable.
+
+    Args:
+        backend_args: Arguments for the backend, or None
+        mesh_name: Name of the mesh to act on, or None for the default
+
+    Returns:
+        Backend arguments naming the requested mesh.
+    """
+    if mesh_name is None:
+        return backend_args
+    args = dict(backend_args) if backend_args else {}
+    args["name"] = mesh_name
+    return args
+
+
 def write_attributes(
     filename: Path | str,
     comm: MPI.Comm,
@@ -111,6 +137,7 @@ def read_timestamps(
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
     backend: str | None = None,
+    mesh_name: str | None = None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
     """
     Read time-stamps from a checkpoint file.
@@ -121,9 +148,13 @@ def read_timestamps(
         function_name: Name of the function to read time-stamps for
         backend_args: Arguments for backend, for instance file type.
         backend: What backend to use for writing.
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     Returns:
         The time-stamps
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading time-stamps from {filename} for function {function_name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read time-stamps")
     check_file_exists(filename)
@@ -140,6 +171,7 @@ def write_meshtags(
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
     on_input_mesh: bool = False,
+    mesh_name: str | None = None,
 ):
     """
     Write meshtags associated with input mesh to file.
@@ -157,7 +189,11 @@ def write_meshtags(
         backend: IO backend
         on_input_mesh: If True, the meshtags are written with the node ordering
             of the input mesh.
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing meshtags to {filename} for meshtag {meshtag_name or meshtags.name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to write meshtags")
 
@@ -219,6 +255,7 @@ def read_meshtags(
     meshtag_name: str,
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
+    mesh_name: str | None = None,
 ) -> dolfinx.mesh.MeshTags:
     """
     Read meshtags from file and return a :class:`dolfinx.mesh.MeshTags` object.
@@ -228,9 +265,13 @@ def read_meshtags(
         mesh: The mesh associated with the meshtags
         meshtag_name: The name of the meshtag to read
         engine: Adios2 Engine
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     Returns:
         The meshtags
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading meshtags from {filename} for meshtag {meshtag_name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read meshtags")
     check_file_exists(filename)
@@ -260,6 +301,7 @@ def read_function(
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
+    mesh_name: str | None = None,
 ):
     """
     Read checkpoint from file and fill it into `u`.
@@ -269,7 +311,11 @@ def read_function(
         u: Function to fill
         time: Time-stamp associated with checkpoint
         name: If not provided, `u.name` is used to search through the input file for the function
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(
         f"Reading function checkpoint from {filename} for function {name or u.name} at time {time}"
     )
@@ -410,6 +456,7 @@ def read_mesh(
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
     max_facet_to_cell_links: int = 2,
+    mesh_name: str | None = None,
 ) -> dolfinx.mesh.Mesh:
     """
     Read an ADIOS2 mesh into DOLFINx.
@@ -424,9 +471,13 @@ def read_mesh(
         backend_args: List of arguments to reader backend
         max_facet_to_cell_links: Maximum number of cells a facet
             can be connected to.
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     Returns:
         The distributed mesh
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading mesh from {filename}")
     logger.debug(f"Using {backend} backend with arguments {backend_args}")
     logger.debug(f"Time {time} and read_from_partition {read_from_partition}")
@@ -521,6 +572,7 @@ def write_mesh(
     store_partition_info: bool = False,
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
+    mesh_name: str | None = None,
 ):
     """
     Write a mesh to file.
@@ -530,7 +582,11 @@ def write_mesh(
         mesh: The mesh to write to file
 
         store_partition_info: Store mesh partitioning (including ghosting) to file
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing mesh to {filename}")
     logger.debug(f"Preparing mesh data for storage storing partition info: {store_partition_info}")
     mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
@@ -555,6 +611,7 @@ def write_function(
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
+    mesh_name: str | None = None,
 ):
     """
     Write function checkpoint to file.
@@ -567,7 +624,11 @@ def write_function(
         name: Name of function to write. If None, the name of the function is used.
         backend_args: Arguments to the IO backend.
         backend: The backend to use
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     n = u.name if name is None else name
     logger.debug(f"Writing function checkpoint to {filename} for function {n} at time {time}")
     logger.debug(f"Using {backend} backend with arguments {backend_args}")
@@ -633,6 +694,7 @@ def read_function_names(
     comm: MPI.Comm,
     backend_args: dict[str, Any] | None = None,
     backend: str = "h5py",
+    mesh_name: str | None = None,
 ) -> list[str]:
     """Read all function names from a file.
 
@@ -640,10 +702,14 @@ def read_function_names(
         filename: Path to file
         comm: MPI communicator to launch IO on.
         backend_args: Arguments to backend
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
 
     Returns:
         A list of function names.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading function names from {filename}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read function names")
     check_file_exists(filename)
@@ -658,6 +724,7 @@ def write_point_data(
     mode: FileMode,
     backend_args: dict[str, Any] | None,
     backend: str = "vtkhdf",
+    mesh_name: str | None = None,
 ):
     """Write function to file by interpolating into geometry nodes.
 
@@ -669,7 +736,10 @@ def write_point_data(
         mode: Append or write
         backend_args: The backend arguments
         backend: Which backend to use.
+        mesh_name: Name of the mesh in the file to write the data against.
+            Defaults to the mesh written without an explicit name.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
     V = create_geometry_function_space(u.function_space.mesh, int(np.prod(u.ufl_shape)))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
@@ -698,6 +768,7 @@ def write_cell_data(
     mode: FileMode,
     backend_args: dict[str, Any] | None,
     backend: str = "vtkhdf",
+    mesh_name: str | None = None,
 ):
     """Write function to file by interpolating into cell midpoints.
 
@@ -708,7 +779,10 @@ def write_cell_data(
         time: Time stamp
         mode: Append or write
         backend_args: The backend arguments
+        mesh_name: Name of the mesh in the file to write the data against.
+            Defaults to the mesh written without an explicit name.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
     V = dolfinx.fem.functionspace(u.function_space.mesh, ("DG", 0, u.ufl_shape))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)

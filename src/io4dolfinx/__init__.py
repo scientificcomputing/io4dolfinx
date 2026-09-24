@@ -31,6 +31,12 @@ from .readers import (
     read_point_data,
 )
 from .snapshot import snapshot_checkpoint
+from .submesh import (
+    SubmeshCheckpoint,
+    read_submesh,
+    transfer_submesh_function,
+    write_submesh,
+)
 from .utils import reconstruct_mesh
 
 meta = metadata("io4dolfinx")
@@ -65,4 +71,8 @@ __all__ = [
     "write_cell_data",
     "write_point_data",
     "reconstruct_mesh",
+    "SubmeshCheckpoint",
+    "write_submesh",
+    "read_submesh",
+    "transfer_submesh_function",
 ]

@@ -15,7 +15,10 @@ __all__ = [
     "send_dofmap_and_recv_values",
     "send_and_recv_cell_perm",
     "send_dofs_and_recv_values",
+    "neighbourhood_ranks",
+    "exchange_to_owners",
     "numpy_to_mpi",
+    "all_to_all",
 ]
 
 numpy_to_mpi = {
@@ -26,6 +29,38 @@ numpy_to_mpi = {
     np.int64: MPI.INT64_T,
     np.int32: MPI.INT32_T,
 }
+
+
+def all_to_all(comm, send_data, recv_data):
+    """
+    Exchange a single item with each neighbor in a distributed graph communicator.
+
+    Note:
+        The count is passed explicitly, and is 1 on every process. MPI-4.1 9.6.2 requires
+        the type signature of ``sendcount``/``sendtype`` at a process to equal that of
+        ``recvcount``/``recvtype`` at *any other* process in the communicator, not just at
+        its neighbors, so the count must be identical on every process whatever its degree.
+        Left implicit, mpi4py derives it as ``buffer size // degree`` and falls back to the
+        whole buffer when the degree is zero, making it rank-local: 1 where the degree is
+        nonzero, 0 where it is zero. Such a call is erroneous; Open MPI rejects it with
+        ``MPI_ERR_TRUNCATE`` while MPICH happens to accept it. See
+        https://github.com/open-mpi/ompi/issues/14452 for the discussion.
+
+        ``all_to_allv`` is not affected: the vector variant is only required to match
+        pairwise along each edge, so per-process counts may legitimately differ there.
+    """
+    dtype = numpy_to_mpi[send_data.dtype.type]
+    assert recv_data.dtype == send_data.dtype, (
+        f"Data types do not match, {recv_data.dtype} != {send_data.dtype}"
+    )
+    indegree, outdegree, _ = comm.Get_dist_neighbors_count()
+    assert (d_size := send_data.size) == outdegree, (
+        f"Number of send data {d_size} does not match number of destinations {outdegree}"
+    )
+    assert (d_size := recv_data.size) == indegree, (
+        f"Number of recv data {d_size} does not match number of sources {indegree}"
+    )
+    comm.Neighbor_alltoall([send_data, 1, dtype], [recv_data, 1, dtype])
 
 
 def send_dofmap_and_recv_values(
@@ -82,7 +117,7 @@ def send_dofmap_and_recv_values(
     mesh_to_data_comm = comm.Create_dist_graph_adjacent(
         source_ranks.tolist(), dest_ranks.tolist(), reorder=False
     )
-    mesh_to_data_comm.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data_comm, dest_size, recv_size)
 
     # Prepare data-structures for receiving
     total_incoming = sum(recv_size)
@@ -164,7 +199,7 @@ def send_and_recv_cell_perm(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros_like(source, dtype=np.int32)
-    mesh_to_data.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data, dest_size, recv_size)
 
     # Prepare data-structures for receiving
     total_incoming = sum(recv_size)
@@ -231,11 +266,7 @@ def send_dofs_and_recv_values(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros_like(source, dtype=np.int32)
-    recv_size.resize(max(len(recv_size), 1))  # Minimal resize to work with ompi
-    dest_size.resize(max(len(dest_size), 1))  # Mininal resize to work with ompi
-    dofmap_to_values.Neighbor_alltoall(dest_size, recv_size)
-    dest_size.resize(len(dest))
-    recv_size.resize(len(source))
+    all_to_all(dofmap_to_values, dest_size, recv_size)
 
     # Send input dofs to processes holding input array
     inc_dofs = np.zeros(sum(recv_size), dtype=np.int64)
@@ -261,3 +292,94 @@ def send_dofs_and_recv_values(
     values = np.empty_like(inc_values, dtype=input_array.dtype)
     values[proc_to_local] = inc_values
     return values
+
+
+def neighbourhood_ranks(
+    comm: MPI.Intracomm, destinations: npt.NDArray[np.int32]
+) -> tuple[npt.NDArray[np.int32], npt.NDArray[np.int32]]:
+    """Find the ranks this process exchanges data with.
+
+    A process knows which ranks it must send to, but not which ranks will send
+    to it. Building a distributed graph over the whole communicator and reading
+    its neighbours back discovers the incoming side without an all-to-all.
+
+    Both lists are sorted ascending so that every process packs and unpacks
+    neighbour blocks in the same order.
+
+    Args:
+        comm: The MPI communicator
+        destinations: Ranks this process sends to (duplicates allowed)
+
+    Returns:
+        ``(sources, destinations)``, each sorted and without duplicates.
+    """
+    dest = np.unique(np.asarray(destinations, dtype=np.int32))
+    graph = comm.Create_dist_graph([comm.rank], [len(dest)], dest.tolist(), reorder=False)
+    sources, _, _ = graph.Get_dist_neighbors()
+    graph.Free()
+    return np.unique(np.asarray(sources, dtype=np.int32)), dest
+
+
+def exchange_to_owners(
+    comm: MPI.Intracomm,
+    owners: npt.NDArray[np.int32],
+    arrays: list[npt.NDArray],
+) -> tuple[
+    list[npt.NDArray],
+    npt.NDArray[np.int32],
+    npt.NDArray[np.int32],
+    npt.NDArray[np.int32],
+    npt.NDArray[np.int32],
+]:
+    """Send each entry of ``arrays`` to the rank naming it in ``owners``.
+
+    Entry ``i`` of every array in ``arrays`` travels together to ``owners[i]``.
+    Data is packed grouped by destination rank in ascending rank order and is
+    received grouped by source rank in ascending rank order, preserving the
+    sender's relative order within each group. Both properties matter to callers
+    that must pair a reply with the request that produced it.
+
+    Args:
+        comm: The MPI communicator
+        owners: Destination rank of each entry; ``-1`` is not allowed
+        arrays: Arrays to send, each of length ``len(owners)``. The leading axis
+            is the one distributed; trailing axes travel as a block.
+
+    Returns:
+        ``(received, sources, send_counts, recv_counts, insert_position)`` where
+        ``received`` holds the incoming counterpart of each entry of ``arrays``,
+        ``sources`` the ascending source ranks, ``send_counts`` and
+        ``recv_counts`` the number of entries exchanged with each destination and
+        source, and ``insert_position`` the index each local entry was packed at
+        (so a reply can be unpacked back into local order).
+    """
+    owners = np.asarray(owners, dtype=np.int32)
+    sources, destinations = neighbourhood_ranks(comm, owners)
+
+    send_counts = np.zeros(len(destinations), dtype=np.int32)
+    if len(owners) > 0:
+        present, counts = np.unique(owners, return_counts=True)
+        send_counts[np.searchsorted(destinations, present)] = counts
+    insert_position = compute_insert_position(owners, destinations, send_counts)
+
+    recv_counts = np.zeros(len(sources), dtype=np.int32)
+    forward = comm.Create_dist_graph_adjacent(
+        sources.tolist(), destinations.tolist(), reorder=False
+    )
+    all_to_all(forward, send_counts, recv_counts)
+
+    received = []
+    for array in arrays:
+        array = np.asarray(array)
+        block = int(np.prod(array.shape[1:], dtype=np.int64)) if array.ndim > 1 else 1
+        packed = np.zeros(array.shape, dtype=array.dtype)
+        packed[insert_position] = array
+        out = np.zeros((int(recv_counts.sum()), *array.shape[1:]), dtype=array.dtype)
+        mpi_type = numpy_to_mpi[array.dtype.type]
+        forward.Neighbor_alltoallv(
+            [packed.reshape(-1), send_counts * block, mpi_type],
+            [out.reshape(-1), recv_counts * block, mpi_type],
+        )
+        received.append(out)
+    forward.Free()
+    return received, sources, send_counts, recv_counts, insert_position
