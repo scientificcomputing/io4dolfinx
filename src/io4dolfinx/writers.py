@@ -11,7 +11,6 @@ from mpi4py import MPI
 
 import dolfinx
 import numpy as np
-from packaging.version import Version
 
 from . import compat
 from .backends import FileMode, get_backend
@@ -58,11 +57,9 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
         partition_processes = mesh.comm.size
 
         # Get partitioning
-        if Version(dolfinx.__version__) > Version("0.9.0"):
-            consensus_tag = 1202
-            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks(consensus_tag)
-        else:
-            cell_map = mesh.topology.index_map(mesh.topology.dim).index_to_dest_ranks()  # type: ignore[call-arg]
+        cell_imap = mesh.topology.index_map(mesh.topology.dim)
+        consensus_tag = 1202
+        cell_map = compat.index_to_dest_ranks(cell_imap, consensus_tag)
         num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
         try:
             cell_offsets = cell_map.offsets[: num_cells_local + 1]  # type: ignore[attr-defined]
