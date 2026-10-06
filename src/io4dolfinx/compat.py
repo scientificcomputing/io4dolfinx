@@ -62,7 +62,12 @@ def cpp_index_map(
 
 def index_to_dest_ranks(imap: dolfinx.common.IndexMap | dolfinx.cpp.common.IndexMap, tag: int):
     signature_inputs = inspect.signature(imap.index_to_dest_ranks).parameters
-    if "tag" in signature_inputs:
+    if len(signature_inputs) == 2:
         return imap.index_to_dest_ranks(tag)  # type: ignore[call-arg]
-    else:
+    elif len(signature_inputs) == 0:
         return imap.index_to_dest_ranks()
+    else:
+        raise RuntimeError(
+            f"Unexpected signature for index_to_dest_ranks: {signature_inputs}. "
+            "Please report this to the io4dolfinx developers."
+        )
