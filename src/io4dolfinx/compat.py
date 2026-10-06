@@ -1,5 +1,7 @@
 """Layer for small backward compatibility wrappers for DOLFINx"""
 
+import inspect
+
 from mpi4py import MPI
 
 import dolfinx
@@ -56,3 +58,11 @@ def cpp_index_map(
     if isinstance(imap, dolfinx.cpp.common.IndexMap):
         return imap
     return imap._cpp_object
+
+
+def index_to_dest_ranks(imap: dolfinx.common.IndexMap | dolfinx.cpp.common.IndexMap, tag: int):
+    signature_inputs = inspect.signature(imap.index_to_dest_ranks).parameters
+    if "tag" in signature_inputs:
+        return imap.index_to_dest_ranks(tag)  # type: ignore[call-arg]
+    else:
+        return imap.index_to_dest_ranks()
