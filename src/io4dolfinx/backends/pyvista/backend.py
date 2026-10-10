@@ -22,28 +22,10 @@ from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsDat
 from io4dolfinx.utils import check_file_exists
 
 from .. import FileMode, ReadMode
+from ..vtk_cell_types import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
 
 # Cell types can be found at
 # https://vtk.org/doc/nightly/html/vtkCellType_8h_source.html
-_first_order_vtk = {
-    1: "point",
-    3: "interval",
-    5: "triangle",
-    9: "quadrilateral",
-    10: "tetrahedron",
-    12: "hexahedron",
-}
-
-_arbitrary_lagrange_vtk = {
-    68: "interval",
-    69: "triangle",
-    70: "quadrilateral",
-    71: "tetrahedron",
-    72: "hexahedron",
-    73: "prism",
-    74: "pyramid",
-}
-
 _quadratric_vtk = {
     21: "interval",
     22: "triangle",
@@ -54,52 +36,6 @@ _quadratric_vtk = {
 
 
 read_mode = ReadMode.serial
-
-
-def _cell_degree(ct: str, num_nodes: int) -> int:
-    if ct == "point":
-        return 1
-    elif ct == "interval":
-        return int(num_nodes - 1)
-    elif ct == "triangle":
-        n = (np.sqrt(1 + 8 * num_nodes) - 1) / 2
-        if 2 * num_nodes != n * (n + 1):
-            raise ValueError(f"Unknown triangle layout. Number of nodes: {num_nodes}")
-        return int(n - 1)
-    elif ct == "tetrahedron":
-        n = 0
-        while n * (n + 1) * (n + 2) < 6 * num_nodes:
-            n += 1
-        if n * (n + 1) * (n + 2) != 6 * num_nodes:
-            raise ValueError(f"Unknown tetrahedron layout. Number of nodes: {num_nodes}")
-        return int(n - 1)
-
-    elif ct == "quadrilateral":
-        n = np.sqrt(num_nodes)
-        if num_nodes != n * n:
-            raise ValueError(f"Unknown quadrilateral layout. Number of nodes: {num_nodes}")
-        return int(n - 1)
-    elif ct == "hexahedron":
-        n = np.cbrt(num_nodes)
-        if num_nodes != n * n * n:
-            raise ValueError(f"Unknown hexahedron layout. Number of nodes: {num_nodes}")
-        return int(n - 1)
-    elif ct == "prism":
-        if num_nodes == 6:
-            return 1
-        elif num_nodes == 15:
-            return 2
-        else:
-            raise ValueError(f"Unknown prism layout. Number of nodes: {num_nodes}")
-    elif ct == "pyramid":
-        if num_nodes == 5:
-            return 1
-        elif num_nodes == 13:
-            return 2
-        else:
-            raise ValueError(f"Unknown pyramid layout. Number of nodes: {num_nodes}")
-    else:
-        raise ValueError(f"Unknown cell type {ct} with {num_nodes=}.")
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
