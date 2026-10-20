@@ -9,6 +9,7 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 import h5py
 import numpy as np
 import numpy.typing as npt
@@ -684,7 +685,7 @@ def write_mesh(
         # Store celltypes
         cell_types = np.full(
             mesh.local_topology.shape[0],
-            dolfinx.cpp.io.get_vtk_cell_type(dx_ct, dolfinx.mesh.cell_dim(dx_ct)),
+            fenicsx_compat.vtk_cell_type(dx_ct, num_dofs_per_cell),
         )
         types = _create_dataset(
             mesh_group,
@@ -934,7 +935,7 @@ def write_meshtags(
         # Store celltypes
         cell_types = np.full(
             data.indices.shape[0],
-            dolfinx.cpp.io.get_vtk_cell_type(dx_ct, dolfinx.mesh.cell_dim(dx_ct)),
+            fenicsx_compat.vtk_cell_type(dx_ct, num_dofs_per_cell),
         )
         types = _create_dataset(
             mesh_group,

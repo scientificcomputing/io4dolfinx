@@ -20,7 +20,7 @@ authors = [
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["fenics-dolfinx>=0.10.0", "packaging"]
+dependencies = ["fenics-dolfinx>=0.10.0", "fenicsx-compat>=0.3.0"]
 
 [project.optional-dependencies]
 h5py = ["h5py"]
@@ -41,6 +41,7 @@ test = [
     "pytest",
     "coverage",
     "ipyparallel",
+    "packaging",
     "io4dolfinx[h5py]",
     "io4dolfinx[pyvista]",
     "io4dolfinx[xdmf]"

@@ -17,6 +17,7 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 
 from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from io4dolfinx.utils import check_file_exists
@@ -146,11 +147,7 @@ def read_mesh_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
-                pyvista._VTK_SNAKE_CASE_STATE = "allow"
-            else:
-                # Compatibility with 0.47
-                pyvista.core.vtk_snake_case._state = "allow"
+            fenicsx_compat.pyvista_allow_snake_case(pyvista)
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -220,11 +217,7 @@ def read_point_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
-                pyvista._VTK_SNAKE_CASE_STATE = "allow"
-            else:
-                # Compatibility with 0.47
-                pyvista.core.vtk_snake_case._state = "allow"
+            fenicsx_compat.pyvista_allow_snake_case(pyvista)
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -267,11 +260,7 @@ def read_cell_data(
             grid = in_data
         elif isinstance(in_data, pyvista.core.composite.MultiBlock):
             # To handle multiblock like pvd
-            if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
-                pyvista._VTK_SNAKE_CASE_STATE = "allow"
-            else:
-                # Compatibility with 0.47
-                pyvista.core.vtk_snake_case._state = "allow"
+            fenicsx_compat.pyvista_allow_snake_case(pyvista)
             number_of_blocks = in_data.number_of_blocks
             assert number_of_blocks == 1
             b0 = in_data.get_block(0)
@@ -376,11 +365,7 @@ def read_function_names(
         grid = in_data
     elif isinstance(in_data, pyvista.core.composite.MultiBlock):
         # To handle multiblock like pvd
-        if hasattr(pyvista, "_VTK_SNAKE_CASE_STATE"):
-            pyvista._VTK_SNAKE_CASE_STATE = "allow"
-        else:
-            # Compatibility with 0.47
-            pyvista.core.vtk_snake_case._state = "allow"
+        fenicsx_compat.pyvista_allow_snake_case(pyvista)
         number_of_blocks = in_data.number_of_blocks
         assert number_of_blocks == 1
         b0 = in_data.get_block(0)

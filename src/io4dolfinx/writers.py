@@ -10,9 +10,9 @@ from typing import Any
 from mpi4py import MPI
 
 import dolfinx
+import fenicsx_compat
 import numpy as np
 
-from . import compat
 from .backends import FileMode, get_backend
 from .structures import FunctionData, MeshData
 
@@ -36,17 +36,14 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
 
     # Convert local connectivity to globa l connectivity
     g_imap = mesh.geometry.index_map()
-    g_dmap = compat.dofmap(mesh)
+    g_dmap = fenicsx_compat.dofmap(mesh)
     num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
     cell_range = mesh.topology.index_map(mesh.topology.dim).local_range
-    cmap = compat.cmap(mesh)
+    cmap = fenicsx_compat.cmap(mesh)
 
     geom_layout = cmap.create_dof_layout()
-    if hasattr(geom_layout, "num_entity_closure_dofs"):
-        num_dofs_per_cell = geom_layout.num_entity_closure_dofs(mesh.topology.dim)
-    else:
-        num_dofs_per_cell = len(geom_layout.entity_closure_dofs(mesh.topology.dim, 0))
+    num_dofs_per_cell = len(geom_layout.entity_closure_dofs(mesh.topology.dim, 0))
     dofs_out = np.zeros((num_cells_local, num_dofs_per_cell), dtype=np.int64)
     assert g_dmap.shape[1] == num_dofs_per_cell
     dofs_out[:, :] = np.asarray(
@@ -59,21 +56,13 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
         # Get partitioning
         cell_imap = mesh.topology.index_map(mesh.topology.dim)
         consensus_tag = 1202
-        cell_map = compat.index_to_dest_ranks(cell_imap, consensus_tag)
+        cell_array, cell_offsets = fenicsx_compat.index_to_dest_ranks(cell_imap, consensus_tag)
         num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
-        try:
-            cell_offsets = cell_map.offsets[: num_cells_local + 1]  # type: ignore[attr-defined]
-            if cell_offsets[-1] == 0:
-                cell_array = np.empty(0, dtype=np.int32)
-            else:
-                cell_array = cell_map.array[: cell_offsets[-1]]  # type: ignore[attr-defined]
-        except AttributeError:
-            cell_array, cell_offsets = cell_map
-            cell_offsets = cell_offsets[: num_cells_local + 1]
-            if cell_offsets[-1] == 0:
-                cell_array = np.empty(0, dtype=np.int32)
-            else:
-                cell_array = cell_array[: cell_offsets[-1]]
+        cell_offsets = cell_offsets[: num_cells_local + 1]
+        if cell_offsets[-1] == 0:
+            cell_array = np.empty(0, dtype=np.int32)
+        else:
+            cell_array = cell_array[: cell_offsets[-1]]
 
         # Compute adjacency with current process as first entry
         ownership_array = np.full(num_cells_local + cell_offsets[-1], -1, dtype=np.int32)
@@ -82,7 +71,12 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
         insert_position = np.flatnonzero(ownership_array == -1)
         ownership_array[insert_position] = cell_array
 
-        partition_map = compat.index_map(mesh.comm, ownership_array.size)
+        partition_map = fenicsx_compat.create_index_map(
+            mesh.comm,
+            ownership_array.size,
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int32),
+        )
         ownership_offset += partition_map.local_range[0]
         partition_range = partition_map.local_range
         partition_global = partition_map.size_global

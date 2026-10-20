@@ -2,6 +2,7 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import pytest
 import ufl
@@ -12,9 +13,16 @@ SUFFIX = {"adios2": ".bp", "h5py": ".h5"}
 
 
 def _reference(x, vector: bool, gdim: int):
-    """A function that is exactly representable in every space tested below."""
+    """A field whose interpolant does not depend on how the mesh is numbered.
+
+    The tests compare against the field interpolated again on a mesh read back
+    from file, which is numbered differently. Lagrange and DG spaces interpolate
+    the scalar field at points. The vector field is linear, so it lies in the
+    degree-2 H(div) and H(curl) spaces: on DOLFINx main, interpolating a field
+    outside RT2 gives dofs that differ by about 1e-6 between numberings.
+    """
     if vector:
-        return np.vstack([np.sin(1.3 * x[0] + 0.2), x[1], 0.3 + 0.0 * x[2]])[:gdim]
+        return np.vstack([1.3 * x[0] + 0.2, x[1], 0.3 + 0.0 * x[2]])[:gdim]
     return np.sin(1.3 * x[0] + 0.2) + x[1] - 0.5 * x[2]
 
 
@@ -188,6 +196,8 @@ def test_manifold_hcurl_roundtrips_but_transfer_raises(tmp_path, backend, family
     parent_file = folder / f"parent{SUFFIX[backend]}"
 
     mesh, submesh, cell_map = _make_submesh(comm, codim=1)
+    # Spaces mapped by the contravariant Piola map need these on a manifold.
+    fenicsx_compat.create_facet_orientations(submesh.topology)
     V = dolfinx.fem.functionspace(submesh, (family, 1))
     u = dolfinx.fem.Function(V, name="u")
     # These spaces cannot be interpolated into on a manifold, so fill by global
@@ -212,6 +222,7 @@ def test_manifold_hcurl_roundtrips_but_transfer_raises(tmp_path, backend, family
 
     parent = io4dolfinx.read_mesh(parent_file, comm, backend=backend)
     stored = io4dolfinx.read_mesh(parent_file, comm, mesh_name="wall", backend=backend)
+    fenicsx_compat.create_facet_orientations(stored.topology)
     u_stored = dolfinx.fem.Function(dolfinx.fem.functionspace(stored, (family, 1)), name="u")
     io4dolfinx.read_function(
         parent_file, u_stored, time=0.0, name="u", mesh_name="wall", backend=backend
@@ -225,6 +236,7 @@ def test_manifold_hcurl_roundtrips_but_transfer_raises(tmp_path, backend, family
     assert np.isclose(norm_read, norm_written, rtol=0, atol=1e-12)
 
     checkpoint = io4dolfinx.read_submesh(parent_file, parent, mesh_name="wall", backend=backend)
+    fenicsx_compat.create_facet_orientations(checkpoint.submesh.topology)
     u_sub = dolfinx.fem.Function(dolfinx.fem.functionspace(checkpoint.submesh, (family, 1)))
     with pytest.raises(NotImplementedError, match="not supported"):
         io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)

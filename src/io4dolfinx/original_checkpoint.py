@@ -13,9 +13,9 @@ from pathlib import Path
 from mpi4py import MPI
 
 import dolfinx
+import fenicsx_compat
 import numpy as np
 
-from . import compat
 from .backends import FileMode, get_backend
 from .comm_helpers import all_to_all, numpy_to_mpi
 from .structures import FunctionData, MeshData
@@ -88,8 +88,8 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
 
     # Get original node index for all nodes (including ghosts) and convert dofmap to these indices
     original_node_index = mesh.geometry.input_global_indices
-    _, num_nodes_per_cell = compat.dofmap(mesh).shape
-    local_geometry_dofmap = compat.dofmap(mesh)[:num_owned_cells, :]
+    _, num_nodes_per_cell = fenicsx_compat.dofmap(mesh).shape
+    local_geometry_dofmap = fenicsx_compat.dofmap(mesh)[:num_owned_cells, :]
     global_geometry_dofmap = original_node_index[local_geometry_dofmap.reshape(-1)]
 
     # Unroll insert position for geometry dofmap
@@ -179,7 +179,7 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
     del _geometry, recv_nodes
 
     assert local_node_range[1] - local_node_range[0] == geometry.shape[0]
-    cmap = compat.cmap(mesh)
+    cmap = fenicsx_compat.cmap(mesh)
 
     cell_to_output_comm.Free()
     geometry_to_owner_comm.Free()
@@ -262,8 +262,7 @@ def create_function_data_on_original_mesh(
     local_cell_index = recv_cells - local_cell_range[0]
 
     # Pack and send cell permutation info
-    compat.create_cell_permutations(mesh)
-    cell_permutation_info = mesh.topology.get_cell_permutation_info()[:num_owned_cells]
+    cell_permutation_info = fenicsx_compat.cell_permutation_info(mesh.topology)[:num_owned_cells]
     send_perm = np.empty_like(send_cells, dtype=np.uint32)
     send_perm[cell_insert_position] = cell_permutation_info
     recv_perm = np.empty_like(recv_cells, dtype=np.uint32)
@@ -314,7 +313,12 @@ def create_function_data_on_original_mesh(
     # Get offsets of dofmap
     num_cells_local = local_cell_range[1] - local_cell_range[0]
     num_dofs_local_dmap = num_cells_local * num_dofs_per_cell
-    dofmap_imap = compat.index_map(mesh.comm, num_dofs_local_dmap)
+    dofmap_imap = fenicsx_compat.create_index_map(
+        mesh.comm,
+        num_dofs_local_dmap,
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.int32),
+    )
     local_dofmap_offsets = np.arange(num_cells_local + 1, dtype=np.int64)
     local_dofmap_offsets[:] *= num_dofs_per_cell
     local_dofmap_offsets[:] += dofmap_imap.local_range[0]
