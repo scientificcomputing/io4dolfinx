@@ -2,6 +2,7 @@
 Module that uses DOLFINx/H5py to import XDMF files.
 """
 
+import re
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -110,43 +111,119 @@ def read_point_data(
     Returns:
        Data local to process (contiguous, no mpi comm) and local start range
     """
-    # Find function with name u in xml tree
     check_file_exists(filename)
     filename = Path(filename)
 
-    tree = ElementTree.parse(filename)
-    root = tree.getroot()
+    root = ElementTree.parse(filename).getroot()
     backend_args = get_default_backend_args(backend_args)
-    if time is not None:
-        time_steps = root.findall(f".//Grid[@Name='{name}']")
-        time_found = False
-        for time_node in time_steps:
-            step_node = time_node.find(".//Time")
-            assert isinstance(step_node, ElementTree.Element)
-            if np.isclose(float(step_node.attrib["Value"]), float(time)):
-                time_found = True
-                break
-        func_node = time_node.find(f".//Attribute[@Name='{name}']")
-        if not time_found:
-            raise RuntimeError(f"Function {name} at time={time} not found in {filename}")
-    else:
-        func_node = root.find(f".//Attribute[@Name='{name}']")
-    assert isinstance(func_node, ElementTree.Element)
-    data_node = func_node.find(".//DataItem")
-    assert isinstance(data_node, ElementTree.Element)
-    global_shape = data_node.attrib["Dimensions"].split(" ")
-    func_path = data_node.text
-    assert isinstance(func_path, str)
-    data_file, data_loc = func_path.split(":")
-    data_path = filename.parent / data_file
-    with h5pyfile(data_path, "r", comm=comm) as h5file:
-        data = h5file[data_loc]
-        for s1, s2 in zip(data.shape, global_shape, strict=True):
-            assert int(s1) == int(s2)
-        lr = compute_local_range(comm, data.shape[0])
-        local_range_start = lr[0]
-        dataset = data[slice(*lr), :]
+
+    grid = _time_step_grid(root, name, time, filename)
+    attributes = _function_attributes(grid, name)
+    local_range_start, dataset = _read_data_item(filename, _data_item(attributes[0]), comm)
+    if len(attributes) == 2:
+        _, imag = _read_data_item(filename, _data_item(attributes[1]), comm)
+        # complex64 from float32 parts, complex128 from float64
+        dataset = dataset + 1j * imag
     return dataset, local_range_start
+
+
+def _time_step_grid(
+    root: ElementTree.Element, name: str, time: str | float | None, filename: Path
+) -> ElementTree.Element:
+    """Grid holding function ``name`` at ``time``, or at the first time step if ``None``.
+
+    Both DOLFINx and legacy DOLFIN write one grid per time step, with a `Time`
+    child, into a temporal collection named after the function. DOLFINx names
+    the time-step grids ``name``, legacy DOLFIN ``{name}_{counter}``.
+
+    Raises:
+        RuntimeError: If there is no such grid.
+    """
+    collection = root.find(f".//Grid[@CollectionType='Temporal'][@Name='{name}']")
+    if collection is not None:
+        for grid in collection.findall("./Grid"):
+            step_node = grid.find("./Time")
+            if step_node is None:
+                continue
+            if time is None or np.isclose(float(step_node.attrib["Value"]), float(time)):
+                return grid
+    at_time = "" if time is None else f"(t={time})"
+    raise RuntimeError(f"Function {name}{at_time} not found in {filename}")
+
+
+def _function_attributes(grid: ElementTree.Element, name: str) -> list[ElementTree.Element]:
+    """Attributes of ``grid`` holding function ``name``.
+
+    DOLFINx writes a real function as attribute ``name``, and a complex one as
+    two attributes ``real_{name}`` and ``imag_{name}``.
+
+    Returns:
+        ``[data]`` for a real function, ``[real, imag]`` for a complex one.
+
+    Raises:
+        RuntimeError: If ``grid`` holds neither form, or only one complex part.
+    """
+    if (node := grid.find(f"./Attribute[@Name='{name}']")) is not None:
+        return [node]
+    real = grid.find(f"./Attribute[@Name='real_{name}']")
+    imag = grid.find(f"./Attribute[@Name='imag_{name}']")
+    if real is not None and imag is not None:
+        return [real, imag]
+    if real is not None or imag is not None:
+        present, missing = ("real", "imag") if real is not None else ("imag", "real")
+        raise RuntimeError(
+            f"Complex function {name} is incomplete: found '{present}_{name}'"
+            f" but not '{missing}_{name}'."
+        )
+    found = [attribute.attrib.get("Name") for attribute in grid.findall("./Attribute")]
+    raise RuntimeError(
+        f"Function {name} not found: expected attribute '{name}', or 'real_{name}'"
+        f" and 'imag_{name}'. Attributes present: {found}."
+    )
+
+
+def _data_item(node: ElementTree.Element) -> ElementTree.Element:
+    """The `DataItem` directly under ``node``.
+
+    Raises:
+        RuntimeError: If ``node`` has none.
+    """
+    if (data_item := node.find("./DataItem")) is None:
+        raise RuntimeError(f"<{node.tag} Name='{node.attrib.get('Name')}'> has no DataItem.")
+    return data_item
+
+
+def _read_data_item(
+    filename: Path, data_item: ElementTree.Element, comm: MPI.Comm
+) -> tuple[int, np.ndarray]:
+    """Read this process's contiguous block of rows of an HDF5-backed `DataItem`.
+
+    Args:
+        filename: The XDMF file, which HDF5 paths are relative to
+        data_item: `DataItem` whose text is ``"file.h5:/path/to/dataset"``
+        comm: Communicator the rows are split over
+
+    Returns:
+        The first global row read and the rows themselves.
+
+    Raises:
+        RuntimeError: If the dataset's shape does not match the `Dimensions`.
+    """
+    location = data_item.text.strip() if data_item.text is not None else ""
+    data_file, sep, data_loc = location.partition(":")
+    if data_item.attrib.get("Format") != "HDF" or not sep:
+        raise RuntimeError(f"Expected an HDF5 DataItem 'file.h5:/path', got '{location}'.")
+    dimensions = [int(d) for d in data_item.attrib["Dimensions"].split()]
+    with h5pyfile(filename.parent / data_file, "r", comm=comm) as h5file:
+        data = h5file[data_loc]
+        # Shapes may differ by a trailing unit dimension, so compare rows and size.
+        if data.shape[0] != dimensions[0] or data.size != int(np.prod(dimensions)):
+            raise RuntimeError(
+                f"Dataset {location} has shape {data.shape}, but its DataItem"
+                f" has Dimensions {dimensions}."
+            )
+        lr = compute_local_range(comm, data.shape[0])
+        return lr[0], data[slice(*lr)]
 
 
 def read_attributes(
@@ -461,9 +538,12 @@ def read_cell_data(
 ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
     """Read data from the cells of a mesh.
 
+    Reads cell-centred functions written by DOLFINx (DG-0), including complex
+    ones, and DG-0 checkpoints written by legacy DOLFIN.
+
     Args:
         filename: Path to file
-        name: Name of point data
+        name: Name of cell data
         comm: Communicator to launch IO on.
         time: The time stamp
         backend_args: The backend arguments
@@ -472,74 +552,81 @@ def read_cell_data(
         vertex indices of the cells, dofs the degrees of
         freedom within that cell.
     """
-    # Find function with name u in xml tree
     check_file_exists(filename)
     filename = Path(filename)
 
-    tree = ElementTree.parse(filename)
-    root = tree.getroot()
+    root = ElementTree.parse(filename).getroot()
     backend_args = get_default_backend_args(backend_args)
-    if time is not None:
-        time_steps = root.findall(f".//Grid[@Name='{name}']")
-        time_found = False
-        for time_node in time_steps:
-            step_node = time_node.find(".//Time")
-            assert isinstance(step_node, ElementTree.Element)
-            if np.isclose(float(step_node.attrib["Value"]), time):
-                time_found = True
-                break
-        func_node = time_node.find(f".//Attribute[@Name='{name}']")
-        if not time_found:
-            raise RuntimeError(f"Function {name} at time={time} not found in {filename}")
-    else:
-        func_node = root.find(f".//Attribute[@Name='{name}']")
-    assert func_node is not None
-    if func_node.attrib["ItemType"] == "FiniteElementFunction":
-        if (family := func_node.attrib["ElementFamily"]) != "DG" or (
-            degree := int(func_node.attrib["ElementDegree"])
-        ) != 0:
+
+    grid = _time_step_grid(root, name, time, filename)
+    attributes = _function_attributes(grid, name)
+    values = [_cell_values(attribute) for attribute in attributes]
+
+    _, dofs = _read_data_item(filename, values[0], comm)
+    if len(values) == 2:
+        _, imag = _read_data_item(filename, values[1], comm)
+        dofs = dofs + 1j * imag
+    _, topology = _read_data_item(filename, _grid_topology(root, grid), comm)
+    # One row per cell in both, so both processes' blocks cover the same cells.
+    if topology.shape[0] != dofs.shape[0]:
+        raise RuntimeError(
+            f"Cell data {name} has {dofs.shape[0]} rows on this process, but the"
+            f" topology has {topology.shape[0]}."
+        )
+    return topology.astype(np.int64), dofs.reshape(dofs.shape[0], -1)
+
+
+def _cell_values(attribute: ElementTree.Element) -> ElementTree.Element:
+    """`DataItem` with one value row per cell, from a cell-data attribute.
+
+    Raises:
+        ValueError: If the attribute is not DG-0 data.
+    """
+    if attribute.attrib.get("ItemType") == "FiniteElementFunction":
+        # Legacy DOLFIN checkpoint: the dof values are the `.../vector` item.
+        family = attribute.attrib["ElementFamily"]
+        degree = int(attribute.attrib["ElementDegree"])
+        if family != "DG" or degree != 0:
             raise ValueError(
                 f"Cannot read in finite element function ({family}, {degree}) as cell data."
             )
-        # Get vector sub-element
-        vec_el = None
-        for node in func_node.iter():
-            comp = node.text
-            assert comp is not None
-            if "vector" in comp:
-                vec_el = node
-                break
-        assert vec_el is not None
-        dof_dimensions = np.array(vec_el.attrib["Dimensions"].split(" "), dtype=np.int32)
-        vtxt = vec_el.text
-        assert vtxt is not None
-        vector_file, vector_h5path = vtxt.split(":")
+        for data_item in attribute.findall("./DataItem"):
+            if (data_item.text or "").strip().endswith("/vector"):
+                return data_item
+        raise RuntimeError(f"Checkpoint {attribute.attrib['Name']} has no vector DataItem.")
+    if (center := attribute.attrib.get("Center")) != "Cell":
+        raise ValueError(
+            f"Attribute {attribute.attrib['Name']} has Center='{center}'; cell data"
+            " needs Center='Cell'."
+        )
+    return _data_item(attribute)
 
-        grid_node = root.find(f".//Attribute[@Name='{name}']/..")
-        assert grid_node is not None
-        topology = grid_node.find("./Topology")
-        assert topology is not None
-        ttext = topology[0].text
-        assert ttext is not None
-        topology_file, topology_h5path = ttext.split(":")
 
-        with h5pyfile(filename.parent / vector_file, "r", comm=comm) as h5_mesh:
-            data_loc = h5_mesh[vector_h5path]
-            data_shape = data_loc.shape[0]
-            assert int(np.prod(data_shape)) == int(np.prod(dof_dimensions))
-            local_range = compute_local_range(comm, data_shape)
-            vec_dofs = data_loc[slice(*local_range)]
+def _grid_topology(root: ElementTree.Element, grid: ElementTree.Element) -> ElementTree.Element:
+    """Topology `DataItem` of ``grid``, following DOLFINx's ``xi:include`` of the mesh.
 
-        with h5pyfile(filename.parent / topology_file, "r", comm=comm) as h5_top:
-            data_loc = h5_top[topology_h5path]
-            top_data_shape = data_loc.shape[0]
-            assert dof_dimensions[0] == top_data_shape
-            local_range = compute_local_range(comm, data_shape)
-            top_dofs = data_loc[slice(*local_range)].astype(np.int64)
+    Legacy DOLFIN writes the topology into each grid. DOLFINx refers to the mesh
+    grid with ``xpointer(<grid path>/*[self::Topology or self::Geometry])``.
 
-        return top_dofs, vec_dofs
-    else:
-        raise NotImplementedError("Not implemented yet.")
+    Raises:
+        RuntimeError: If the topology cannot be found.
+    """
+    if (topology := grid.find("./Topology")) is not None:
+        return _data_item(topology)
+    # Any namespace: DOLFINx declares XInclude's as https, the standard says http.
+    if (include := grid.find("./{*}include")) is not None:
+        pointer = include.attrib["xpointer"]
+        match = re.fullmatch(r"xpointer\(/Xdmf(/.+?)(?:\[(\d+)\])?/\*\[.*\]\)", pointer)
+        if match is not None:
+            # ElementTree applies a position predicate to all same-tag siblings,
+            # XPath to the elements left by the preceding predicates.
+            path, position = match.groups()
+            mesh_grids = root.findall(f".{path}")
+            index = 0 if position is None else int(position) - 1
+            if index < len(mesh_grids):
+                if (topology := mesh_grids[index].find("./Topology")) is not None:
+                    return _data_item(topology)
+    raise RuntimeError(f"No topology found for grid {grid.attrib.get('Name')}.")
 
 
 def write_data(
