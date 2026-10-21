@@ -375,9 +375,10 @@ def transfer_submesh_function(
         raise NotImplementedError(
             "Transferring an H(div)/H(curl) function onto a submesh with"
             f" tdim ({tdim}) < gdim ({dest_mesh.geometry.dim}) is not supported."
-            " DOLFINx cannot reconcile the reference and physical value sizes of"
-            " these families on a manifold (FEniCS/dolfinx#3619,"
-            " https://github.com/FEniCS/dolfinx/issues/3619), and the interpolation"
+            " This DOLFINx cannot reconcile the reference and physical value sizes"
+            " of these families on a manifold (FEniCS/dolfinx#3619,"
+            " https://github.com/FEniCS/dolfinx/issues/3619, fixed on the main"
+            " branch by FEniCS/dolfinx#4511), and the interpolation"
             " this transfer relies on does not report that: it returns silently"
             " with values that are wrong (measured: the L2 norm of an N1curl field"
             " on a facet submesh fell from 9.096 to 4.904). Writing and reading the"
