@@ -354,9 +354,10 @@ def transfer_submesh_function(
             routed by. From :attr:`SubmeshCheckpoint.post_code`.
 
     Raises:
-        NotImplementedError: For H(div)/H(curl) spaces on a manifold submesh,
-            where DOLFINx's interpolation would return wrong values without
-            reporting an error.
+        NotImplementedError: For H(div)/H(curl) spaces on a manifold submesh
+            with a DOLFINx lacking ``FiniteElement.physical_base_value_size``,
+            whose interpolation would return wrong values without reporting an
+            error.
     """
     V_dest = u_dest.function_space
     dest_mesh = V_dest.mesh
@@ -365,7 +366,12 @@ def transfer_submesh_function(
     assert isinstance(comm, MPI.Intracomm)
 
     tdim = dest_mesh.topology.dim
-    if tdim < dest_mesh.geometry.dim and V_dest.element.needs_dof_transformations:
+    supports_manifold_transform = hasattr(dolfinx.fem.FiniteElement, "physical_base_value_size")
+    manifold_transformations = (
+        tdim < dest_mesh.geometry.dim and V_dest.element.needs_dof_transformations
+    )
+
+    if manifold_transformations and not supports_manifold_transform:
         raise NotImplementedError(
             "Transferring an H(div)/H(curl) function onto a submesh with"
             f" tdim ({tdim}) < gdim ({dest_mesh.geometry.dim}) is not supported."
