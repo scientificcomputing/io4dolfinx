@@ -6,6 +6,7 @@ from mpi4py import MPI
 
 import adios2
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 
@@ -18,10 +19,9 @@ from .helpers import (
     check_variable_exists,
     read_adjacency_list,
     read_array,
-    resolve_adios_scope,
 )
 
-adios2 = resolve_adios_scope(adios2)
+adios2 = fenicsx_compat.resolve_adios_scope(adios2)
 
 read_mode = ReadMode.parallel
 

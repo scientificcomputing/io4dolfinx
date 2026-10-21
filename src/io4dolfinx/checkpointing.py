@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import typing
 from pathlib import Path
@@ -16,11 +15,11 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 import ufl
 
-from . import compat
 from .backends import FileMode, ReadMode, get_backend
 from .comm_helpers import (
     send_and_recv_cell_perm,
@@ -210,11 +209,8 @@ def write_meshtags(
     local_start = local_start if mesh.comm.rank != 0 else 0
     global_num_tag_entities = mesh.comm.allreduce(num_saved_tag_entities, op=MPI.SUM)
 
-    dof_layout = compat.cmap(mesh).create_dof_layout()
-    if hasattr(dof_layout, "num_entity_closure_dofs"):
-        num_dofs_per_entity = dof_layout.num_entity_closure_dofs(dim)
-    else:
-        num_dofs_per_entity = len(dof_layout.entity_closure_dofs(dim, 0))
+    dof_layout = fenicsx_compat.cmap(mesh).create_dof_layout()
+    num_dofs_per_entity = len(dof_layout.entity_closure_dofs(dim, 0))
     mesh.topology.create_connectivity(dim, mesh.topology.dim)
     mesh.topology.create_connectivity(0, mesh.topology.dim)
     entities_to_geometry = dolfinx.cpp.mesh.entities_to_geometry(
@@ -336,8 +332,7 @@ def read_function(
     # Compute index of input cells and get cell permutation
     num_owned_cells = mesh.topology.index_map(mesh.topology.dim).size_local
     input_cells = mesh.topology.original_cell_index[:num_owned_cells]
-    compat.create_cell_permutations(mesh)
-    cell_perm = mesh.topology.get_cell_permutation_info()[:num_owned_cells]
+    cell_perm = fenicsx_compat.cell_permutation_info(mesh.topology)[:num_owned_cells]
 
     # Compute mesh->input communicator
     # 1.1 Compute mesh->input communicator
@@ -509,7 +504,7 @@ def read_mesh(
     # `dolfinx.mesh.PartitioningFunc` is not available in all supported
     # versions of DOLFINx, and the accepted callback signature varies (see
     # below), so type the callback permissively.
-    partitioner: Callable[..., dolfinx.cpp.graph.AdjacencyList_int32]
+    partitioner: Callable[..., dolfinx.cpp.graph.AdjacencyList_int32] | None = None
     if (partition_graph := dist_in_data.partition_graph) is not None:
         # The arguments DOLFINx passes to a partitioner callback have changed
         # over time: 0.11 calls it with
@@ -530,37 +525,15 @@ def read_mesh(
                 return partition_graph
 
         partitioner = _custom_partitioner
-    else:
-        if not hasattr(dolfinx.mesh, "create_cell_partitioner"):
-            partitioner = dolfinx.graph.partitioner()
-        else:
-            sig = inspect.signature(dolfinx.mesh.create_cell_partitioner)
-            part_kwargs = {}
 
-            if "max_facet_to_cell_links" in sig.parameters:
-                part_kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
-
-            partitioner = dolfinx.mesh.create_cell_partitioner(ghost_mode, **part_kwargs)
-
-    mesh_args: dict[str, Any] = {}
-    mesh_sig = inspect.signature(dolfinx.mesh.create_mesh)
-    if "max_facet_to_cell_links" in mesh_sig.parameters:
-        mesh_args["max_facet_to_cell_links"] = max_facet_to_cell_links
-    if "ghost_mode" in mesh_sig.parameters:
-        mesh_args["ghost_mode"] = ghost_mode
-    # TODO: Add more options here later
-    if "cell_weights" in mesh_sig.parameters:
-        mesh_args["cell_weights"] = None  # No cell weights provided, default to None
-    if "num_threads" in mesh_sig.parameters:
-        mesh_args["num_threads"] = 1  # Default to 1 thread, can be adjusted if needed
-
-    return dolfinx.mesh.create_mesh(
+    return fenicsx_compat.create_mesh(
         comm,
-        cells=dist_in_data.cells,
-        x=dist_in_data.x,
-        e=domain,
+        dist_in_data.cells,
+        domain,
+        dist_in_data.x,
         partitioner=partitioner,
-        **mesh_args,
+        ghost_mode=ghost_mode,
+        max_facet_to_cell_links=max_facet_to_cell_links,
     )
 
 
@@ -636,8 +609,7 @@ def write_function(
     values = u.x.array
     mesh = u.function_space.mesh
     comm = mesh.comm
-    compat.create_cell_permutations(mesh)
-    cell_perm = mesh.topology.get_cell_permutation_info()
+    cell_perm = fenicsx_compat.cell_permutation_info(mesh.topology)
     num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
     local_cell_range = mesh.topology.index_map(mesh.topology.dim).local_range
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
@@ -657,7 +629,12 @@ def write_function(
     # Convert imap index to global index
     imap_global = dofmap.index_map.local_to_global(dmap_loc)
     dofmap_global = imap_global * index_map_bs + dmap_rem
-    dofmap_imap = compat.index_map(mesh.comm, num_dofs_local_dmap)
+    dofmap_imap = fenicsx_compat.create_index_map(
+        mesh.comm,
+        num_dofs_local_dmap,
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.int32),
+    )
 
     # Compute dofmap offsets
     local_dofmap_offsets = np.arange(num_cells_local + 1, dtype=np.int64)

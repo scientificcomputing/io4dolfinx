@@ -5,7 +5,9 @@
 
 ## Installation
 
-The library is compatible with the DOLFINx nightly release, v0.10.0, and v0.9.0.
+The library is compatible with DOLFINx v0.10.0 and newer, including the nightly release.
+
+Workarounds for API differences between DOLFINx versions live in [`fenicsx-compat`](https://github.com/scientificcomputing/fenicsx-compat), which `io4dolfinx` depends on.
 
 ```bash
 python3 -m pip install io4dolfinx

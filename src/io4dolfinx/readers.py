@@ -16,11 +16,11 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 import ufl
 
-from . import compat
 from .backends import ReadMode, get_backend
 from .comm_helpers import all_to_all, send_dofs_and_recv_values
 from .utils import (
@@ -202,40 +202,14 @@ def read_mesh_from_legacy_h5(
     )
     domain = ufl.Mesh(element)
 
-    try:
-        return dolfinx.mesh.create_mesh(
-            comm=MPI.COMM_WORLD,
-            cells=mesh_topology,
-            x=mesh_geometry,
-            e=domain,
-            partitioner=None,
-            max_facet_to_cell_links=max_facet_to_cell_links,
-        )
-    except TypeError:
-        return dolfinx.mesh.create_mesh(
-            comm=MPI.COMM_WORLD,
-            cells=mesh_topology,
-            x=mesh_geometry,
-            e=domain,
-            partitioner=None,
-        )
-
-    # Should change to the commented code below when we require python
-    # minimum version to be >=3.12 see https://github.com/python/cpython/pull/116198
-    # import inspect
-    # sig = inspect.signature(dolfinx.mesh.create_mesh)
-    # kwargs: dict[str, int] = {}
-    # if "max_facet_to_cell_links" in list(sig.parameters.keys()):
-    #     kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
-
-    # return dolfinx.mesh.create_mesh(
-    #     comm=MPI.COMM_WORLD,
-    #     cells=mesh_topology,
-    #     x=mesh_geometry,
-    #     e=domain,
-    #     partitioner=None,
-    #     **kwargs,
-    # )
+    return dolfinx.mesh.create_mesh(
+        comm=MPI.COMM_WORLD,
+        cells=mesh_topology,
+        x=mesh_geometry,
+        e=domain,
+        partitioner=None,
+        max_facet_to_cell_links=max_facet_to_cell_links,
+    )
 
 
 def read_function_from_legacy_h5(
@@ -363,7 +337,7 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     """Reconstruct a vector space with the N components using the geometry dofmap to ensure
     a 1-1 mapping between mesh nodes and DOFs."""
     geom_imap = mesh.geometry.index_map()
-    geom_dofmap = compat.dofmap(mesh)
+    geom_dofmap = fenicsx_compat.dofmap(mesh)
     ufl_domain = mesh.ufl_domain()
     assert ufl_domain is not None
     sub_el = ufl_domain.ufl_coordinate_element().sub_elements[0]
@@ -391,31 +365,19 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
         _fem_constructor = dolfinx.cpp.fem.FunctionSpace_float64
     else:
         raise RuntimeError(f"Unsupported type {ufl_el.dtype}")
-    try:
-        # DOLFINx > 0.11 requires the geometric dimension of the mesh
-        cpp_el = _fe_constructor(
-            ufl_el.basix_element._e,
-            gdim=mesh.geometry.dim,
-            block_shape=value_shape,
-            symmetric=False,
-        )
-    except TypeError:
-        try:
-            cpp_el = _fe_constructor(  # type: ignore[call-overload]
-                ufl_el.basix_element._e,
-                block_shape=value_shape,
-                symmetric=False,
-            )
-        except TypeError:
-            cpp_el = _fe_constructor(ufl_el.basix_element._e, block_size=N, symmetric=False)  # type: ignore[call-overload]
+    cpp_el = fenicsx_compat.finite_element_ctor_kwargs(
+        _fe_constructor,
+        ufl_el.basix_element._e,
+        gdim=mesh.geometry.dim,
+        value_shape=value_shape,
+    )
     dof_layout = dolfinx.cpp.fem.create_element_dof_layout(cpp_el, [])
-    cpp_dofmap = dolfinx.cpp.fem.DofMap(dof_layout, compat.cpp_index_map(geom_imap), N, adj_list, N)
+    cpp_dofmap = dolfinx.cpp.fem.DofMap(
+        dof_layout, fenicsx_compat.unwrap_index_map(geom_imap), N, adj_list, N
+    )
 
     # Create function space
-    try:
-        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap)  # type: ignore[arg-type]
-    except TypeError:
-        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap, value_shape=value_shape)  # type: ignore[call-overload]
+    cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap)  # type: ignore[arg-type]
 
     return dolfinx.fem.FunctionSpace(mesh, ufl_el, cpp_space)
 
@@ -461,7 +423,7 @@ def read_point_data(
     V = create_geometry_function_space(mesh, num_components)
     uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
     # Assume that mesh is first order for now
-    x_dofmap = compat.dofmap(mesh)
+    x_dofmap = fenicsx_compat.dofmap(mesh)
     igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
 
     # This is dependent on how the data is read in. If distributed equally this is correct

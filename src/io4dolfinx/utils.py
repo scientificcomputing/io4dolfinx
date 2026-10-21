@@ -15,14 +15,10 @@ from pathlib import Path
 
 from mpi4py import MPI
 
-import basix.ufl
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
-import ufl
-from packaging.version import Version
-
-from . import compat
 
 __all__ = [
     "check_file_exists",
@@ -47,10 +43,7 @@ valid_real_types = np.float32 | np.float64
 
 
 def element_signature(V):
-    if Version(dolfinx.__version__) > Version("0.9.0"):
-        return V.element.signature
-    else:
-        return V.element.signature()
+    return V.element.signature
 
 
 def compute_insert_position(
@@ -244,66 +237,9 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
     """
     warnings.warn(
         "reconstruct_mesh is deprecated and will be removed in a future release. "
-        + "Use dolfinx.fem.interpolate_geometry instead, available from DOLFINx>=0.11.",
+        + "Use dolfinx.fem.interpolate_geometry instead, available from DOLFINx>=0.11, "
+        + "or fenicsx_compat.reconstruct_mesh.",
         category=DeprecationWarning,
         stacklevel=2,
     )
-    if not hasattr(dolfinx.fem, "interpolate_geometry"):
-        # Extract cell properties
-        ud = mesh.ufl_domain()
-        assert ud is not None
-        c_el = ud.ufl_coordinate_element()
-        family = c_el.family_name
-        lvar = c_el.lagrange_variant
-        ct = c_el.cell_type
-
-        # Create new UFL element
-        new_c_el = basix.ufl.element(
-            family,
-            ct,
-            coordinate_element_degree,
-            shape=(mesh.geometry.dim,),
-            lagrange_variant=lvar,
-            dtype=mesh.geometry.x.dtype,
-        )
-
-        # Extract new node coordinates
-        V_tmp = dolfinx.fem.functionspace(mesh, new_c_el)
-        gdim = mesh.geometry.dim
-        x = V_tmp.tabulate_dof_coordinates()[:, :gdim]
-
-        # Create new geoemtry
-        geom_imap = V_tmp.dofmap.index_map
-        geom_dofmap = V_tmp.dofmap.list
-        num_nodes_local = geom_imap.size_local + geom_imap.num_ghosts
-        original_input_indices = geom_imap.local_to_global(
-            np.arange(num_nodes_local, dtype=np.int32)
-        )
-        coordinate_element = dolfinx.fem.coordinate_element(
-            mesh.topology.cell_type, coordinate_element_degree, lvar, dtype=mesh.geometry.x.dtype
-        )
-        # Could use create_geometry here when things are fixed
-        geom = dolfinx.mesh.Geometry(
-            type(mesh.geometry._cpp_object)(
-                compat.cpp_index_map(geom_imap),
-                geom_dofmap,
-                coordinate_element._cpp_object,  # type: ignore[arg-type]
-                x,
-                original_input_indices,
-            )
-        )
-
-        # Create new mesh
-        new_top = mesh.topology
-        cpp_mesh = type(mesh._cpp_object)(mesh.comm, new_top._cpp_object, geom._cpp_object)  # type: ignore[arg-type]
-        return dolfinx.mesh.Mesh(cpp_mesh, ufl.Mesh(new_c_el))
-    else:
-        # Use the new interpolate_geometry function
-        assert len(mesh.geometry.cmaps) == 1, "Only single geometry maps are supported"
-        cmap = dolfinx.fem.coordinate_element(
-            mesh.topology.cell_type,
-            coordinate_element_degree,
-            dtype=mesh.geometry.x.dtype,
-            variant=mesh.geometry.cmaps[0].variant,
-        )
-        return dolfinx.fem.interpolate_geometry(mesh, cmap)
+    return fenicsx_compat.reconstruct_mesh(mesh, coordinate_element_degree)

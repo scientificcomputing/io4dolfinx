@@ -13,20 +13,13 @@ from mpi4py import MPI
 
 import adios2
 import dolfinx.graph
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 
 from ...utils import compute_local_range, valid_function_types
 
-
-def resolve_adios_scope(adios2):
-    scope = adios2.bindings if hasattr(adios2, "bindings") else adios2
-    if not scope.is_built_with_mpi:
-        raise ImportError("ADIOS2 must be built with MPI support")
-    return scope
-
-
-adios2 = resolve_adios_scope(adios2)
+adios2 = fenicsx_compat.resolve_adios_scope(adios2)
 
 
 __all__ = [

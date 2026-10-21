@@ -5,7 +5,6 @@
 # SPDX-License-Identifier:    MIT
 
 
-import inspect
 import pathlib
 
 from mpi4py import MPI
@@ -117,12 +116,13 @@ def test_legacy_function(backend):
     from dolfinx.fem.petsc import LinearProblem
 
     uh = dolfinx.fem.Function(V)
-    if "petsc_options_prefix" in inspect.signature(LinearProblem.__init__).parameters.keys():
-        extra_options = {"petsc_options_prefix": "legacy_test"}
-    else:
-        extra_options = {}
     problem = LinearProblem(
-        a, L, bcs=[], u=uh, petsc_options={"ksp_type": "preonly", "pc_type": "lu"}, **extra_options
+        a,
+        L,
+        bcs=[],
+        u=uh,
+        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+        petsc_options_prefix="legacy_test",
     )
     problem.solve()
 
@@ -163,12 +163,13 @@ def test_read_legacy_function_from_checkpoint(backend):
         pytest.skip("dolfinx not configured with PETSc4py")
 
     uh = dolfinx.fem.Function(V)
-    if "petsc_options_prefix" in inspect.signature(LinearProblem.__init__).parameters.keys():
-        extra_options = {"petsc_options_prefix": "legacy_checkpoint_test"}
-    else:
-        extra_options = {}
     problem = LinearProblem(
-        a, L, bcs=[], u=uh, petsc_options={"ksp_type": "preonly", "pc_type": "lu"}, **extra_options
+        a,
+        L,
+        bcs=[],
+        u=uh,
+        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+        petsc_options_prefix="legacy_checkpoint_test",
     )
     problem.solve()
 
