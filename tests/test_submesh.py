@@ -178,19 +178,34 @@ def test_submesh_roundtrip_codim0_vector(tmp_path, backend, family, degree):
     assert _max_error(u_sub, reference_sub) < 1e-13
 
 
-@pytest.mark.parametrize("family", ["N1curl", "RT"])
-def test_manifold_hcurl_roundtrips_but_transfer_raises(tmp_path, backend, family):
-    """H(div)/H(curl) on a manifold submesh: storable, but not reattachable.
+def _tangential_reference(x, family: str):
+    """A field tangent to the facet submesh ``x = 0`` that lies in ``(family, 1)``.
 
-    Writing and reading the standalone submesh is exact for these spaces, and
-    that is checked here so the capability is not lost by accident.
-
-    The transfer, though, is refused. DOLFINx cannot reconcile the reference and
-    physical value sizes of these families when ``tdim < gdim``, and its
-    interpolation does not report the problem -- it returns values that are
-    simply wrong (the L2 norm of an N1curl field measured 9.096 before and 4.904
-    after). A loud refusal is the only safe behaviour.
+    On that plane RT1 contains ``a + c (y, z)`` and N1curl1 ``a + c (-z, y)``.
+    ``x`` is either the point array or ``ufl.SpatialCoordinate``.
     """
+    zero = 0.0 * x[0]
+    if family == "RT":
+        return zero, 0.3 + 0.5 * x[1], -0.7 + 0.5 * x[2]
+    return zero, 0.3 - 0.5 * x[2], -0.7 + 0.5 * x[1]
+
+
+def _l2_error(u, family: str) -> float:
+    """L2 distance between ``u`` and :func:`_tangential_reference`."""
+    mesh = u.function_space.mesh
+    e = u - ufl.as_vector(_tangential_reference(ufl.SpatialCoordinate(mesh), family))
+    local = dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(e, e) * ufl.dx))
+    return np.sqrt(mesh.comm.allreduce(local, MPI.SUM))
+
+
+@pytest.mark.skipif(
+    not hasattr(dolfinx.fem.FiniteElement, "physical_base_value_size"),
+    reason="DOLFINx cannot interpolate into H(div)/H(curl) on a manifold",
+)
+@pytest.mark.parametrize("family", ["N1curl", "RT"])
+@pytest.mark.parametrize("degree", [1, 2])
+def test_manifold_hdiv_hcurl(tmp_path, backend, family, degree):
+    """H(div)/H(curl) on a manifold submesh: stored, read and reattached exactly."""
     comm = MPI.COMM_WORLD
     folder = comm.bcast(tmp_path, root=0)
     parent_file = folder / f"parent{SUFFIX[backend]}"
@@ -198,18 +213,9 @@ def test_manifold_hcurl_roundtrips_but_transfer_raises(tmp_path, backend, family
     mesh, submesh, cell_map = _make_submesh(comm, codim=1)
     # Spaces mapped by the contravariant Piola map need these on a manifold.
     fenicsx_compat.create_facet_orientations(submesh.topology)
-    V = dolfinx.fem.functionspace(submesh, (family, 1))
-    u = dolfinx.fem.Function(V, name="u")
-    # These spaces cannot be interpolated into on a manifold, so fill by global
-    # dof index instead: reproducible no matter how the mesh is partitioned.
-    imap = V.dofmap.index_map
-    num_owned = imap.size_local * V.dofmap.index_map_bs
-    global_index = imap.local_to_global(np.arange(imap.size_local, dtype=np.int32))
-    u.x.array[:num_owned] = np.sin(0.37 * global_index.astype(np.float64) + 0.11)
-    u.x.scatter_forward()
-    norm_written = comm.allreduce(
-        dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(u, u) * ufl.dx)), MPI.SUM
-    )
+    u = dolfinx.fem.Function(dolfinx.fem.functionspace(submesh, (family, degree)), name="u")
+    u.interpolate(lambda x: np.vstack(_tangential_reference(x, family)))
+    assert _l2_error(u, family) < 1e-13
 
     io4dolfinx.write_mesh(parent_file, mesh, backend=backend)
     io4dolfinx.write_submesh(
@@ -218,28 +224,37 @@ def test_manifold_hcurl_roundtrips_but_transfer_raises(tmp_path, backend, family
     io4dolfinx.write_function(
         parent_file, u, time=0.0, mode=io4dolfinx.FileMode.append, mesh_name="wall", backend=backend
     )
-    del mesh, submesh, cell_map
+    del mesh, submesh, cell_map, u
 
     parent = io4dolfinx.read_mesh(parent_file, comm, backend=backend)
     stored = io4dolfinx.read_mesh(parent_file, comm, mesh_name="wall", backend=backend)
     fenicsx_compat.create_facet_orientations(stored.topology)
-    u_stored = dolfinx.fem.Function(dolfinx.fem.functionspace(stored, (family, 1)), name="u")
+    u_stored = dolfinx.fem.Function(dolfinx.fem.functionspace(stored, (family, degree)), name="u")
     io4dolfinx.read_function(
         parent_file, u_stored, time=0.0, name="u", mesh_name="wall", backend=backend
     )
-
-    # Steps 1-3 are exact even here.
-    norm_read = comm.allreduce(
-        dolfinx.fem.assemble_scalar(dolfinx.fem.form(ufl.inner(u_stored, u_stored) * ufl.dx)),
-        MPI.SUM,
-    )
-    assert np.isclose(norm_read, norm_written, rtol=0, atol=1e-12)
+    assert _l2_error(u_stored, family) < 1e-13
 
     checkpoint = io4dolfinx.read_submesh(parent_file, parent, mesh_name="wall", backend=backend)
     fenicsx_compat.create_facet_orientations(checkpoint.submesh.topology)
-    u_sub = dolfinx.fem.Function(dolfinx.fem.functionspace(checkpoint.submesh, (family, 1)))
+    u_sub = dolfinx.fem.Function(dolfinx.fem.functionspace(checkpoint.submesh, (family, degree)))
+    io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
+    assert _l2_error(u_sub, family) < 1e-13
+
+
+@pytest.mark.skipif(
+    hasattr(dolfinx.fem.FiniteElement, "physical_base_value_size"),
+    reason="DOLFINx supports H(div)/H(curl) on a manifold",
+)
+@pytest.mark.parametrize("family", ["N1curl", "RT"])
+def test_manifold_hdiv_hcurl_transfer_raises(family):
+    """Older DOLFINx interpolates these spaces wrongly on a manifold, so refuse."""
+    _, submesh, _ = _make_submesh(MPI.COMM_WORLD, codim=1)
+    fenicsx_compat.create_facet_orientations(submesh.topology)
+    u = dolfinx.fem.Function(dolfinx.fem.functionspace(submesh, (family, 1)))
+    post_code = np.zeros(0, dtype=np.int64)
     with pytest.raises(NotImplementedError, match="not supported"):
-        io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
+        io4dolfinx.transfer_submesh_function(u, u, post_code)
 
 
 @pytest.mark.parametrize("codim", [0, 1])

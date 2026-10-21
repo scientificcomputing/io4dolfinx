@@ -153,24 +153,31 @@ area = parent.comm.allreduce(dolfinx.fem.assemble_scalar(area_form), MPI.SUM)
 print(f"Area of the submesh assembled over the parent: {area:.3f}")
 # -
 
-# ## What is not supported
+# ## H(div) and H(curl) on a manifold
 #
-# H(div) and H(curl) on a submesh of co-dimension greater than zero can be
-# **written and read** exactly -- steps 1-3 above -- but cannot be transferred to
-# a re-derived submesh. `transfer_submesh_function` raises `NotImplementedError`
-# for them.
+# On a submesh of co-dimension greater than zero, H(div) and H(curl) spaces
+# depend on two DOLFINx changes that are on the main branch but in no release
+# yet (0.11 and earlier lack them):
 #
-# The reason is worth knowing. A finite element space on a manifold does not
-# carry its value shape in *physical* space, so DOLFINx cannot reconcile the
-# reference and physical value sizes of these families when `tdim < gdim`
-# ([FEniCS/dolfinx#3619](https://github.com/FEniCS/dolfinx/issues/3619), open at
-# the time of writing). Elsewhere that surfaces as an outright error:
-# *"Interpolation: elements have different value dimensions"*, but in this
-# particular path it does not: `interpolate_nonmatching` returns successfully
-# with values that are wrong. The guard exists so that this
-# shows up as an error rather than as a plausible-looking result, and it can be
-# lifted once that issue is fixed.
+# - [FEniCS/dolfinx#4511](https://github.com/FEniCS/dolfinx/pull/4511) gives a
+#   finite element its value size in *physical* space, which differs from the
+#   reference one when `tdim < gdim`
+#   ([FEniCS/dolfinx#3619](https://github.com/FEniCS/dolfinx/issues/3619)).
+# - [FEniCS/dolfinx#4625](https://github.com/FEniCS/dolfinx/pull/4625) signs the
+#   facets on which neighbouring cells disagree on the normal, without which a
+#   contravariant Piola space such as Raviart-Thomas is not conforming. Call
+#   `create_facet_orientations` on the topology of every manifold mesh before
+#   creating such a space on it -- the original submesh, the stored one and the
+#   re-derived one -- or use `fenicsx_compat.create_facet_orientations`, which
+#   does nothing on DOLFINx versions without it.
 #
-# There is no sound workaround. The stored submesh is an independent mesh,
+# With both, writing, reading and transferring are exact for these spaces too.
+#
+# On older DOLFINx they can still be **written and read** exactly, as under
+# *Writing* and *Reading* above, but not transferred to a re-derived submesh:
+# `transfer_submesh_function` raises `NotImplementedError`. There,
+# `interpolate_nonmatching` returns successfully with values that are wrong,
+# and the guard makes that an error rather than a plausible-looking result.
+# There is no sound workaround: the stored submesh is an independent mesh,
 # derived from nothing, so a projection -- or any other form assembled between it
 # and the re-derived submesh -- would have no basis.
