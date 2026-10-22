@@ -35,9 +35,11 @@ given). A mesh with a single step is read whatever the time.
     cells = io4dolfinx.read_meshtags(
         "mesh.med", mesh, meshtag_name="cell", backend="med", backend_args={"time": 0.5}
     )
+
 The cells must be of a single type. Linear and quadratic Lagrange cells (``SE3``, ``TR6``, ``QU9``,
 ``T10``, ``P18``, ``H27``) and the quadratic serendipity cells ``QU8`` and ``H20`` are supported.
-MED node orderings are converted through Gmsh's MED reader tables.
+The serendipity cells require the main branch of DOLFINx.
+MED node orderings are converted with tables derived from MEDCoupling's MED cell model.
 
 .. automodule:: io4dolfinx.backends.med.backend
     :members:

@@ -64,29 +64,33 @@ _med_cell_types = {
     "H27": (dolfinx.mesh.CellType.hexahedron, 2),
 }
 
-# Lagrange layouts: ``gmsh[k] = med[_med_to_gmsh[med_type][k]]``, from
-# ``med2mshNodeIndex`` (and ``msh2medNodeIndex`` for the symmetric types) in Gmsh,
-# https://github.com/live-clones/gmsh/blob/b4e84a43d02f97bc50ef37ed21e5e97096d072be/src/geo/GModelIO_MED.cpp#L113-L233
-# composed with ``dolfinx.cpp.io.perm_gmsh`` to get DOLFINx order.
-_med_to_gmsh = {
+# Node permutation ``p`` with ``dolfinx[i] = med[p[i]]`` for each supported MED element
+# type. Derived from MEDCoupling's (LGPL) MED cell model: the nodes it adds in
+# ``MEDCouplingUMesh.convertLinearCellsToQuadratic`` and the face centres of
+# ``buildDescendingConnectivity`` (for ``P18``), matched to the Basix reference points.
+# ``test_med_permutations_match_medcoupling`` checks the table when medcoupling is
+# installed.
+_med_to_dolfinx = {
     "SE2": [0, 1],
     "SE3": [0, 1, 2],
     "TR3": [0, 1, 2],
-    "TR6": [0, 1, 2, 3, 4, 5],
-    "QU4": [0, 1, 2, 3],
-    "QU9": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-    "TE4": [0, 2, 1, 3],
-    "T10": [0, 2, 1, 3, 6, 5, 4, 7, 8, 9],
-    "PY5": [0, 3, 2, 1, 4],
-    "PE6": [0, 2, 1, 3, 5, 4],
-    "P18": [0, 2, 1, 3, 5, 4, 8, 6, 12, 7, 14, 13, 11, 9, 10, 17, 15, 16],
-    "HE8": [0, 3, 2, 1, 4, 7, 6, 5],
-    "H27": [0, 3, 2, 1, 4, 7, 6, 5, 11, 8, 16, 10, 19, 9, 18, 17, 15, 12, 14, 13]
-    + [20, 24, 21, 23, 22, 25, 26],
+    "TR6": [0, 1, 2, 4, 5, 3],
+    "QU4": [0, 1, 3, 2],
+    "QU8": [0, 1, 3, 2, 4, 7, 5, 6],
+    "QU9": [0, 1, 3, 2, 4, 7, 5, 6, 8],
+    "TE4": [0, 1, 2, 3],
+    "T10": [0, 1, 2, 3, 9, 8, 5, 7, 6, 4],
+    "PY5": [0, 1, 3, 2, 4],
+    "PE6": [0, 1, 2, 3, 4, 5],
+    "P18": [0, 1, 2, 3, 4, 5, 6, 8, 12, 7, 13, 14, 9, 11, 10, 15, 17, 16],
+    "HE8": [0, 1, 3, 2, 4, 5, 7, 6],
+    "H20": [0, 1, 3, 2, 4, 5, 7, 6, 8, 11, 16, 9, 17, 10, 19, 18, 12, 15, 13, 14],
+    "H27": [0, 1, 3, 2, 4, 5, 7, 6, 8, 11, 16, 9, 17, 10, 19, 18, 12, 15, 13, 14]
+    + [20, 21, 24, 22, 23, 25, 26],
 }
 
-# Serendipity layouts (number of nodes), with the same node order in MED and VTK
-_med_serendipity = {"QU8": 8, "H20": 20}
+# Layouts with the nodal serendipity coordinate element
+_med_serendipity = ("QU8", "H20")
 
 
 def geometry_layout(med_type: str) -> tuple[dolfinx.mesh.CellType, int, bool]:
@@ -103,20 +107,7 @@ def geometry_layout(med_type: str) -> tuple[dolfinx.mesh.CellType, int, bool]:
               (``QU8``, ``H20``), False if it is Lagrange
     """
     cell_type, degree = _med_cell_types[med_type]
-    if med_type not in _med_to_gmsh and med_type not in _med_serendipity:
-        raise NotImplementedError(
-            f"MED element type {med_type} has no Lagrange or nodal serendipity layout."
-        )
     return cell_type, degree, med_type in _med_serendipity
-
-
-def get_med_to_dolfinx_permutation(med_type: str) -> npt.NDArray[np.int64]:
-    """Get the permutation ``p`` with ``dolfinx[i] = med[p[i]]`` for a cell's nodes."""
-    cell_type, _, serendipity = geometry_layout(med_type)
-    if serendipity:
-        return np.asarray(dolfinx.cpp.io.perm_vtk(cell_type, _med_serendipity[med_type]))
-    med_to_gmsh = np.asarray(_med_to_gmsh[med_type])
-    return med_to_gmsh[dolfinx.cpp.io.perm_gmsh(cell_type, len(med_to_gmsh))]
 
 
 def get_mesh_step_and_families(
@@ -226,7 +217,11 @@ def read_entities(
     connectivity = nodes.astype(np.int64) - 1
 
     # Permute the nodes of each entity from MED to DOLFINx ordering
-    perm = get_med_to_dolfinx_permutation(med_type)
+    if med_type not in _med_to_dolfinx:
+        raise NotImplementedError(
+            f"MED element type {med_type} has no Lagrange or nodal serendipity layout."
+        )
+    perm = _med_to_dolfinx[med_type]
     if connectivity.shape[1] != len(perm):
         raise ValueError(f"Expected {len(perm)} nodes per {med_type}, got {connectivity.shape[1]}.")
     return med_type, local_range, connectivity[:, perm]

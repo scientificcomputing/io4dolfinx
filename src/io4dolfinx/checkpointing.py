@@ -33,7 +33,6 @@ from .utils import (
     compute_dofmap_pos,
     compute_local_range,
     index_owner,
-    serendipity_coordinate_element,
     unroll_dofmap,
     unroll_insert_position,
 )
@@ -501,8 +500,17 @@ def read_mesh(
     # Create DOLFINx mesh
     element: basix.ufl._ElementBase
     if dist_in_data.serendipity:
+        try:
+            from dolfinx.io.utils import _serendipity_coordinate_element
+        except ImportError as e:
+            raise NotImplementedError(
+                "Meshes with serendipity geometry (8-node quadrilaterals, 20-node "
+                "hexahedra) require the main branch of DOLFINx."
+            ) from e
         element = basix.ufl.blocked_element(
-            serendipity_coordinate_element(dist_in_data.cell_type, dist_in_data.x.dtype),
+            _serendipity_coordinate_element(
+                dolfinx.mesh.to_type(dist_in_data.cell_type), dist_in_data.x.dtype
+            ),
             shape=(dist_in_data.x.shape[1],),
         )
     else:

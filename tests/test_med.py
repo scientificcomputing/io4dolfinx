@@ -4,7 +4,9 @@ from enum import Enum
 
 from mpi4py import MPI
 
+import basix
 import dolfinx
+import dolfinx.io.utils
 import fenicsx_compat
 import numpy as np
 import pytest
@@ -14,7 +16,13 @@ import io4dolfinx
 
 h5py = pytest.importorskip("h5py")
 
+from io4dolfinx.backends.med import backend as med_backend  # noqa: E402
 from io4dolfinx.backends.med.backend import read_groups  # noqa: E402
+
+requires_serendipity = pytest.mark.skipif(
+    not hasattr(dolfinx.io.utils, "_serendipity_coordinate_element"),
+    reason="Serendipity geometry requires the main branch of DOLFINx",
+)
 
 # (DOLFINx cell type, geometry degree, serendipity) -> MED element type
 _dolfinx_to_med = {
@@ -444,11 +452,11 @@ def _moments(mesh, facet_tags=None):
     [
         (dolfinx.mesh.CellType.triangle, False),
         (dolfinx.mesh.CellType.quadrilateral, False),
-        (dolfinx.mesh.CellType.quadrilateral, True),
+        pytest.param(dolfinx.mesh.CellType.quadrilateral, True, marks=requires_serendipity),
         (dolfinx.mesh.CellType.tetrahedron, False),
         (dolfinx.mesh.CellType.prism, False),
         (dolfinx.mesh.CellType.hexahedron, False),
-        (dolfinx.mesh.CellType.hexahedron, True),
+        pytest.param(dolfinx.mesh.CellType.hexahedron, True, marks=requires_serendipity),
     ],
 )
 def test_higher_order(tmp_dir, cell_type, serendipity):
@@ -489,7 +497,7 @@ def test_higher_order(tmp_dir, cell_type, serendipity):
     [
         (dolfinx.mesh.CellType.triangle, 1, False),
         (dolfinx.mesh.CellType.tetrahedron, 2, False),
-        (dolfinx.mesh.CellType.hexahedron, 2, True),
+        pytest.param(dolfinx.mesh.CellType.hexahedron, 2, True, marks=requires_serendipity),
     ],
 )
 def test_no_facet_block(tmp_dir, cell_type, degree, serendipity):
@@ -660,6 +668,77 @@ def test_medcoupling_reference(tmp_dir, variant):
         assert np.isclose(_integrate(mesh, "dx", 1, left), (1 + t) / 2)
         assert np.isclose(_integrate(mesh, "ds", 6, ft), 1.0)
         assert np.isclose(_integrate(mesh, "ds", 1, inlet), 1.0)
+
+
+# MED type -> (linear MEDCoupling type, conversion type in convertLinearCellsToQuadratic)
+_medcoupling_conversions = {
+    "SE3": ("NORM_SEG2", 0),
+    "TR6": ("NORM_TRI3", 0),
+    "QU8": ("NORM_QUAD4", 0),
+    "QU9": ("NORM_QUAD4", 1),
+    "T10": ("NORM_TETRA4", 0),
+    "H20": ("NORM_HEXA8", 0),
+    "H27": ("NORM_HEXA8", 1),
+}
+
+
+def _check_med_node_positions(mc, med_type, x):
+    """Check with MEDCoupling that MED nodes at ``x`` (MED order) form a valid cell.
+
+    MEDCoupling builds the quadratic nodes from the vertices; MEDCoupling cannot build
+    ``P18`` from ``PE6``, so its face midside and centre nodes are checked instead."""
+    if med_type in _medcoupling_conversions:
+        linear, conversion = _medcoupling_conversions[med_type]
+        num_vertices = mc.MEDCouplingUMesh.GetNumberOfNodesOfGeometricType(getattr(mc, linear))
+        dim = mc.MEDCouplingUMesh.GetDimensionOfGeometricType(getattr(mc, linear))
+        m = mc.MEDCouplingUMesh("m", dim)
+        m.allocateCells(1)
+        m.insertNextCell(getattr(mc, linear), list(range(num_vertices)))
+        m.setCoords(mc.DataArrayDouble(x[:num_vertices].ravel().tolist(), num_vertices, 3))
+        m.convertLinearCellsToQuadratic(conversion)
+        nodes = m.getNodeIdsOfCell(0)
+        np.testing.assert_allclose(m.getCoords().toNumPyArray()[nodes], x, atol=1e-14)
+    else:
+        assert med_type == "P18"
+        m = mc.MEDCouplingUMesh("m", 3)
+        m.allocateCells(1)
+        m.insertNextCell(mc.NORM_PENTA18, list(range(len(x))))
+        m.setCoords(mc.DataArrayDouble(x.ravel().tolist(), len(x), 3))
+        faces = m.buildDescendingConnectivity()[0]
+        for f in range(faces.getNumberOfCells()):
+            nodes = faces.getNodeIdsOfCell(f)
+            nc = 4 if len(nodes) >= 8 else 3
+            for k in range(nc):  # Midside nodes
+                midpoint = x[[nodes[k], nodes[(k + 1) % nc]]].mean(axis=0)
+                np.testing.assert_allclose(x[nodes[nc + k]], midpoint, atol=1e-14)
+            if len(nodes) == 9:  # Face centre
+                np.testing.assert_allclose(x[nodes[8]], x[nodes[:4]].mean(axis=0), atol=1e-14)
+
+
+@pytest.mark.parametrize(
+    "med_type",
+    [
+        pytest.param(t, marks=requires_serendipity) if t in ("QU8", "H20") else t
+        for t in [*_medcoupling_conversions, "P18"]
+    ],
+)
+def test_med_permutations_match_medcoupling(med_type):
+    """The MED to DOLFINx node permutations agree with MEDCoupling's MED cell model."""
+    mc = pytest.importorskip("medcoupling")
+    cell_type, degree, serendipity = med_backend.geometry_layout(med_type)
+    name = dolfinx.mesh.to_string(cell_type)
+    if serendipity:
+        element = dolfinx.io.utils._serendipity_coordinate_element(cell_type, np.float64)
+        points = element.basix_element.points
+    else:
+        points = basix.create_element(
+            basix.ElementFamily.P, basix.CellType[name], degree, basix.LagrangeVariant.equispaced
+        ).points
+    # MED node perm[i] is DOLFINx node i
+    perm = med_backend._med_to_dolfinx[med_type]
+    x = np.zeros((len(perm), 3))
+    x[perm, : points.shape[1]] = points
+    _check_med_node_positions(mc, med_type, x)
 
 
 def test_salome_file(tmp_dir):
