@@ -15,6 +15,8 @@ from pathlib import Path
 
 from mpi4py import MPI
 
+import basix
+import basix.ufl
 import dolfinx
 import fenicsx_compat
 import numpy as np
@@ -29,6 +31,7 @@ __all__ = [
     "compute_insert_position",
     "unroll_insert_position",
     "reconstruct_mesh",
+    "serendipity_coordinate_element",
 ]
 
 
@@ -243,3 +246,44 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
         stacklevel=2,
     )
     return fenicsx_compat.reconstruct_mesh(mesh, coordinate_element_degree)
+
+
+def serendipity_coordinate_element(cell_type: str, dtype: npt.DTypeLike) -> basix.ufl._ElementBase:
+    """Create the degree 2 serendipity element with nodes at the vertices and edge midpoints.
+
+    This is the coordinate element of 8-node quadrilaterals and 20-node hexahedra. It
+    differs from Basix's serendipity element, whose edge degrees of freedom are moments.
+
+    Args:
+        cell_type: ``"quadrilateral"`` or ``"hexahedron"``
+        dtype: Data type of the element
+
+    Returns:
+        The scalar element
+    """
+    s_el = basix.ufl.element(basix.ElementFamily.serendipity, cell_type, 2, dtype=dtype)
+    be = s_el.basix_element
+    geometry = basix.cell.geometry(be.cell_type)
+    topology = basix.cell.topology(be.cell_type)
+    x = [
+        be.x[0],
+        [np.array([(geometry[e[0]] + geometry[e[1]]) / 2], dtype=dtype) for e in topology[1]],
+        be.x[2],
+        be.x[3],
+    ]
+    M = [be.M[0], [np.ones((1, 1, 1, 1), dtype=dtype) for _ in be.M[1]], be.M[2], be.M[3]]
+    return basix.ufl.custom_element(
+        be.cell_type,
+        s_el.reference_value_shape,
+        be.wcoeffs,
+        x,
+        M,
+        0,
+        s_el.map_type,
+        be.sobolev_space,
+        s_el.discontinuous,
+        s_el.embedded_subdegree,
+        s_el.embedded_superdegree,
+        s_el.polyset_type,
+        s_el.dtype,
+    )

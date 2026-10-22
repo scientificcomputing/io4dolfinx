@@ -27,6 +27,7 @@ h5py = ["h5py"]
 pyvista = ["pyvista"]
 xdmf = ["h5py"]
 exodus = ["netcdf4"]
+med = ["h5py"]
 
 [dependency-groups]
 build = [
@@ -44,7 +45,9 @@ test = [
     "packaging",
     "io4dolfinx[h5py]",
     "io4dolfinx[pyvista]",
-    "io4dolfinx[xdmf]"
+    "io4dolfinx[xdmf]",
+    # Reference MED writer for tests; only x86_64 wheels exist, older versions build from source
+    "medcoupling>=9.15; platform_machine == 'x86_64' or platform_machine == 'AMD64'",
 ]
 dev = [
     "pdbpp",

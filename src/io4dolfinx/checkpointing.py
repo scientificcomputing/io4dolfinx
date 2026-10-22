@@ -33,6 +33,7 @@ from .utils import (
     compute_dofmap_pos,
     compute_local_range,
     index_owner,
+    serendipity_coordinate_element,
     unroll_dofmap,
     unroll_insert_position,
 )
@@ -275,8 +276,14 @@ def read_meshtags(
     backend_args = backend_cls.get_default_backend_args(backend_args)
     data = backend_cls.read_meshtags_data(filename, mesh.comm, meshtag_name, backend_args)
 
+    indices = data.indices
+    if indices.shape[0] == 0:
+        # A backend without entities may not know the number of geometry nodes per entity
+        layout = fenicsx_compat.cmap(mesh).create_dof_layout()
+        num_nodes = len(layout.entity_closure_dofs(int(data.dim), 0))
+        indices = np.zeros((0, num_nodes), dtype=np.int64)
     local_entities, local_values = dolfinx.io.distribute_entity_data(
-        mesh, int(data.dim), data.indices, data.values
+        mesh, int(data.dim), indices, data.values
     )
     mesh.topology.create_connectivity(data.dim, 0)
     mesh.topology.create_connectivity(data.dim, mesh.topology.dim)
@@ -492,14 +499,21 @@ def read_mesh(
     )
 
     # Create DOLFINx mesh
-    element = basix.ufl.element(
-        basix.ElementFamily.P,
-        dist_in_data.cell_type,
-        dist_in_data.degree,
-        basix.LagrangeVariant(int(dist_in_data.lvar)),
-        shape=(dist_in_data.x.shape[1],),
-        dtype=dist_in_data.x.dtype,
-    )
+    element: basix.ufl._ElementBase
+    if dist_in_data.serendipity:
+        element = basix.ufl.blocked_element(
+            serendipity_coordinate_element(dist_in_data.cell_type, dist_in_data.x.dtype),
+            shape=(dist_in_data.x.shape[1],),
+        )
+    else:
+        element = basix.ufl.element(
+            basix.ElementFamily.P,
+            dist_in_data.cell_type,
+            dist_in_data.degree,
+            basix.LagrangeVariant(int(dist_in_data.lvar)),
+            shape=(dist_in_data.x.shape[1],),
+            dtype=dist_in_data.x.dtype,
+        )
     domain = ufl.Mesh(element)
     # `dolfinx.mesh.PartitioningFunc` is not available in all supported
     # versions of DOLFINx, and the accepted callback signature varies (see

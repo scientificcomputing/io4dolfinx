@@ -504,11 +504,15 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .exodus import backend as EXODUSInterface
 
         return EXODUSInterface
+    elif backend == "med":
+        from .med import backend as MEDInterface
+
+        return MEDInterface
     else:
         return import_module(backend)
 
 
-BUILTIN_BAKENDS = ("h5py", "adios2", "pyvista", "xdmf", "vtkhdf", "exodus")
+BUILTIN_BAKENDS = ("h5py", "adios2", "pyvista", "xdmf", "vtkhdf", "exodus", "med")
 
 
 def list_builtin_backends() -> list[str]:
