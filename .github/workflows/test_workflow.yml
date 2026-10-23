@@ -34,6 +34,9 @@ env:
   # the image currently ships 5.0.10. MPICH ignores the variable, so it is
   # safe to set unconditionally. Drop once the image has OpenMPI >= 5.0.11.
   OMPI_MCA_topo: basic
+  # MEDCoupling (LGPL) writes the reference MED files in tests/test_med.py
+  MEDCOUPLING_VERSION: V9_15_0
+  MEDCOUPLING_PREFIX: /opt/medcoupling
 jobs:
   get_image_tag:
     runs-on: ubuntu-latest
@@ -44,7 +47,8 @@ jobs:
         run: echo "image=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
 
   test-code:
-    timeout-minutes: 30
+    # Leaves room for building MEDCoupling on a cache miss
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     # The container tag is now dynamic based on the input passed by the caller
     container: ghcr.io/fenics/test-env:current
@@ -108,6 +112,56 @@ jobs:
           python3 -m pip install h5py --no-binary=h5py --no-build-isolation
           python3 -m pip install --group dev --group test
           python3 -m pip install . --no-build-isolation
+
+      - name: Get Python version
+        id: python
+        run: echo "version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" >> $GITHUB_OUTPUT
+
+      # MEDCoupling has no wheels for recent Python versions, so it is built from
+      # source against Ubuntu's MED-fichier, which links the image's MPI HDF5
+      - name: Install MEDCoupling dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libmedc-dev swig
+
+      - name: Cache MEDCoupling
+        id: cache-medcoupling
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.MEDCOUPLING_PREFIX }}
+          key: medcoupling-${{ env.MEDCOUPLING_VERSION }}-py${{ steps.python.outputs.version }}-${{ runner.arch }}
+
+      - name: Build MEDCoupling
+        if: steps.cache-medcoupling.outputs.cache-hit != 'true'
+        run: |
+          for repo in configuration medcoupling; do
+            git clone --depth 1 -b ${MEDCOUPLING_VERSION} https://github.com/SalomePlatform/${repo}.git /tmp/${repo}
+          done
+          # SALOME_USE_MPI is required for a parallel HDF5; ParaMEDMEM stays off
+          cmake -G Ninja -S /tmp/medcoupling -B /tmp/medcoupling-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
+            -DCONFIGURATION_ROOT_DIR=/tmp/configuration \
+            -DMEDFILE_ROOT_DIR=/usr \
+            -DSALOME_USE_MPI=ON \
+            -DMEDCOUPLING_USE_MPI=OFF \
+            -DMEDCOUPLING_ENABLE_PARTITIONER=OFF \
+            -DMEDCOUPLING_ENABLE_RENUMBER=OFF \
+            -DMEDCOUPLING_MEDLOADER_USE_XDR=OFF \
+            -DMEDCOUPLING_BUILD_TESTS=OFF \
+            -DMEDCOUPLING_BUILD_PY_TESTS=OFF \
+            -DMEDCOUPLING_BUILD_DOC=OFF \
+            -DMEDCOUPLING_WITH_FILE_EXAMPLES=OFF
+          cmake --build /tmp/medcoupling-build
+          cmake --install /tmp/medcoupling-build
+
+      - name: Make MEDCoupling importable
+        run: |
+          echo "PYTHONPATH=${MEDCOUPLING_PREFIX}/lib/python${{ steps.python.outputs.version }}/site-packages${PYTHONPATH:+:${PYTHONPATH}}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${MEDCOUPLING_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
+
+      - name: Show MEDCoupling version
+        run: python3 -c "import medcoupling; print(medcoupling.__version__)"
 
       - name: Show adios2 version
         run: python3 -c "import adios2; print(adios2.__version__)"
