@@ -27,6 +27,7 @@ h5py = ["h5py"]
 pyvista = ["pyvista"]
 xdmf = ["h5py"]
 exodus = ["netcdf4"]
+gmsh = ["gmsh"]
 
 [dependency-groups]
 build = [
@@ -44,7 +45,8 @@ test = [
     "packaging",
     "io4dolfinx[h5py]",
     "io4dolfinx[pyvista]",
-    "io4dolfinx[xdmf]"
+    "io4dolfinx[xdmf]",
+    "io4dolfinx[gmsh]",
 ]
 dev = [
     "pdbpp",
@@ -61,6 +63,7 @@ docs = [
     "sphinx-codeautolink",
     "io4dolfinx[h5py]",
     "io4dolfinx[pyvista]",
+    "io4dolfinx[gmsh]",
     "sphinx_external_toc<1.1.0",
 ]
 all = [

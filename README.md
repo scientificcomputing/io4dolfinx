@@ -70,6 +70,7 @@ Most meshing formats supports associating data with the nodes of the mesh (the m
 
 - [VTKHDF](./docs/backends/vtkhdf.rst): The new scalable format from VTK, called [VTKHDF](https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/index.html) is supported by the `vtkhdf` backend.
 - [XDMF](./docs/backends/xdmf.rst) (eXtensible Model Data Format): `.xdmf`. The `xdmf` backend supports the `HDF5` encoding, to ensure performance in parallel.
+- [Gmsh](./docs/backends/gmsh.rst): `.msh` files (MSH 2.2 and 4.1, ASCII and binary) are read and written with the [Gmsh](https://gmsh.info) Python API by the `gmsh` backend, including physical groups as mesh tags and time-dependent point and cell data.
 - [PyVista](./docs/backends/pyvista.rst) (IO backend is meshio): The [pyvista](https://pyvista.org/) backend uses {py:func}`pyvista.read` to read in meshes, point data and cell data. `pyvista` relies on [meshio](https://github.com/nschloe/meshio) for most reading operations (including the XDMF ascii format).
 
 

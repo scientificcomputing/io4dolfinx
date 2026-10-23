@@ -504,11 +504,15 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .exodus import backend as EXODUSInterface
 
         return EXODUSInterface
+    elif backend == "gmsh":
+        from .gmsh import backend as GMSHInterface
+
+        return GMSHInterface
     else:
         return import_module(backend)
 
 
-BUILTIN_BAKENDS = ("h5py", "adios2", "pyvista", "xdmf", "vtkhdf", "exodus")
+BUILTIN_BAKENDS = ("h5py", "adios2", "pyvista", "xdmf", "vtkhdf", "exodus", "gmsh")
 
 
 def list_builtin_backends() -> list[str]:
