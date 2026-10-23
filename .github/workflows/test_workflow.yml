@@ -37,6 +37,10 @@ env:
   # MEDCoupling (LGPL) writes the reference MED files in tests/test_med.py
   MEDCOUPLING_VERSION: V9_15_0
   MEDCOUPLING_PREFIX: /opt/medcoupling
+  # MED-fichier (LGPL) from the copy conda-forge uses, as Salome's server blocks
+  # automated downloads
+  MEDFILE_VERSION: "4.2"
+  MEDFILE_SHA256: a0193de4f0fef916ea9b83fb3e69e0717068a6bb41474ea8b6b0dece10b56d13
 jobs:
   get_image_tag:
     runs-on: ubuntu-latest
@@ -118,18 +122,35 @@ jobs:
         run: echo "version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" >> $GITHUB_OUTPUT
 
       # MEDCoupling has no wheels for recent Python versions, so it is built from
-      # source against Ubuntu's MED-fichier, which links the image's MPI HDF5
+      # source, with MED-fichier, against the image's MPI HDF5. Ubuntu's
+      # MED-fichier 4.1.0 lacks API that MEDCoupling 9.15 uses.
       - name: Install MEDCoupling dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libmedc-dev swig
+          apt-get install -y --no-install-recommends swig
 
       - name: Cache MEDCoupling
         id: cache-medcoupling
         uses: actions/cache@v6
         with:
           path: ${{ env.MEDCOUPLING_PREFIX }}
-          key: medcoupling-${{ env.MEDCOUPLING_VERSION }}-py${{ steps.python.outputs.version }}-${{ runner.arch }}
+          key: medcoupling-${{ env.MEDCOUPLING_VERSION }}-med${{ env.MEDFILE_VERSION }}-py${{ steps.python.outputs.version }}-${{ runner.arch }}
+
+      - name: Build MED-fichier
+        if: steps.cache-medcoupling.outputs.cache-hit != 'true'
+        run: |
+          wget -q -O /tmp/med.tar.gz https://github.com/Krande/med-copy/archive/refs/tags/${MEDFILE_VERSION}.tar.gz
+          echo "${MEDFILE_SHA256}  /tmp/med.tar.gz" | sha256sum -c -
+          mkdir /tmp/med && tar -xzf /tmp/med.tar.gz -C /tmp/med --strip-components=1
+          cmake -G Ninja -S /tmp/med -B /tmp/med-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
+            -DHDF5_ROOT_DIR=${HDF5_ROOT} \
+            -DMEDFILE_BUILD_TESTS=OFF \
+            -DMEDFILE_INSTALL_DOC=OFF \
+            -DMEDFILE_BUILD_PYTHON=OFF
+          cmake --build /tmp/med-build
+          cmake --install /tmp/med-build
 
       - name: Build MEDCoupling
         if: steps.cache-medcoupling.outputs.cache-hit != 'true'
@@ -140,7 +161,7 @@ jobs:
           # MEDCoupling requires CMake 2.8.11, which CMake 4 rejects; policies at 3.5
           # also keep the legacy FindPythonInterp/FindPythonLibs that Salome uses.
           # SALOME_USE_MPI is required for a parallel HDF5; ParaMEDMEM stays off.
-          # 32-bit ids match Ubuntu's MED-fichier, whose med_int is 32-bit.
+          # 32-bit ids match MED-fichier's default 32-bit med_int.
           # Makefiles, not Ninja: the SWIG-generated .py files are compiled to .pyc
           # by a rule that Ninja rejects, as they are not declared build outputs.
           cmake -G "Unix Makefiles" -S /tmp/medcoupling -B /tmp/medcoupling-build \
@@ -148,7 +169,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
             -DCONFIGURATION_ROOT_DIR=/tmp/configuration \
-            -DMEDFILE_ROOT_DIR=/usr \
+            -DMEDFILE_ROOT_DIR=${MEDCOUPLING_PREFIX} \
             -DSALOME_USE_MPI=ON \
             -DMEDCOUPLING_USE_MPI=OFF \
             -DMEDCOUPLING_USE_64BIT_IDS=OFF \
