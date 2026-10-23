@@ -46,8 +46,9 @@ test = [
     "io4dolfinx[h5py]",
     "io4dolfinx[pyvista]",
     "io4dolfinx[xdmf]",
-    # Reference MED writer for tests; only x86_64 wheels exist, older versions build from source
-    "medcoupling>=9.15; platform_machine == 'x86_64' or platform_machine == 'AMD64'",
+    # Reference MED writer for tests. Wheels only exist up to CPython 3.13 on x86_64;
+    # CI builds it from source otherwise. Bump the bound when newer wheels appear.
+    "medcoupling>=9.15; python_version < '3.14' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
 ]
 dev = [
     "pdbpp",
