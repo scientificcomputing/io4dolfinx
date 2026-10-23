@@ -142,6 +142,15 @@ jobs:
           wget -q -O /tmp/med.tar.gz https://github.com/Krande/med-copy/archive/refs/tags/${MEDFILE_VERSION}.tar.gz
           echo "${MEDFILE_SHA256}  /tmp/med.tar.gz" | sha256sum -c -
           mkdir /tmp/med && tar -xzf /tmp/med.tar.gz -C /tmp/med --strip-components=1
+          # MED-fichier 4.2 only accepts HDF5 1.10.x. Accept newer versions as Debian
+          # does (debian/patches/hdf5-1.14.patch); files are still written in the
+          # HDF5 1.8 format.
+          cd /tmp/med
+          sed -i 's/^\( *\)IF (NOT HDF_VERSION_MAJOR_REF EQUAL 1 OR NOT HDF_VERSION_MINOR_REF EQUAL 10 OR NOT HDF_VERSION_RELEASE_REF GREATER 1)/\1IF (HDF_VERSION_REF VERSION_LESS 1.10.2)/' config/cmake_files/medMacros.cmake
+          sed -i '/#if H5_VERS_MINOR > 10/,/#endif/s/#error/#warning/' src/ci/MEDfileCompatibility.c src/hdfi/*.c
+          sed -i 's/(_hmineur == HDF_VERSION_MINOR_REF  )/(_hmineur >= HDF_VERSION_MINOR_REF  )/' src/ci/MEDfileCompatibility.c
+          grep -q "VERSION_LESS 1.10.2" config/cmake_files/medMacros.cmake
+          cd -
           cmake -G Ninja -S /tmp/med -B /tmp/med-build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
