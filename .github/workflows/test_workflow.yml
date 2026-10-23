@@ -140,7 +140,9 @@ jobs:
           # MEDCoupling requires CMake 2.8.11, which CMake 4 rejects; policies at 3.5
           # also keep the legacy FindPythonInterp/FindPythonLibs that Salome uses.
           # SALOME_USE_MPI is required for a parallel HDF5; ParaMEDMEM stays off.
-          cmake -G Ninja -S /tmp/medcoupling -B /tmp/medcoupling-build \
+          # Makefiles, not Ninja: the SWIG-generated .py files are compiled to .pyc
+          # by a rule that Ninja rejects, as they are not declared build outputs.
+          cmake -G "Unix Makefiles" -S /tmp/medcoupling -B /tmp/medcoupling-build \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
@@ -155,7 +157,7 @@ jobs:
             -DMEDCOUPLING_BUILD_PY_TESTS=OFF \
             -DMEDCOUPLING_BUILD_DOC=OFF \
             -DMEDCOUPLING_WITH_FILE_EXAMPLES=OFF
-          cmake --build /tmp/medcoupling-build
+          cmake --build /tmp/medcoupling-build --parallel $(nproc)
           cmake --install /tmp/medcoupling-build
 
       - name: Make MEDCoupling importable
