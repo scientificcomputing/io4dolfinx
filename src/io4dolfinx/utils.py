@@ -29,7 +29,12 @@ __all__ = [
     "compute_insert_position",
     "unroll_insert_position",
     "reconstruct_mesh",
+    "codim_names",
 ]
+
+#: Codimension of the entities named ``"cell"``, ``"facet"``, ``"ridge"`` and ``"peak"``,
+#: as in :func:`dolfinx.io.gmsh.model_to_mesh`
+codim_names = {"cell": 0, "facet": 1, "ridge": 2, "peak": 3}
 
 
 def check_file_exists(filename: Path | str):

@@ -171,3 +171,6 @@ the `backend` argument to most functions.
 
 
 5.  **`xdmf`**: Basic support for reading XDMF data.
+
+
+6.  **`gmsh`**: Reads and writes Gmsh `.msh` meshes, physical groups and point/cell data via the Gmsh Python API.

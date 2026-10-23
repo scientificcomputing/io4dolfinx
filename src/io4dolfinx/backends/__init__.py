@@ -50,7 +50,7 @@ def get_mesh_name(backend_args: dict[str, Any] | None) -> str:
 def set_default_backend(backend: str):
     """Set the global default backend for io4dolfinx."""
     global _DEFAULT_BACKEND
-    if backend not in BUILTIN_BAKENDS:
+    if backend not in BUILTIN_BACKENDS:
         try:
             get_backend(backend)
         except ImportError as e:
@@ -105,7 +105,9 @@ class IOBackend(Protocol):
 
     read_mode: ReadMode
 
-    def get_default_backend_args(self, arguments: dict[str, Any] | None) -> dict[str, Any]:
+    def get_default_backend_args(
+        self, arguments: dict[str, Any] | None
+    ) -> dict[str, Any]:
         """Get default backend arguments given a set of input arguments.
 
         Args:
@@ -274,7 +276,9 @@ class IOBackend(Protocol):
         name: str,
         time: float,
         backend_args: dict[str, Any] | None,
-    ) -> tuple[npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int]:
+    ) -> tuple[
+        npt.NDArray[np.float32 | np.float64 | np.complex64 | np.complex128], int
+    ]:
         """Read the dofs (values) of a function with a given name from a given timestep.
 
         Args:
@@ -508,11 +512,24 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .med import backend as MEDInterface
 
         return MEDInterface
+    elif backend == "gmsh":
+        from .gmsh import backend as GMSHInterface
+
+        return GMSHInterface
     else:
         return import_module(backend)
 
 
-BUILTIN_BAKENDS = ("h5py", "adios2", "pyvista", "xdmf", "vtkhdf", "exodus", "med")
+BUILTIN_BACKENDS = (
+    "h5py",
+    "adios2",
+    "pyvista",
+    "xdmf",
+    "vtkhdf",
+    "exodus",
+    "med",
+    "gmsh",
+)
 
 
 def list_builtin_backends() -> list[str]:
@@ -522,7 +539,7 @@ def list_builtin_backends() -> list[str]:
         List of available backends
     """
     lst = []
-    for backend in BUILTIN_BAKENDS:
+    for backend in BUILTIN_BACKENDS:
         try:
             get_backend(backend)
         except ImportError:
