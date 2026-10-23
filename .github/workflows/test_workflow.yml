@@ -137,8 +137,11 @@ jobs:
           for repo in configuration medcoupling; do
             git clone --depth 1 -b ${MEDCOUPLING_VERSION} https://github.com/SalomePlatform/${repo}.git /tmp/${repo}
           done
-          # SALOME_USE_MPI is required for a parallel HDF5; ParaMEDMEM stays off
+          # MEDCoupling requires CMake 2.8.11, which CMake 4 rejects; policies at 3.5
+          # also keep the legacy FindPythonInterp/FindPythonLibs that Salome uses.
+          # SALOME_USE_MPI is required for a parallel HDF5; ParaMEDMEM stays off.
           cmake -G Ninja -S /tmp/medcoupling -B /tmp/medcoupling-build \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
             -DCONFIGURATION_ROOT_DIR=/tmp/configuration \
