@@ -697,7 +697,9 @@ def _check_med_node_positions(mc, med_type, x):
         m.setCoords(mc.DataArrayDouble(x[:num_vertices].ravel().tolist(), num_vertices, 3))
         m.convertLinearCellsToQuadratic(conversion)
         nodes = m.getNodeIdsOfCell(0)
-        np.testing.assert_allclose(m.getCoords().toNumPyArray()[nodes], x, atol=1e-14)
+        # getValues, as toNumPyArray needs MEDCoupling built with NumPy
+        coordinates = np.reshape(m.getCoords().getValues(), (-1, 3))
+        np.testing.assert_allclose(coordinates[nodes], x, atol=1e-14)
     else:
         assert med_type == "P18"
         m = mc.MEDCouplingUMesh("m", 3)

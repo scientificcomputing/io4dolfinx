@@ -151,8 +151,13 @@ jobs:
           sed -i 's/(_hmineur == HDF_VERSION_MINOR_REF  )/(_hmineur >= HDF_VERSION_MINOR_REF  )/' src/ci/MEDfileCompatibility.c
           grep -q "VERSION_LESS 1.10.2" config/cmake_files/medMacros.cmake
           cd -
+          # The 1.10 API keeps H5Oget_info and friends at their 1.10 signatures, as
+          # in Debian's build. Fortran is off: MEDCoupling only uses the C API, and
+          # without it med_int defaults to int.
           cmake -G Ninja -S /tmp/med -B /tmp/med-build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-DH5_USE_110_API" \
+            -DCMAKE_Fortran_COMPILER=NOTFOUND \
             -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
             -DHDF5_ROOT_DIR=${HDF5_ROOT} \
             -DMEDFILE_BUILD_TESTS=OFF \
