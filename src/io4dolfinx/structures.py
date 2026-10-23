@@ -78,6 +78,9 @@ class ReadMeshData:
     degree: int  #: The degree of the underlying Lagrange element
     #: Partitioning information per cell on the process
     partition_graph: AdjacencyList | None = None
+    #: Geometry uses the degree 2 serendipity element with nodes at vertices and edge
+    #: midpoints (8-node quadrilateral, 20-node hexahedron) instead of Lagrange
+    serendipity: bool = False
 
 
 @dataclass

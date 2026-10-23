@@ -50,7 +50,7 @@ def get_mesh_name(backend_args: dict[str, Any] | None) -> str:
 def set_default_backend(backend: str):
     """Set the global default backend for io4dolfinx."""
     global _DEFAULT_BACKEND
-    if backend not in BUILTIN_BAKENDS:
+    if backend not in BUILTIN_BACKENDS:
         try:
             get_backend(backend)
         except ImportError as e:
@@ -504,6 +504,10 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .exodus import backend as EXODUSInterface
 
         return EXODUSInterface
+    elif backend == "med":
+        from .med import backend as MEDInterface
+
+        return MEDInterface
     elif backend == "gmsh":
         from .gmsh import backend as GMSHInterface
 
@@ -512,7 +516,16 @@ def get_backend(backend: str | None = None) -> IOBackend:
         return import_module(backend)
 
 
-BUILTIN_BAKENDS = ("h5py", "adios2", "pyvista", "xdmf", "vtkhdf", "exodus", "gmsh")
+BUILTIN_BACKENDS = (
+    "h5py",
+    "adios2",
+    "pyvista",
+    "xdmf",
+    "vtkhdf",
+    "exodus",
+    "med",
+    "gmsh",
+)
 
 
 def list_builtin_backends() -> list[str]:
@@ -522,7 +535,7 @@ def list_builtin_backends() -> list[str]:
         List of available backends
     """
     lst = []
-    for backend in BUILTIN_BAKENDS:
+    for backend in BUILTIN_BACKENDS:
         try:
             get_backend(backend)
         except ImportError:

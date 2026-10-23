@@ -5,7 +5,7 @@ import h5py
 import pytest
 
 import io4dolfinx
-from io4dolfinx.backends import BUILTIN_BAKENDS
+from io4dolfinx.backends import BUILTIN_BACKENDS
 
 
 @pytest.fixture(autouse=True)
@@ -93,7 +93,7 @@ def test_list_builtin_backends():
     # Verify that all returned backends are recognized as built-in backends
     for backend in available_backends:
         assert isinstance(backend, str)
-        assert backend in BUILTIN_BAKENDS
+        assert backend in BUILTIN_BACKENDS
 
     # We can be reasonably certain that 'h5py' or 'adios2' should be
     # present if the io4dolfinx test suite is running successfully

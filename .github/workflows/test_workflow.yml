@@ -34,6 +34,13 @@ env:
   # the image currently ships 5.0.10. MPICH ignores the variable, so it is
   # safe to set unconditionally. Drop once the image has OpenMPI >= 5.0.11.
   OMPI_MCA_topo: basic
+  # MEDCoupling (LGPL) writes the reference MED files in tests/test_med.py
+  MEDCOUPLING_VERSION: V9_15_0
+  MEDCOUPLING_PREFIX: /opt/medcoupling
+  # MED-fichier (LGPL) from the copy conda-forge uses, as Salome's server blocks
+  # automated downloads
+  MEDFILE_VERSION: "4.2"
+  MEDFILE_SHA256: a0193de4f0fef916ea9b83fb3e69e0717068a6bb41474ea8b6b0dece10b56d13
 jobs:
   get_image_tag:
     runs-on: ubuntu-latest
@@ -44,7 +51,8 @@ jobs:
         run: echo "image=${{ inputs.tag || env.DEFAULT_TAG }}" >> $GITHUB_OUTPUT
 
   test-code:
-    timeout-minutes: 30
+    # Leaves room for building MEDCoupling on a cache miss
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     # The container tag is now dynamic based on the input passed by the caller
     container: ghcr.io/fenics/test-env:current
@@ -108,6 +116,94 @@ jobs:
           python3 -m pip install h5py --no-binary=h5py --no-build-isolation
           python3 -m pip install --group dev --group test
           python3 -m pip install . --no-build-isolation
+
+      - name: Get Python version
+        id: python
+        run: echo "version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" >> $GITHUB_OUTPUT
+
+      # MEDCoupling has no wheels for recent Python versions, so it is built from
+      # source, with MED-fichier, against the image's MPI HDF5. Ubuntu's
+      # MED-fichier 4.1.0 lacks API that MEDCoupling 9.15 uses.
+      - name: Install MEDCoupling dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends swig
+
+      - name: Cache MEDCoupling
+        id: cache-medcoupling
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.MEDCOUPLING_PREFIX }}
+          key: medcoupling-${{ env.MEDCOUPLING_VERSION }}-med${{ env.MEDFILE_VERSION }}-py${{ steps.python.outputs.version }}-${{ runner.arch }}
+
+      - name: Build MED-fichier
+        if: steps.cache-medcoupling.outputs.cache-hit != 'true'
+        run: |
+          wget -q -O /tmp/med.tar.gz https://github.com/Krande/med-copy/archive/refs/tags/${MEDFILE_VERSION}.tar.gz
+          echo "${MEDFILE_SHA256}  /tmp/med.tar.gz" | sha256sum -c -
+          mkdir /tmp/med && tar -xzf /tmp/med.tar.gz -C /tmp/med --strip-components=1
+          # MED-fichier 4.2 only accepts HDF5 1.10.x. Accept newer versions as Debian
+          # does (debian/patches/hdf5-1.14.patch); files are still written in the
+          # HDF5 1.8 format.
+          cd /tmp/med
+          sed -i 's/^\( *\)IF (NOT HDF_VERSION_MAJOR_REF EQUAL 1 OR NOT HDF_VERSION_MINOR_REF EQUAL 10 OR NOT HDF_VERSION_RELEASE_REF GREATER 1)/\1IF (HDF_VERSION_REF VERSION_LESS 1.10.2)/' config/cmake_files/medMacros.cmake
+          sed -i '/#if H5_VERS_MINOR > 10/,/#endif/s/#error/#warning/' src/ci/MEDfileCompatibility.c src/hdfi/*.c
+          sed -i 's/(_hmineur == HDF_VERSION_MINOR_REF  )/(_hmineur >= HDF_VERSION_MINOR_REF  )/' src/ci/MEDfileCompatibility.c
+          grep -q "VERSION_LESS 1.10.2" config/cmake_files/medMacros.cmake
+          cd -
+          # The 1.10 API keeps H5Oget_info and friends at their 1.10 signatures, as
+          # in Debian's build. Fortran is off: MEDCoupling only uses the C API, and
+          # without it med_int defaults to int.
+          cmake -G Ninja -S /tmp/med -B /tmp/med-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-DH5_USE_110_API" \
+            -DCMAKE_Fortran_COMPILER=NOTFOUND \
+            -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
+            -DHDF5_ROOT_DIR=${HDF5_ROOT} \
+            -DMEDFILE_BUILD_TESTS=OFF \
+            -DMEDFILE_INSTALL_DOC=OFF \
+            -DMEDFILE_BUILD_PYTHON=OFF
+          cmake --build /tmp/med-build
+          cmake --install /tmp/med-build
+
+      - name: Build MEDCoupling
+        if: steps.cache-medcoupling.outputs.cache-hit != 'true'
+        run: |
+          for repo in configuration medcoupling; do
+            git clone --depth 1 -b ${MEDCOUPLING_VERSION} https://github.com/SalomePlatform/${repo}.git /tmp/${repo}
+          done
+          # MEDCoupling requires CMake 2.8.11, which CMake 4 rejects; policies at 3.5
+          # also keep the legacy FindPythonInterp/FindPythonLibs that Salome uses.
+          # SALOME_USE_MPI is required for a parallel HDF5; ParaMEDMEM stays off.
+          # 32-bit ids match MED-fichier's default 32-bit med_int.
+          # Makefiles, not Ninja: the SWIG-generated .py files are compiled to .pyc
+          # by a rule that Ninja rejects, as they are not declared build outputs.
+          cmake -G "Unix Makefiles" -S /tmp/medcoupling -B /tmp/medcoupling-build \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${MEDCOUPLING_PREFIX} \
+            -DCONFIGURATION_ROOT_DIR=/tmp/configuration \
+            -DMEDFILE_ROOT_DIR=${MEDCOUPLING_PREFIX} \
+            -DSALOME_USE_MPI=ON \
+            -DMEDCOUPLING_USE_MPI=OFF \
+            -DMEDCOUPLING_USE_64BIT_IDS=OFF \
+            -DMEDCOUPLING_ENABLE_PARTITIONER=OFF \
+            -DMEDCOUPLING_ENABLE_RENUMBER=OFF \
+            -DMEDCOUPLING_MEDLOADER_USE_XDR=OFF \
+            -DMEDCOUPLING_BUILD_TESTS=OFF \
+            -DMEDCOUPLING_BUILD_PY_TESTS=OFF \
+            -DMEDCOUPLING_BUILD_DOC=OFF \
+            -DMEDCOUPLING_WITH_FILE_EXAMPLES=OFF
+          cmake --build /tmp/medcoupling-build --parallel $(nproc)
+          cmake --install /tmp/medcoupling-build
+
+      - name: Make MEDCoupling importable
+        run: |
+          echo "PYTHONPATH=${MEDCOUPLING_PREFIX}/lib/python${{ steps.python.outputs.version }}/site-packages${PYTHONPATH:+:${PYTHONPATH}}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${MEDCOUPLING_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
+
+      - name: Show MEDCoupling version
+        run: python3 -c "import medcoupling; print(medcoupling.__version__)"
 
       - name: Show adios2 version
         run: python3 -c "import adios2; print(adios2.__version__)"

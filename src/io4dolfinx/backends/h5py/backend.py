@@ -60,6 +60,41 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
             h5file.close()
 
 
+def read_component_major_rows(
+    dataset: h5py.Dataset, num_entities_global: int, local_range: list[int]
+) -> np.ndarray:
+    """Read rows ``local_range`` of a 2D array stored component by component.
+
+    The array is a one-dimensional dataset holding all first components, then all
+    second components and so on, i.e. ``x0 x1 ... xn y0 y1 ... yn z0 z1 ... zn``
+    rather than ``x0 y0 z0 x1 y1 z1 ...`` (``MED_NO_INTERLACE`` in the MED format).
+    The rows are one block per component, read as a single hyperslab.
+
+    Args:
+        dataset: One-dimensional dataset
+        num_entities_global: Number of entities (rows) in the whole dataset
+        local_range: Range ``[start, end)`` of rows to read on this process
+
+    Returns:
+        Array of shape ``(end - start, num_components)``, where
+        ``num_components = dataset.size // num_entities_global``
+    """
+    if num_entities_global <= 0 or dataset.size == 0 or dataset.size % num_entities_global != 0:
+        raise ValueError(
+            f"Size {dataset.size} of {dataset.name} is not a positive multiple of "
+            f"{num_entities_global} entities."
+        )
+    num_components = dataset.size // num_entities_global
+    num_rows = local_range[1] - local_range[0]
+    if num_rows == 0:
+        # h5py.MultiBlockSlice rejects empty blocks
+        return np.empty((0, num_components), dtype=dataset.dtype)
+    blocks = h5py.MultiBlockSlice(
+        start=local_range[0], stride=num_entities_global, count=num_components, block=num_rows
+    )
+    return np.ascontiguousarray(dataset[blocks].reshape(num_components, num_rows).T)
+
+
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
     args = dict(arguments) if arguments else {}
     args.setdefault("legacy", False)  # If meshtags is read from legacy

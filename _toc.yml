@@ -38,6 +38,7 @@ parts:
     - file: "docs/backends/pyvista"
     - file: "docs/backends/xdmf"
     - file: "docs/backends/vtkhdf"
+    - file: "docs/backends/med"
     - file: "docs/backends/gmsh"
 
   - caption: Contributing
