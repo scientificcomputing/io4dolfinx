@@ -45,6 +45,9 @@ class MeshData:
         None  #: Local insert position for partitioning information
     )
     partition_global: int | None = None  #: Global size of partitioning array
+    #: Nodes and cells use the ordering of the input mesh rather than the DOLFINx global
+    #: ordering, which depends on the partitioning
+    on_input_mesh: bool = False
 
 
 @dataclass
@@ -98,6 +101,8 @@ class MeshTagsData:
 
     # Optional info to help visualization
     cell_type: str | None = None  #: The cell type
+    #: Entity nodes use the node ordering of the input mesh
+    on_input_mesh: bool = False
 
 
 @dataclass
@@ -107,3 +112,5 @@ class ArrayData:
     global_shape: tuple[int, int]  # Global shape of data
     local_range: tuple[int, int]  # Start and stop of local array in global array
     type: str  # Type of array-data
+    #: Rows use the cell ordering of the input mesh (only for cell data)
+    on_input_mesh: bool = False
