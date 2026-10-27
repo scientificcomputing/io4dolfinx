@@ -22,6 +22,7 @@ import ufl
 
 from .backends import FileMode, ReadMode, get_backend
 from .comm_helpers import (
+    exchange_to_owners,
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
@@ -237,6 +238,7 @@ def write_meshtags(
         local_start=local_start,
         dim=meshtags.dim,
         cell_type=tag_ct,
+        on_input_mesh=on_input_mesh,
     )
 
     # Get backend and default arguments
@@ -768,6 +770,7 @@ def write_cell_data(
     backend_args: dict[str, Any] | None,
     backend: str = "vtkhdf",
     mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """Write function to file by interpolating into cell midpoints.
 
@@ -780,6 +783,8 @@ def write_cell_data(
         backend_args: The backend arguments
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
+        on_input_mesh: If True, the cell values are written in the cell ordering of the
+            input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
@@ -792,8 +797,31 @@ def write_cell_data(
     num_dofs_local = V.dofmap.index_map.size_local
     data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
 
+    if on_input_mesh:
+        # Send the value of each owned cell to the process holding its input cell index,
+        # so that each process gets a contiguous chunk of the input cell ordering
+        mesh = V.mesh
+        tdim = mesh.topology.dim
+        num_owned_cells = mesh.topology.index_map(tdim).size_local
+        num_cells_global = mesh.topology.index_map(tdim).size_global
+        input_cells = mesh.topology.original_cell_index[:num_owned_cells].astype(np.int64)
+        cell_values = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[
+            V.dofmap.list[:num_owned_cells, 0]
+        ]
+        owners = index_owner(comm, input_cells, num_cells_global)
+        (recv_cells, recv_values), *_ = exchange_to_owners(comm, owners, [input_cells, cell_values])
+        input_range = compute_local_range(comm, num_cells_global)
+        data = np.empty_like(recv_values)
+        data[recv_cells - input_range[0]] = recv_values
+        local_range = (input_range[0], input_range[1])
+
     ad = ArrayData(
-        name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Cell"
+        name=v_out.name,
+        values=data,
+        global_shape=data_shape,
+        local_range=local_range,
+        type="Cell",
+        on_input_mesh=on_input_mesh,
     )
     logger.debug(
         f"Using {backend} backend with arguments {backend_args} and mode {mode} to write cell data"
