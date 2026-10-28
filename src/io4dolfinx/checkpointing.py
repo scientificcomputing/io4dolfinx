@@ -809,6 +809,7 @@ def write_cell_data(
             V.dofmap.list[:num_owned_cells, 0]
         ]
         owners = index_owner(comm, input_cells, num_cells_global)
+        assert isinstance(comm, MPI.Intracomm)
         (recv_cells, recv_values), *_ = exchange_to_owners(comm, owners, [input_cells, cell_values])
         input_range = compute_local_range(comm, num_cells_global)
         data = np.empty_like(recv_values)
