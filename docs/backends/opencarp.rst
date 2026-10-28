@@ -3,7 +3,7 @@
 openCARP-backend
 ----------------
 
-Writes and reads linear tetrahedral meshes in the ASCII mesh format of the cardiac simulator
+Writes and reads linear meshes in the ASCII mesh format of the cardiac simulator
 `openCARP <https://opencarp.org>`_: node coordinates (``.pts``), elements with region tags
 (``.elem``), fiber and sheet directions per element (``.lon``), and markers as vertex (``.vtx``)
 and surface (``.surf``) files. The backend needs no extra dependencies.
@@ -32,12 +32,18 @@ in µm, so the factor converting the mesh coordinates to µm must always be give
 This gives ``heart.pts``, ``heart.elem``, ``heart.lon``, and ``heart_ENDO.vtx``,
 ``heart_ENDO.surf``, ``heart_EPI.vtx`` and ``heart_EPI.surf``.
 
-- Elements with negative volume have two nodes swapped, so all elements are positively oriented.
+- Triangle (``Tr``) and quadrilateral (``Qd``) meshes in 2D, and tetrahedral (``Tt``) and hexahedral
+  (``Hx``) meshes in 3D are supported. 2D meshes are written with ``z = 0``, and read back with 2D
+  coordinates.
+- Elements get the orientation used by openCARP's ``mesher``: positive volume in 3D,
+  counter-clockwise in 2D.
 - Cells without a cell tag get region ``0`` (set ``backend_args={"default_tag": ...}`` to change it).
-- Fibers and sheets are interpolated into cell midpoints and normalised. Fields in a quadrature
-  space cannot be written; generate them in a P-1 or DG-0 space.
-- Each facet marker value gets a ``.vtx`` file with its nodes and a ``.surf`` file with its facets,
-  oriented out of the mesh. The files are named from ``markers``, or by the value if it has no name.
+- Fibers and sheets are interpolated into cell midpoints and normalised. 2D directions get
+  ``z = 0``, and are read back with two components. Fields in a quadrature space cannot be
+  written; generate them in a P-1 or DG-0 space.
+- Each facet marker value gets a ``.vtx`` file with its nodes and, for 3D meshes, a ``.surf`` file
+  with its facets (``Tr`` or ``Qd``), oriented out of the mesh. The files are named from
+  ``markers``, or by the value if it has no name.
   Pass ``backend_args={"surf": False}`` to skip the ``.surf`` files.
 
 The same files can be written with the generic functions, as long as everything is in the input
@@ -67,7 +73,7 @@ Reading takes the path of any of the mesh files. Coordinates are divided by ``sc
     f0 = io4dolfinx.read_cell_data("heart.elem", "fiber", mesh, backend="opencarp")
 
 ``"facet"`` reads all ``.surf`` files of the mesh, and a marker name reads its ``.surf`` file, or its
-``.vtx`` file as vertex tags if there is no ``.surf``.
+``.vtx`` file as vertex tags if there is no ``.surf`` (as for 2D meshes).
 
 .. automodule:: io4dolfinx.backends.opencarp.backend
     :members:

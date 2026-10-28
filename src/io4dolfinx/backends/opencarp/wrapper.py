@@ -29,8 +29,11 @@ def _check_direction(u: dolfinx.fem.Function, name: str):
             f"Cannot write the {name} field {u.name!r} from a quadrature space to openCARP, as it "
             "cannot be interpolated into DG-0. Generate the fibers in a P-1 or DG-0 space."
         )
-    if u.ufl_shape != (3,):
-        raise ValueError(f"Expected the {name} field to be a 3D vector, got shape {u.ufl_shape}.")
+    gdim = u.function_space.mesh.geometry.dim
+    if u.ufl_shape not in ((gdim,), (3,)):
+        raise ValueError(
+            f"Expected the {name} field to be a {gdim}D or 3D vector, got shape {u.ufl_shape}."
+        )
 
 
 def write_opencarp(
@@ -44,13 +47,13 @@ def write_opencarp(
     markers: dict[str, Any] | None = None,
     backend_args: dict[str, Any] | None = None,
 ):
-    """Write a linear tetrahedral mesh with markers and fibers to openCARP files.
+    """Write a linear mesh with markers and fibers to openCARP files.
 
     Writes ``<base>.pts`` and ``<base>.elem``, with the region tag of each element from
     ``cell_tags``; ``<base>.lon`` with the fiber (and sheet) direction of each element;
     and ``<base>_<marker>.vtx`` and ``<base>_<marker>.surf`` for each value of
-    ``facet_tags``. Nodes and elements are in the ordering of the input mesh, so the
-    files do not depend on the number of processes. See
+    ``facet_tags`` (``.surf`` only for 3D meshes). Nodes and elements are in the
+    ordering of the input mesh, so the files do not depend on the number of processes. See
     :mod:`io4dolfinx.backends.opencarp.backend` for the format.
 
     Args:
