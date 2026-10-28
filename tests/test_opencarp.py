@@ -99,7 +99,7 @@ def read_lines(path: Path) -> list[list[str]]:
     return [line.split() for line in path.read_text().splitlines()]
 
 
-def orientation(elem_type: str, p: np.ndarray) -> np.ndarray:
+def orientation(elem_type: str, p: np.ndarray) -> tuple[np.ndarray, int]:
     """Signed measure of each element with nodes p in openCARP ordering, positive for
     the orientation of openCARP's mesher, and the factor to its volume or area."""
     e1 = p[:, 1] - p[:, 0]
