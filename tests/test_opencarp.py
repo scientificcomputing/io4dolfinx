@@ -9,7 +9,6 @@ import pytest
 import ufl
 
 import io4dolfinx
-from io4dolfinx.backends.opencarp import write_opencarp
 
 CellType = dolfinx.mesh.CellType
 
@@ -22,6 +21,9 @@ meshes = {
     CellType.quadrilateral: ("Qd", 9, 16, 3, 4),
 }
 cell_types = pytest.mark.parametrize("cell_type", list(meshes), ids=lambda c: c.name)
+orderings = pytest.mark.parametrize(
+    "on_input_mesh", [True, False], ids=["input_ordering", "dolfinx_ordering"]
+)
 
 
 def markers(tdim: int):
@@ -75,24 +77,50 @@ def create_problem(comm: MPI.Intracomm, cell_type: dolfinx.mesh.CellType = CellT
     return mesh, cell_tags, facet_tags, fiber, sheet
 
 
+def write_files(
+    filename: Path,
+    mesh: dolfinx.mesh.Mesh,
+    backend_args: dict,
+    on_input_mesh: bool,
+    cell_tags: dolfinx.mesh.MeshTags | None = None,
+    facet_tags: dolfinx.mesh.MeshTags | None = None,
+    fiber: dolfinx.fem.Function | None = None,
+    sheet: dolfinx.fem.Function | None = None,
+):
+    """Write openCARP files as described in the backend documentation."""
+    if on_input_mesh:
+        io4dolfinx.write_mesh_input_order(
+            filename, mesh, backend="opencarp", backend_args=backend_args
+        )
+    else:
+        io4dolfinx.write_mesh(filename, mesh, backend="opencarp", backend_args=backend_args)
+    for tags in (cell_tags, facet_tags):
+        if tags is not None:
+            io4dolfinx.write_meshtags(
+                filename,
+                mesh,
+                tags,
+                backend="opencarp",
+                backend_args=backend_args,
+                on_input_mesh=on_input_mesh,
+            )
+    for u, mode in ((fiber, io4dolfinx.FileMode.write), (sheet, io4dolfinx.FileMode.append)):
+        if u is not None:
+            io4dolfinx.write_cell_data(
+                filename, u, 0.0, mode, backend_args, "opencarp", on_input_mesh=on_input_mesh
+            )
+
+
 def write_problem(
     filename: Path,
     comm: MPI.Intracomm,
     cell_type: dolfinx.mesh.CellType = CellType.tetrahedron,
-    **kwargs,
+    on_input_mesh: bool = True,
+    backend_args: dict | None = None,
 ):
     mesh, cell_tags, facet_tags, fiber, sheet = create_problem(comm, cell_type)
-    write_opencarp(
-        filename,
-        mesh,
-        scale=1000.0,
-        cell_tags=cell_tags,
-        facet_tags=facet_tags,
-        fiber=fiber,
-        sheet=sheet,
-        markers=markers(mesh.topology.dim),
-        **kwargs,
-    )
+    args = {"scale": 1000.0, "markers": markers(mesh.topology.dim), **(backend_args or {})}
+    write_files(filename, mesh, args, on_input_mesh, cell_tags, facet_tags, fiber, sheet)
 
 
 def read_lines(path: Path) -> list[list[str]]:
@@ -110,10 +138,11 @@ def orientation(elem_type: str, p: np.ndarray) -> tuple[np.ndarray, int]:
     return np.einsum("ij,ij->i", np.cross(e1, e2), e3), 6 if elem_type == "Tt" else 1
 
 
+@orderings
 @cell_types
-def test_write_content(shared_tmp_path, cell_type):
+def test_write_content(shared_tmp_path, cell_type, on_input_mesh):
     filename = shared_tmp_path / "mesh"
-    write_problem(filename, MPI.COMM_WORLD, cell_type)
+    write_problem(filename, MPI.COMM_WORLD, cell_type, on_input_mesh)
     if MPI.COMM_WORLD.rank != 0:
         return
     elem_type, num_cells, num_nodes, num_facets, num_marked_nodes = meshes[cell_type]
@@ -191,6 +220,7 @@ def test_write_content(shared_tmp_path, cell_type):
 
 @cell_types
 def test_files_independent_of_partitioning(shared_tmp_path, cell_type):
+    """With the input ordering, the files do not depend on the number of processes."""
     parallel = shared_tmp_path / "parallel" / "mesh"
     serial = shared_tmp_path / "serial" / "mesh"
     if MPI.COMM_WORLD.rank == 0:
@@ -208,9 +238,10 @@ def test_files_independent_of_partitioning(shared_tmp_path, cell_type):
             assert (serial.parent / name).read_bytes() == (parallel.parent / name).read_bytes()
 
 
+@orderings
 @cell_types
-def test_read_write(shared_tmp_path, cell_type):
-    write_problem(shared_tmp_path / "mesh", MPI.COMM_WORLD, cell_type)
+def test_read_write(shared_tmp_path, cell_type, on_input_mesh):
+    write_problem(shared_tmp_path / "mesh", MPI.COMM_WORLD, cell_type, on_input_mesh)
     filename = shared_tmp_path / "mesh.elem"
     comm = MPI.COMM_WORLD
     _, num_cells, num_nodes, num_facets, num_marked_nodes = meshes[cell_type]
@@ -285,7 +316,7 @@ def test_fiber_only_and_unnamed_markers(shared_tmp_path):
     """Markers without names are written and read back by value."""
     filename = shared_tmp_path / "mesh"
     mesh, _, facet_tags, fiber, _ = create_problem(MPI.COMM_WORLD)
-    write_opencarp(filename, mesh, scale=1.0, facet_tags=facet_tags, fiber=fiber)
+    write_files(filename, mesh, {"scale": 1.0}, True, facet_tags=facet_tags, fiber=fiber)
     if MPI.COMM_WORLD.rank == 0:
         assert read_lines(filename.with_suffix(".lon"))[0] == ["1"]
         tags = {row[5] for row in read_lines(filename.with_suffix(".elem"))[1:]}
@@ -307,37 +338,39 @@ def test_fiber_only_and_unnamed_markers(shared_tmp_path):
 def test_errors(shared_tmp_path):
     comm = MPI.COMM_WORLD
     filename = shared_tmp_path / "mesh"
-    mesh, cell_tags, _, fiber, sheet = create_problem(comm)
+    mesh, _, _, fiber, _ = create_problem(comm)
 
     with pytest.raises(ValueError, match="scale"):
         io4dolfinx.write_mesh_input_order(filename, mesh, backend="opencarp")
-    with pytest.raises(ValueError, match="input ordering"):
-        io4dolfinx.write_mesh(filename, mesh, backend="opencarp", backend_args={"scale": 1.0})
-    with pytest.raises(ValueError, match="without a fiber"):
-        write_opencarp(filename, mesh, scale=1.0, sheet=sheet)
 
+    interval_mesh = dolfinx.mesh.create_unit_interval(comm, 4)
+    with pytest.raises(NotImplementedError, match="interval"):
+        io4dolfinx.write_mesh_input_order(
+            filename, interval_mesh, backend="opencarp", backend_args={"scale": 1.0}
+        )
+
+    io4dolfinx.write_mesh_input_order(
+        filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+    )
     Q = dolfinx.fem.functionspace(
         mesh, basix.ufl.quadrature_element(mesh.basix_cell(), value_shape=(3,), degree=2)
     )
     with pytest.raises(ValueError, match="quadrature"):
-        write_opencarp(filename, mesh, scale=1.0, fiber=dolfinx.fem.Function(Q))
-
-    interval_mesh = dolfinx.mesh.create_unit_interval(comm, 4)
-    with pytest.raises(NotImplementedError, match="interval"):
-        write_opencarp(filename, interval_mesh, scale=1.0)
+        io4dolfinx.write_cell_data(
+            filename,
+            dolfinx.fem.Function(Q),
+            0.0,
+            io4dolfinx.FileMode.write,
+            None,
+            "opencarp",
+            on_input_mesh=True,
+        )
 
     # Errors found when writing on rank 0 are raised on all ranks
-    write_opencarp(filename, mesh, scale=1.0)
-    with pytest.raises(ValueError, match="input node ordering"):
-        io4dolfinx.write_meshtags(filename, mesh, cell_tags, backend="opencarp")
     zero = dolfinx.fem.Function(fiber.function_space)
     with pytest.raises(ValueError, match="zero direction"):
         io4dolfinx.write_cell_data(
             filename, zero, 0.0, io4dolfinx.FileMode.write, None, "opencarp", on_input_mesh=True
-        )
-    with pytest.raises(ValueError, match="input cell ordering"):
-        io4dolfinx.write_cell_data(
-            filename, fiber, 0.0, io4dolfinx.FileMode.write, None, "opencarp"
         )
 
 

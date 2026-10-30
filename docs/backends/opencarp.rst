@@ -8,29 +8,15 @@ Writes and reads linear meshes in the ASCII mesh format of the cardiac simulator
 (``.elem``), fiber and sheet directions per element (``.lon``), and markers as vertex (``.vtx``)
 and surface (``.surf``) files. The backend needs no extra dependencies.
 
-Nodes and elements are written in the ordering of the input mesh, gathered to and written by
-rank 0, so the files are the same whatever the number of processes. openCARP expects coordinates
-in µm, so the factor converting the mesh coordinates to µm must always be given.
+The mesh, its tags and its fiber and sheet directions are written with
+:func:`io4dolfinx.write_mesh_input_order` (or :func:`io4dolfinx.write_mesh`),
+:func:`io4dolfinx.write_meshtags` and :func:`io4dolfinx.write_cell_data`, as shown in the module
+documentation below. Rank 0 writes all files. openCARP expects coordinates in µm, so the factor
+converting the mesh coordinates to µm must always be given as ``backend_args["scale"]``.
 
-:func:`io4dolfinx.backends.opencarp.write_opencarp` writes everything in one call:
-
-.. code-block:: python
-
-    from io4dolfinx.backends.opencarp import write_opencarp
-
-    write_opencarp(
-        "heart",
-        mesh,
-        scale=1000.0,  # mesh in mm
-        cell_tags=cell_tags,
-        facet_tags=facet_tags,
-        fiber=f0,
-        sheet=s0,
-        markers={"ENDO": (1, 2), "EPI": (2, 2)},
-    )
-
-This gives ``heart.pts``, ``heart.elem``, ``heart.lon``, and ``heart_ENDO.vtx``,
-``heart_ENDO.surf``, ``heart_EPI.vtx`` and ``heart_EPI.surf``.
+With ``markers={"ENDO": (1, 2), "EPI": (2, 2)}``, a heart mesh gives ``heart.pts``,
+``heart.elem``, ``heart.lon``, and ``heart_ENDO.vtx``, ``heart_ENDO.surf``, ``heart_EPI.vtx`` and
+``heart_EPI.surf``.
 
 - Triangle (``Tr``) and quadrilateral (``Qd``) meshes in 2D, and tetrahedral (``Tt``) and hexahedral
   (``Hx``) meshes in 3D are supported. 2D meshes are written with ``z = 0``, and read back with 2D
@@ -45,21 +31,6 @@ This gives ``heart.pts``, ``heart.elem``, ``heart.lon``, and ``heart_ENDO.vtx``,
   with its facets (``Tr`` or ``Qd``), oriented out of the mesh. The files are named from
   ``markers``, or by the value if it has no name.
   Pass ``backend_args={"surf": False}`` to skip the ``.surf`` files.
-
-The same files can be written with the generic functions, as long as everything is in the input
-ordering:
-
-.. code-block:: python
-
-    args = {"scale": 1000.0}
-    io4dolfinx.write_mesh_input_order("heart", mesh, backend="opencarp", backend_args=args)
-    io4dolfinx.write_meshtags("heart", mesh, cell_tags, backend="opencarp", on_input_mesh=True)
-    io4dolfinx.write_cell_data(
-        "heart", f0, 0.0, io4dolfinx.FileMode.write, args, "opencarp", on_input_mesh=True
-    )
-    io4dolfinx.write_cell_data(
-        "heart", s0, 0.0, io4dolfinx.FileMode.append, args, "opencarp", on_input_mesh=True
-    )
 
 Reading takes the path of any of the mesh files. Coordinates are divided by ``scale``:
 

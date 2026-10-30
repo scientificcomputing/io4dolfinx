@@ -204,7 +204,6 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
         ownership_offset=None,
         partition_range=None,
         partition_global=None,
-        on_input_mesh=True,
     )
 
 

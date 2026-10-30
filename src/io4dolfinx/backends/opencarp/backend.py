@@ -19,8 +19,48 @@ https://opencarp.org/documentation/user-manual (section "Mesh files").
 - ``<base>_<marker>.surf``: number of faces, then one ``Tr n0 n1 n2`` or
   ``Qd n0 n1 n2 n3`` line per face of a 3D mesh.
 
-Nodes and cells are written in the ordering of the input mesh, so the files do
-not depend on the number of processes. Each file is written by rank 0.
+Each file is written by rank 0.
+
+Writing a mesh with markers and fibers takes the generic io4dolfinx functions, called
+in this order with ``backend="opencarp"``:
+
+.. code-block:: python
+
+    args = {"scale": 1000.0, "markers": {"ENDO": (1, 2), "EPI": (2, 2)}}  # mesh in mm
+    io4dolfinx.write_mesh_input_order("heart", mesh, backend="opencarp", backend_args=args)
+    for tags in (cell_tags, facet_tags):
+        io4dolfinx.write_meshtags(
+            "heart", mesh, tags, backend="opencarp", backend_args=args, on_input_mesh=True
+        )
+    io4dolfinx.write_cell_data(
+        "heart", f0, 0.0, io4dolfinx.FileMode.write, args, "opencarp", on_input_mesh=True
+    )
+    io4dolfinx.write_cell_data(
+        "heart", s0, 0.0, io4dolfinx.FileMode.append, args, "opencarp", on_input_mesh=True
+    )
+
+- The mesh comes first, as tags and directions are written against ``<base>.elem``.
+- Cell tags set the regions in ``<base>.elem``, facet tags give a ``.vtx`` (and in
+  3D a ``.surf``) file per marker value.
+- :func:`io4dolfinx.write_cell_data` with :attr:`FileMode.write
+  <io4dolfinx.FileMode.write>` writes the fibers, and with :attr:`FileMode.append
+  <io4dolfinx.FileMode.append>` adds the sheets. Fields are interpolated into DG-0,
+  so fields in a quadrature space must first be generated in a P-1 or DG-0 space.
+
+The ordering of nodes and elements must be the same in every step:
+
+- With :func:`io4dolfinx.write_mesh_input_order` and ``on_input_mesh=True`` (as
+  above), the files use the ordering of the input mesh and are the same whatever the
+  number of processes. Use this for reproducible files.
+- With :func:`io4dolfinx.write_mesh` and ``on_input_mesh=False`` (the default of
+  :func:`io4dolfinx.write_meshtags` and :func:`io4dolfinx.write_cell_data`), the files
+  use the DOLFINx ordering, which depends on the partitioning.
+
+Mixing the two gives directions and markers on the wrong elements and nodes.
+
+The files are read with :func:`io4dolfinx.read_mesh`, :func:`io4dolfinx.read_meshtags`
+and :func:`io4dolfinx.read_cell_data`, given the path of any of the mesh files, e.g.
+``"heart.elem"``.
 
 Elements are written with the orientation used by openCARP's ``mesher``: positive
 volume in 3D, counter-clockwise in the xy-plane in 2D. Hexahedra list one face
@@ -554,19 +594,13 @@ def write_mesh(
     Args:
         filename: Base name of the files, or the path of one of them
         comm: MPI communicator used in storage
-        mesh: Mesh data in input ordering, see
-            :func:`io4dolfinx.write_mesh_input_order`
+        mesh: Mesh data, from :func:`io4dolfinx.write_mesh_input_order` or
+            :func:`io4dolfinx.write_mesh`
         backend_args: Arguments to backend, ``"scale"`` is required
         mode: Only :attr:`FileMode.write` is supported
         time: Not used
     """
     args = get_default_backend_args(backend_args)
-    if not mesh.on_input_mesh:
-        raise ValueError(
-            "The openCARP backend writes meshes in the input ordering, so that the files do "
-            "not depend on the number of processes. Use io4dolfinx.write_mesh_input_order or "
-            "io4dolfinx.backends.opencarp.write_opencarp."
-        )
     if mesh.cell_type not in _element_types or mesh.degree != 1:
         raise NotImplementedError(
             "The openCARP backend supports linear triangle, quadrilateral, tetrahedral and "
@@ -681,17 +715,11 @@ def write_meshtags(
     Args:
         filename: Base name of the files, or the path of one of them
         comm: MPI communicator used in storage
-        data: Mesh tags with nodes in input ordering, see the ``on_input_mesh``
-            argument of :func:`io4dolfinx.write_meshtags`
+        data: Mesh tags with nodes in the ordering the mesh was written in, see the
+            ``on_input_mesh`` argument of :func:`io4dolfinx.write_meshtags`
         backend_args: Arguments to backend
     """
     args = get_default_backend_args(backend_args)
-    if not data.on_input_mesh:
-        raise ValueError(
-            "The openCARP backend writes meshtags in the input node ordering. Use "
-            "io4dolfinx.write_meshtags(..., on_input_mesh=True) or "
-            "io4dolfinx.backends.opencarp.write_opencarp."
-        )
     local_indices = np.asarray(data.indices, dtype=np.int64)
     num_nodes = data.num_dofs_per_entity or local_indices.shape[-1]
     indices = _gather_concatenate(comm, local_indices.reshape(-1, num_nodes))
@@ -1023,8 +1051,8 @@ def write_data(
 
     Args:
         filename: Base name of the files, or the path of one of them
-        array_data: Cell data in input ordering, see the ``on_input_mesh`` argument
-            of :func:`io4dolfinx.write_cell_data`
+        array_data: Cell data in the ordering the mesh was written in, see the
+            ``on_input_mesh`` argument of :func:`io4dolfinx.write_cell_data`
         comm: MPI communicator to open the file with
         time: Not used
         mode: Write for the fiber, append for the sheet direction
@@ -1033,12 +1061,6 @@ def write_data(
     if array_data.type != "Cell":
         raise NotImplementedError(
             "The openCARP backend can only write cell data (fibers and sheets)."
-        )
-    if not array_data.on_input_mesh:
-        raise ValueError(
-            "The openCARP backend writes cell data in the input cell ordering. Use "
-            "io4dolfinx.write_cell_data(..., on_input_mesh=True) or "
-            "io4dolfinx.backends.opencarp.write_opencarp."
         )
     num_cells, num_components = array_data.global_shape
     if num_components not in (2, 3):
