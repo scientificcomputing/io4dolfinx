@@ -265,7 +265,6 @@ def write_meshtags(
         local_start=local_start,
         dim=meshtags.dim,
         cell_type=tag_ct,
-        on_input_mesh=on_input_mesh,
     )
 
     # Get backend and default arguments
@@ -795,7 +794,6 @@ def write_point_data(
         global_shape=data_shape,
         local_range=local_range,
         type="Point",
-        on_input_mesh=on_input_mesh,
     )
     logger.debug(
         f"Using {backend} backend with arguments {backend_args} and mode {mode} to write point data"
@@ -832,6 +830,11 @@ def write_cell_data(
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
+    if u.function_space.ufl_element().family_name == "quadrature":
+        raise ValueError(
+            f"Cannot write {u.name!r} as cell data, as a function in a quadrature space cannot "
+            "be interpolated into DG-0."
+        )
     V = dolfinx.fem.functionspace(u.function_space.mesh, ("DG", 0, u.ufl_shape))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
@@ -859,7 +862,6 @@ def write_cell_data(
         global_shape=data_shape,
         local_range=local_range,
         type="Cell",
-        on_input_mesh=on_input_mesh,
     )
     logger.debug(
         f"Using {backend} backend with arguments {backend_args} and mode {mode} to write cell data"

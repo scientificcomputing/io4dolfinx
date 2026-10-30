@@ -45,13 +45,11 @@ def test_data_on_input_mesh(captured, cell_type):
     mesh_data = create_original_mesh_data(mesh)
 
     point_data = captured["Point"]
-    assert point_data.on_input_mesh
     assert tuple(point_data.local_range) == tuple(mesh_data.local_geometry_pos)
     np.testing.assert_allclose(point_data.values, f(mesh_data.local_geometry.T).T, atol=1e-12)
 
     # P-1 interpolated into DG-0 is the mean of the vertex values for these cells
     cell_data = captured["Cell"]
-    assert cell_data.on_input_mesh
     assert tuple(cell_data.local_range) == tuple(mesh_data.local_topology_pos)
     x = np.vstack(MPI.COMM_WORLD.allgather(mesh_data.local_geometry))
     midpoints = x[mesh_data.local_topology].mean(axis=1)
