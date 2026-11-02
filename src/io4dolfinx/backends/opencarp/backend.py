@@ -30,7 +30,9 @@ in this order with ``backend="opencarp"``:
 .. code-block:: python
 
     args = {"scale": 1000.0, "markers": {"ENDO": (1, 2), "EPI": (2, 2)}}  # mesh in mm
-    io4dolfinx.write_mesh_input_order("heart", mesh, backend="opencarp", backend_args=args)
+    io4dolfinx.write_mesh(
+        "heart", mesh, backend="opencarp", backend_args=args, on_input_mesh=True
+    )
     for tags in (cell_tags, facet_tags):
         io4dolfinx.write_meshtags(
             "heart", mesh, tags, backend="opencarp", backend_args=args, on_input_mesh=True
@@ -50,14 +52,14 @@ in this order with ``backend="opencarp"``:
   <io4dolfinx.FileMode.append>` adds the sheets. Fields are interpolated into DG-0,
   so fields in a quadrature space must first be generated in a P-1 or DG-0 space.
 
-The ordering of nodes and elements must be the same in every step:
+The ordering of nodes and elements must be the same in every step, so pass the same
+``on_input_mesh`` to every function:
 
-- With :func:`io4dolfinx.write_mesh_input_order` and ``on_input_mesh=True`` (as
-  above), the files use the ordering of the input mesh and are the same whatever the
-  number of processes. Use this for reproducible files.
-- With :func:`io4dolfinx.write_mesh` and ``on_input_mesh=False`` (the default of
-  :func:`io4dolfinx.write_meshtags` and :func:`io4dolfinx.write_cell_data`), the files
-  use the DOLFINx ordering, which depends on the partitioning.
+- With ``on_input_mesh=True`` (as above), the files use the ordering of the input
+  mesh and are the same whatever the number of processes. Use this for reproducible
+  files.
+- With ``on_input_mesh=False`` (the default), the files use the DOLFINx ordering,
+  which depends on the partitioning.
 
 Mixing the two gives directions and markers on the wrong elements and nodes.
 
@@ -658,8 +660,7 @@ def write_mesh(
     Args:
         filename: Base name of the files, or the path of one of them
         comm: MPI communicator used in storage
-        mesh: Mesh data, from :func:`io4dolfinx.write_mesh_input_order` or
-            :func:`io4dolfinx.write_mesh`
+        mesh: Mesh data, from :func:`io4dolfinx.write_mesh`
         backend_args: Arguments to backend, ``"scale"`` is required
         mode: Only :attr:`FileMode.write` is supported
         time: Not used
