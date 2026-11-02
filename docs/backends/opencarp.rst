@@ -52,6 +52,10 @@ their values. A marker name reads its ``.surf`` file, or its ``.vtx`` file as ve
 no ``.surf`` (as for 2D meshes). This also works for marker files written by other tools; their value
 is taken from ``markers``, else from the name if it is an integer, else it is ``1``.
 
+Examples that write a mesh with this backend, run openCARP on it and read the results back (a planar
+wave in a square, and the Niederer et al. (2011) benchmark) are in
+`opencarp-io4dolfinx-example <https://github.com/finsberg/opencarp-io4dolfinx-example>`_.
+
 .. automodule:: io4dolfinx.backends.opencarp.backend
     :members:
     :exclude-members: read_attributes, read_timestamps, write_attributes, read_dofmap, read_dofs, read_cell_perms, write_function, read_legacy_mesh, snapshot_checkpoint, read_hdf5_array, read_point_data
