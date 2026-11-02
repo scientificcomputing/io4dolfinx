@@ -9,7 +9,12 @@ from mpi4py import MPI
 import numpy as np
 import numpy.typing as npt
 
-from .utils import compute_insert_position, compute_local_range, valid_function_types
+from .utils import (
+    compute_insert_position,
+    compute_local_range,
+    index_owner,
+    valid_function_types,
+)
 
 __all__ = [
     "send_dofmap_and_recv_values",
@@ -17,6 +22,7 @@ __all__ = [
     "send_dofs_and_recv_values",
     "neighbourhood_ranks",
     "exchange_to_owners",
+    "send_to_input_order",
     "numpy_to_mpi",
     "all_to_all",
 ]
@@ -383,3 +389,32 @@ def exchange_to_owners(
         received.append(out)
     forward.Free()
     return received, sources, send_counts, recv_counts, insert_position
+
+
+def send_to_input_order(
+    comm: MPI.Intracomm,
+    input_indices: npt.NDArray[np.int64],
+    values: npt.NDArray,
+    num_global: int,
+) -> tuple[npt.NDArray, tuple[int, int]]:
+    """Send values to the process holding their input index, so that each process
+    gets a contiguous chunk of the input ordering.
+
+    Args:
+        comm: The MPI communicator
+        input_indices: Input index of each owned entity on this process
+        values: Value of each owned entity, of shape ``(len(input_indices), ...)``
+        num_global: Global number of entities
+
+    Returns:
+        The values of the entities in this process' chunk, in input order, and the range
+        of the chunk
+    """
+    input_indices = np.asarray(input_indices, dtype=np.int64)
+    owners = index_owner(comm, input_indices, num_global)
+    (recv_indices, recv_values), *_ = exchange_to_owners(comm, owners, [input_indices, values])
+    local_range = compute_local_range(comm, num_global)
+    assert len(recv_indices) == local_range[1] - local_range[0]
+    data = np.empty_like(recv_values)
+    data[recv_indices - local_range[0]] = recv_values
+    return data, (int(local_range[0]), int(local_range[1]))

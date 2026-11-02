@@ -232,8 +232,8 @@ def test_files_independent_of_partitioning(shared_tmp_path, cell_type):
         write_problem(serial, MPI.COMM_SELF, cell_type)
         files = sorted(p.name for p in serial.parent.iterdir())
         assert files == sorted(p.name for p in parallel.parent.iterdir())
-        # .pts, .elem, .lon and a .vtx (and in 3D a .surf) per marker
-        assert len(files) == (7 if dolfinx.mesh.cell_dim(cell_type) == 3 else 5)
+        # .pts, .elem, .lon, .markers.json and a .vtx (and in 3D a .surf) per marker
+        assert len(files) == (8 if dolfinx.mesh.cell_dim(cell_type) == 3 else 6)
         for name in files:
             assert (serial.parent / name).read_bytes() == (parallel.parent / name).read_bytes()
 
@@ -388,3 +388,180 @@ def test_2d_surface_not_supported(shared_tmp_path):
             backend="opencarp",
             backend_args={"scale": 1.0},
         )
+
+
+def read_facets(filename: Path) -> tuple[list[str], np.ndarray, np.ndarray]:
+    """Read the facet types, and their nodes and normals in µm, of a ``.surf`` file."""
+    surf = read_lines(filename)
+    x = np.array(read_lines(filename.parent / "mesh.pts")[1:], dtype=np.float64)
+    faces = np.array([row[1:] for row in surf[1:]], dtype=np.int64)
+    q = x[faces]
+    if faces.shape[1] == 3:
+        normals = np.cross(q[:, 1] - q[:, 0], q[:, 2] - q[:, 0])
+    else:
+        normals = np.cross(q[:, 2] - q[:, 0], q[:, 3] - q[:, 1])
+    return [row[0] for row in surf[1:]], faces, normals
+
+
+def test_facet_markers_of_mesh_only(shared_tmp_path):
+    """Reading the facets of a mesh skips the marker files of a mesh whose base name
+    starts with the same name, and gets the values written without ``markers``."""
+    comm = MPI.COMM_WORLD
+    write_problem(shared_tmp_path / "mesh", comm)
+    mesh, _, facet_tags, _, _ = create_problem(comm)
+    other = {"scale": 1000.0, "markers": {"ENDO": (5, 2)}}
+    tags = dolfinx.mesh.meshtags(mesh, 2, facet_tags.indices, np.full_like(facet_tags.values, 5))
+    write_files(shared_tmp_path / "mesh_lv", mesh, other, True, facet_tags=tags)
+    assert (shared_tmp_path / "mesh_lv_ENDO.surf").exists()
+
+    filename = shared_tmp_path / "mesh.elem"
+    in_mesh = io4dolfinx.read_mesh(
+        filename, comm, backend="opencarp", backend_args={"scale": 1000.0}
+    )
+    facets = io4dolfinx.read_meshtags(filename, in_mesh, "facet", backend="opencarp")
+    midpoints = dolfinx.mesh.compute_midpoints(in_mesh, 2, facets.indices)
+    np.testing.assert_allclose(midpoints[:, 0], np.where(facets.values == 1, 0.0, 1.0))
+    num_owned = in_mesh.topology.index_map(2).size_local
+    assert (
+        comm.allreduce(np.count_nonzero(facets.indices < num_owned))
+        == 2 * meshes[CellType.tetrahedron][3]
+    )
+
+
+def test_rewrite_removes_old_markers(shared_tmp_path):
+    """Writing a mesh again removes the marker files of the old mesh, and writing
+    facet tags again replaces the facet markers."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "mesh"
+    write_problem(filename, comm)
+    assert (shared_tmp_path / "mesh_right.surf").exists()
+
+    mesh, _, facet_tags, _, _ = create_problem(comm)
+    left = facet_tags.find(1)
+    left_tags = dolfinx.mesh.meshtags(mesh, 2, left, np.ones_like(left))
+    write_files(filename, mesh, {"scale": 1000.0, "markers": markers(3)}, True)
+    assert not any(shared_tmp_path.glob("mesh_*"))
+    assert not (shared_tmp_path / "mesh.markers.json").exists()
+
+    write_problem(filename, comm)
+    io4dolfinx.write_meshtags(
+        filename,
+        mesh,
+        left_tags,
+        backend="opencarp",
+        backend_args={"markers": markers(3)},
+        on_input_mesh=True,
+    )
+    assert sorted(p.name for p in shared_tmp_path.glob("mesh_*")) == [
+        "mesh_left.surf",
+        "mesh_left.vtx",
+    ]
+
+
+def test_marker_name_clash(shared_tmp_path):
+    """Marker values that would write the same files are rejected."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "mesh"
+    mesh, _, facet_tags, _, _ = create_problem(comm)
+    io4dolfinx.write_mesh_input_order(
+        filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+    )
+    # Value 1 is named "2", the same name as the unnamed value 2
+    with pytest.raises(ValueError, match="not unique"):
+        io4dolfinx.write_meshtags(
+            filename,
+            mesh,
+            facet_tags,
+            backend="opencarp",
+            backend_args={"markers": {"2": (1, 2)}},
+            on_input_mesh=True,
+        )
+
+    io4dolfinx.write_meshtags(filename, mesh, facet_tags, backend="opencarp", on_input_mesh=True)
+    mesh.topology.create_connectivity(2, 0)
+    vertices = dolfinx.mesh.compute_incident_entities(mesh.topology, facet_tags.find(1), 2, 0)
+    vertex_tags = dolfinx.mesh.meshtags(mesh, 0, vertices, np.ones_like(vertices))
+    with pytest.raises(ValueError, match="another dimension"):
+        io4dolfinx.write_meshtags(
+            filename, mesh, vertex_tags, backend="opencarp", on_input_mesh=True
+        )
+
+
+@orderings
+@pytest.mark.parametrize("cell_type", [CellType.tetrahedron, CellType.hexahedron])
+def test_interior_facet_orientation(shared_tmp_path, cell_type, on_input_mesh):
+    """A facet between two elements points out of the element whose centre has the
+    smallest x, whatever the ordering of the elements."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "mesh"
+    mesh, *_ = create_problem(comm, cell_type)
+    facets = dolfinx.mesh.locate_entities(mesh, 2, lambda x: np.isclose(x[0], 1 / 3))
+    tags = dolfinx.mesh.meshtags(mesh, 2, facets, np.full_like(facets, 3))
+    write_files(filename, mesh, {"scale": 1000.0}, on_input_mesh, facet_tags=tags)
+    if comm.rank == 0:
+        _, faces, normals = read_facets(shared_tmp_path / "mesh_3.surf")
+        assert len(faces) == meshes[cell_type][3]
+        assert np.all(normals[:, 0] > 0)
+        np.testing.assert_allclose(normals[:, 1:], 0, atol=1e-6)
+
+
+def test_lon_rows_checked(shared_tmp_path):
+    """A ``.lon`` without a direction per element is rejected when read."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "mesh"
+    write_problem(filename, comm)
+    if comm.rank == 0:
+        lines = filename.with_suffix(".lon").read_text().splitlines()
+        filename.with_suffix(".lon").write_text("\n".join(lines[:-1]) + "\n")
+    comm.Barrier()
+    mesh = io4dolfinx.read_mesh(
+        filename.with_suffix(".elem"), comm, backend="opencarp", backend_args={"scale": 1000.0}
+    )
+    with pytest.raises(ValueError, match="directions"):
+        io4dolfinx.read_cell_data(filename.with_suffix(".elem"), "fiber", mesh, backend="opencarp")
+
+
+def test_complex_directions_rejected(shared_tmp_path):
+    from io4dolfinx.backends.opencarp import backend
+    from io4dolfinx.structures import ArrayData
+
+    comm = MPI.COMM_WORLD
+    num_cells = 2 * comm.size
+    data = ArrayData(
+        name="f0",
+        values=np.ones((2, 3), dtype=np.complex128),
+        global_shape=(num_cells, 3),
+        local_range=(2 * comm.rank, 2 * comm.rank + 2),
+        type="Cell",
+    )
+    with pytest.raises(NotImplementedError, match="complex"):
+        backend.write_data(shared_tmp_path / "mesh", data, comm, 0.0, io4dolfinx.FileMode.write, {})
+
+
+def test_flat_2d_mesh_with_3d_coordinates(shared_tmp_path):
+    """Triangles with 3D coordinates in a plane of constant z are written, and read back
+    as a 2D mesh. Triangles out of such a plane are rejected."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "mesh"
+    domain = ufl.Mesh(basix.ufl.element("Lagrange", "triangle", 1, shape=(3,)))
+    cells = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int64)
+    for z, ok in ((np.array([2.0, 2.0, 2.0, 2.0]), True), (np.array([0, 0, 0, 1.0]), False)):
+        x = np.column_stack([[0, 1, 0, 1], [0, 0, 1, 1], z]).astype(np.float64)
+        if comm.rank != 0:
+            cells, x = cells[:0], x[:0]
+        mesh = dolfinx.mesh.create_mesh(comm, cells=cells, x=x, e=domain)
+        if not ok:
+            with pytest.raises(NotImplementedError, match="constant z"):
+                io4dolfinx.write_mesh_input_order(
+                    filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+                )
+            continue
+        io4dolfinx.write_mesh_input_order(
+            filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+        )
+        in_mesh = io4dolfinx.read_mesh(
+            filename.with_suffix(".elem"), comm, backend="opencarp", backend_args={"scale": 1.0}
+        )
+        assert in_mesh.geometry.dim == 2
+        area = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * ufl.dx(domain=in_mesh)))
+        assert np.isclose(comm.allreduce(area, op=MPI.SUM), 1.0)

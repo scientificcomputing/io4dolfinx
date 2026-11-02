@@ -18,6 +18,9 @@ https://opencarp.org/documentation/user-manual (section "Mesh files").
   and one node index per line, for stimuli and boundary conditions.
 - ``<base>_<marker>.surf``: number of faces, then one ``Tr n0 n1 n2`` or
   ``Qd n0 n1 n2 n3`` line per face of a 3D mesh.
+- ``<base>.markers.json``: the name, value and dimension of each marker written by
+  io4dolfinx, so that reading gives the original values, and writing the mesh again
+  removes the marker files of the old mesh. openCARP does not read it.
 
 Each file is written by rank 0.
 
@@ -73,7 +76,8 @@ Backend arguments:
 - ``"default_tag"``: region tag of cells without a cell tag (default ``0``).
 - ``"markers"``: map from marker name to value, or to ``(value, dim)`` as used by
   cardiac-geometriesx. Names the ``.vtx`` and ``.surf`` files of a marker value,
-  which otherwise use the value itself.
+  which otherwise use the value itself. When reading, it takes precedence over the
+  values in ``<base>.markers.json``.
 - ``"surf"``: write ``.surf`` files for facet tags of 3D meshes (default ``True``).
 - ``"vtx_domain"``: domain written to ``.vtx`` files (default ``"extra"``, meaning
   indices into the whole mesh, as written; ``"intra"`` means the myocardium submesh).
@@ -84,6 +88,7 @@ Copyright: Henrik Finsberg and Simula Research Laboratory
 """
 
 import glob
+import json
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
@@ -212,20 +217,57 @@ def _marker_names(markers: dict[str, Any], dim: int) -> dict[int, str]:
     return names
 
 
-def _marker_value(markers: dict[str, Any], name: str) -> int:
+def _marker_index_file(filename: Path | str) -> Path:
+    """Get the path of the index of the markers of a mesh, ``<base>.markers.json``."""
+    return _mesh_file(filename, ".markers.json")
+
+
+def _read_marker_index(filename: Path | str) -> dict[str, dict[str, Any]]:
+    """Read the index of the markers written for a mesh.
+
+    Returns:
+        Map from marker name to its ``"value"``, ``"dim"`` and whether it has a
+        ``.surf`` file (``"surf"``). Empty if there is no index.
+    """
+    path = _marker_index_file(filename)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def _write_marker_index(filename: Path | str, index: dict[str, dict[str, Any]]):
+    """Write the index of the markers of a mesh, or remove it if there are none."""
+    path = _marker_index_file(filename)
+    if index:
+        path.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _remove_marker_files(filename: Path | str, names: list[str]):
+    """Remove the ``.vtx`` and ``.surf`` files of markers."""
+    for name in names:
+        for suffix in (".vtx", ".surf"):
+            _marker_file(filename, name, suffix).unlink(missing_ok=True)
+
+
+def _marker_value(markers: dict[str, Any], index: dict[str, dict[str, Any]], name: str) -> int:
     """Get the value of a marker read from ``<base>_<name>.vtx`` or ``.surf``.
 
     Args:
         markers: Map from name to value, or to ``(value, dim)``
+        index: The index of the markers of the mesh, see :func:`_read_marker_index`
         name: Name of the marker in the filename
 
     Returns:
-        The value in ``markers``, else the name itself if it is an integer (as
-        written without markers), else ``1``.
+        The value in ``markers``, else in ``index``, else the name itself if it is an
+        integer, else ``1``.
     """
     if name in markers:
         marker = markers[name]
         return int(marker) if isinstance(marker, (int, np.integer)) else int(marker[0])
+    if name in index:
+        return int(index[name]["value"])
     try:
         return int(name)
     except ValueError:
@@ -293,6 +335,20 @@ def _read_count(path: Path) -> int:
     """Read the number on the first line of a file."""
     with open(path) as f:
         return int(f.readline().split()[0])
+
+
+def _count_rows(path: Path, header: int = 1) -> int:
+    """Count the non-empty lines after the header of a file."""
+    with open(path) as f:
+        return sum(1 for line in f if line.strip()) - header
+
+
+def _check_lon(lon: Path, num_elements: int):
+    """Check that ``.lon`` has a direction line per element."""
+    if (num_rows := _count_rows(lon)) != num_elements:
+        raise ValueError(
+            f"{lon} has {num_rows} directions, but the mesh has {num_elements} elements."
+        )
 
 
 def _read_rows(
@@ -387,7 +443,7 @@ def _match_rows(reference: npt.NDArray[np.int64], query: npt.NDArray[np.int64]) 
 
     Returns:
         Index into ``reference`` of each query row, ``-1`` if it has no match. If
-        several rows match, the last one is used.
+        several rows match, the first one is used.
     """
     if len(query) == 0:
         return np.zeros(0, dtype=np.int64)
@@ -395,7 +451,8 @@ def _match_rows(reference: npt.NDArray[np.int64], query: npt.NDArray[np.int64]) 
     _, inverse = np.unique(rows, axis=0, return_inverse=True)
     inverse = inverse.reshape(-1)
     lookup = np.full(inverse.max() + 1, -1, dtype=np.int64)
-    lookup[inverse[: len(reference)]] = np.arange(len(reference))
+    matched, first = np.unique(inverse[: len(reference)], return_index=True)
+    lookup[matched] = first
     return lookup[inverse[len(reference) :]]
 
 
@@ -434,11 +491,11 @@ def _oriented_facets(
     cells: npt.NDArray[np.int64],
     facets: npt.NDArray[np.int64],
 ) -> npt.NDArray[np.int64]:
-    """Orient facets of a 3D mesh and sort them in a canonical order.
+    """Orient facets of a 3D mesh to point out of an element they are a face of.
 
-    Each facet gets the normal pointing out of an element it is a face of, starts with
-    its smallest node and the facets are sorted, so the result does not depend on how
-    the facets were distributed.
+    A facet between two elements points out of the element whose centre comes first
+    in lexicographic ``(x, y, z)`` order, so the result does not depend on the
+    ordering of the elements.
 
     Args:
         x: Node coordinates
@@ -447,21 +504,27 @@ def _oriented_facets(
         facets: Nodes of each facet in cyclic order
 
     Returns:
-        The oriented facets
+        The oriented facets, in the order of ``facets``
     """
     local_faces = _faces[elem_type]
     faces = cells[:, local_faces].reshape(-1, local_faces.shape[1])
-    match = _match_rows(faces, facets)
+    face_cell_centres = np.repeat(x[cells].mean(axis=1), len(local_faces), axis=0)
+    order = np.lexsort(face_cell_centres.T[::-1])
+    match = _match_rows(faces[order], facets)
     if np.any(match < 0):
         raise ValueError(f"{np.count_nonzero(match < 0)} tagged facets are not faces of the mesh.")
-    cell_centres = x[cells[match // len(local_faces)]].mean(axis=1)
+    cell_centres = face_cell_centres[order][match]
 
     facets = facets.copy()
     outward = x[facets].mean(axis=1) - cell_centres
     inward = np.einsum("ij,ij->i", _facet_normals(x, facets), outward) < 0
     facets[inward] = facets[inward][:, _mirror[_face_types[elem_type]]]
+    return facets
 
-    # Rotating the nodes keeps the orientation
+
+def _sort_facets(facets: npt.NDArray[np.int64]) -> npt.NDArray[np.int64]:
+    """Start each facet with its smallest node, keeping its orientation, and sort the
+    facets, so the result does not depend on how the facets were distributed."""
     num_nodes = facets.shape[1]
     shift = np.argmin(facets, axis=1)[:, None]
     facets = np.take_along_axis(facets, (shift + np.arange(num_nodes)) % num_nodes, axis=1)
@@ -585,11 +648,12 @@ def write_mesh(
 ):
     """Write a linear mesh to ``<base>.pts`` and ``<base>.elem``.
 
-    Supports triangle and quadrilateral meshes in 2D, and tetrahedral and hexahedral
-    meshes in 3D. Every cell gets the region tag ``backend_args["default_tag"]``, until
-    cell tags are written with :func:`write_meshtags`. Elements with the opposite
-    orientation of openCARP's ``mesher`` are mirrored. A ``<base>.lon`` from an
-    earlier mesh is removed.
+    Supports triangle and quadrilateral meshes in 2D (also with 3D coordinates in a
+    plane of constant z), and tetrahedral and hexahedral meshes in 3D. Every cell gets
+    the region tag ``backend_args["default_tag"]``, until cell tags are written with
+    :func:`write_meshtags`. Elements with the opposite orientation of openCARP's
+    ``mesher`` are mirrored. The ``<base>.lon`` and marker files of an earlier mesh
+    are removed.
 
     Args:
         filename: Base name of the files, or the path of one of them
@@ -608,11 +672,6 @@ def write_mesh(
         )
     elem_type = _element_types[mesh.cell_type]
     gdim = mesh.local_geometry.shape[1]
-    if gdim != _tdim[elem_type]:
-        raise NotImplementedError(
-            f"The openCARP backend needs {_tdim[elem_type]}D coordinates for a "
-            f"{mesh.cell_type} mesh, got {gdim}D."
-        )
     if mode != FileMode.write:
         raise NotImplementedError("The openCARP backend can only write a mesh to new files.")
     scale = _get_scale(args)
@@ -624,6 +683,11 @@ def write_mesh(
         assert x is not None and cells is not None
         points = np.zeros((len(x), 3), dtype=x.dtype)
         points[:, :gdim] = x
+        if _tdim[elem_type] == 2 and np.ptp(points[:, 2]) > 0:
+            raise NotImplementedError(
+                f"The {mesh.cell_type} mesh does not lie in a plane of constant z. Surface "
+                "meshes in 3D are not supported."
+            )
         elements = cells[:, _dolfinx_to_opencarp[elem_type]]
         orientation = _orientation(elem_type, points, elements)
         if np.any(orientation == 0):
@@ -635,6 +699,8 @@ def write_mesh(
         tags = np.full(len(elements), args["default_tag"], dtype=np.int32)
         _write_elem(_mesh_file(filename, ".elem"), elem_type, elements, tags)
         _mesh_file(filename, ".lon").unlink(missing_ok=True)
+        _remove_marker_files(filename, list(_read_marker_index(filename)))
+        _write_marker_index(filename, {})
 
     _on_root(comm, write)
 
@@ -708,9 +774,12 @@ def write_meshtags(
       the tagged entities.
     - Facet tags of a 3D mesh are also written to ``<base>_<marker>.surf``, as
       triangles or quadrilaterals with outward normals (if ``backend_args["surf"]``).
+      A facet between two elements points out of the element whose centre comes
+      first in lexicographic ``(x, y, z)`` order.
 
     ``<marker>`` is the name of the value in ``backend_args["markers"]``, or the
-    value itself.
+    value itself. The markers are recorded in ``<base>.markers.json``, and replace
+    the markers of the same dimension written earlier.
 
     Args:
         filename: Base name of the files, or the path of one of them
@@ -738,6 +807,24 @@ def write_meshtags(
             _write_elem(elem, elem_type, cells, tags)
             return
 
+        names = _marker_names(args["markers"], data.dim)
+        marker_values = np.unique(values)
+        marker_names = [names.get(int(value), str(value)) for value in marker_values]
+        if len(set(marker_names)) < len(marker_names):
+            raise ValueError(
+                f"Marker values {marker_values.tolist()} of dimension {data.dim} get the "
+                f"file names {marker_names}, which are not unique."
+            )
+        index = _read_marker_index(filename)
+        replaced = [name for name, marker in index.items() if marker["dim"] == data.dim]
+        if clash := sorted(set(marker_names) & (set(index) - set(replaced))):
+            raise ValueError(
+                f"Markers {clash} of dimension {data.dim} have the same name as markers of "
+                f"another dimension in {_marker_index_file(filename)}."
+            )
+        _remove_marker_files(filename, replaced)
+        index = {name: marker for name, marker in index.items() if name not in replaced}
+
         write_surf = args["surf"] and _tdim[elem_type] == 3 and data.dim == 2
         if write_surf:
             pts = _mesh_file(filename, ".pts")
@@ -745,10 +832,9 @@ def write_meshtags(
             face_type = _face_types[elem_type]
             # DOLFINx orders the nodes of a quadrilateral facet as a tensor product
             facets = indices[:, _dolfinx_to_opencarp[face_type]]
-        names = _marker_names(args["markers"], data.dim)
-        for value in np.unique(values):
+            facets = _oriented_facets(x, elem_type, cells, facets)
+        for value, name in zip(marker_values, marker_names):
             marked = values == value
-            name = names.get(int(value), str(value))
             nodes = np.unique(indices[marked])
             _write_rows(
                 _marker_file(filename, name, ".vtx"),
@@ -757,13 +843,15 @@ def write_meshtags(
                 "%d",
             )
             if write_surf:
-                faces = _oriented_facets(x, elem_type, cells, facets[marked])
+                faces = _sort_facets(facets[marked])
                 _write_rows(
                     _marker_file(filename, name, ".surf"),
                     [str(len(faces))],
                     faces,
                     _element_format(face_type, faces.shape[1]),
                 )
+            index[name] = {"value": int(value), "dim": int(data.dim), "surf": bool(write_surf)}
+        _write_marker_index(filename, index)
 
     _on_root(comm, write)
 
@@ -780,11 +868,13 @@ def read_meshtags_data(
         filename: Base name of the files, or the path of one of them
         comm: MPI communicator used in storage
         name: ``"cell"`` for the region tags in ``<base>.elem``, ``"facet"`` for the
-            faces of all ``<base>_*.surf`` files, otherwise the name of a marker:
-            the faces of ``<base>_<name>.surf`` or, if there is none, the nodes of
+            faces of the ``.surf`` files of all facet markers in
+            ``<base>.markers.json``, otherwise the name of a marker: the faces of
+            ``<base>_<name>.surf`` or, if there is none, the nodes of
             ``<base>_<name>.vtx``.
         backend_args: Arguments to backend. The value of a marker is taken from
-            ``"markers"``, else from its name if that is an integer, else it is ``1``.
+            ``"markers"``, else from ``<base>.markers.json``, else from its name if
+            that is an integer, else it is ``1``.
 
     Returns:
         Internal data structure for the mesh tags read from file
@@ -800,10 +890,18 @@ def read_meshtags_data(
         return MeshTagsData(name=name, values=tags, indices=cells, dim=_tdim[elem_type])
 
     base = _basename(filename)
+    index = _read_marker_index(filename)
     if name == "facet":
-        files = sorted(Path(p) for p in glob.glob(f"{glob.escape(str(base))}_*.surf"))
+        files = [
+            _marker_file(filename, marker, ".surf")
+            for marker, entry in sorted(index.items())
+            if entry["dim"] == 2 and entry["surf"]
+        ]
         if len(files) == 0:
-            raise FileNotFoundError(f"Could not find any {base}_*.surf files.")
+            raise FileNotFoundError(
+                f"{_marker_index_file(filename)} lists no facet markers with .surf files. "
+                "Read the markers of other files by name."
+            )
         dim = 2
     elif (surf := _marker_file(filename, name, ".surf")).exists():
         files, dim = [surf], 2
@@ -835,7 +933,7 @@ def read_meshtags_data(
                 rows = _read_rows(path, (0, _read_count(path)), 1, header=2)
                 entities = rows.astype(np.int64).reshape(-1, 1)
             all_indices.append(entities)
-            all_values.append(np.full(len(entities), _marker_value(args["markers"], marker)))
+            all_values.append(np.full(len(entities), _marker_value(args["markers"], index, marker)))
         return np.vstack(all_indices), np.concatenate(all_values).astype(np.int32)
 
     indices, values = np.zeros((0, 1), dtype=np.int64), np.zeros(0, dtype=np.int32)
@@ -1003,6 +1101,8 @@ def read_cell_data(
             f"Could not find '{name}' in {lon}. Available: {list(_directions[:num_directions])}"
         )
 
+    _on_root(comm, lambda: _check_lon(lon, _read_count(elem)))
+
     def read():
         local_range = compute_local_range(comm, _read_count(elem))
         elem_type, cells, _ = _read_elem(elem, local_range)
@@ -1062,6 +1162,8 @@ def write_data(
         raise NotImplementedError(
             "The openCARP backend can only write cell data (fibers and sheets)."
         )
+    if np.iscomplexobj(array_data.values):
+        raise NotImplementedError("openCARP directions are real, got complex cell data.")
     num_cells, num_components = array_data.global_shape
     if num_components not in (2, 3):
         raise ValueError(f"Expected a 2D or 3D vector per cell, got {num_components} components.")
@@ -1088,6 +1190,7 @@ def write_data(
             check_file_exists(lon)
             if _read_count(lon) != 1:
                 raise ValueError(f"{lon} already holds fibers and sheets.")
+            _check_lon(lon, num_cells)
             fibers = _read_rows(lon, (0, num_cells), 3).astype(np.float64)
             rows = np.hstack([fibers, rows])
         _write_rows(lon, [str(rows.shape[1] // 3)], rows, _float_format)
