@@ -9,9 +9,9 @@ Writes and reads linear meshes in the ASCII mesh format of the cardiac simulator
 and surface (``.surf``) files. The backend needs no extra dependencies.
 
 The mesh, its tags and its fiber and sheet directions are written with
-:func:`io4dolfinx.write_mesh_input_order` (or :func:`io4dolfinx.write_mesh`),
-:func:`io4dolfinx.write_meshtags` and :func:`io4dolfinx.write_cell_data`, as shown in the module
-documentation below. Rank 0 writes all files. openCARP expects coordinates in µm, so the factor
+:func:`io4dolfinx.write_mesh`, :func:`io4dolfinx.write_meshtags` and
+:func:`io4dolfinx.write_cell_data`, with the same ``on_input_mesh`` in every call, as shown in the
+module documentation below. Rank 0 writes all files. openCARP expects coordinates in µm, so the factor
 converting the mesh coordinates to µm must always be given as ``backend_args["scale"]``.
 
 With ``markers={"ENDO": (1, 2), "EPI": (2, 2)}``, a heart mesh gives ``heart.pts``,

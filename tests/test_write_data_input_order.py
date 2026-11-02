@@ -34,7 +34,7 @@ def captured(monkeypatch):
 )
 def test_data_on_input_mesh(captured, cell_type):
     """Point and cell data written with ``on_input_mesh`` follow the nodes and cells of
-    :func:`io4dolfinx.write_mesh_input_order`."""
+    :func:`io4dolfinx.write_mesh` with ``on_input_mesh=True``."""
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, 4, 3, 5, cell_type=cell_type)
     V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1, (3,)))
     u = dolfinx.fem.Function(V)

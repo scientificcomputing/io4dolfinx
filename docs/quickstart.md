@@ -123,7 +123,7 @@ Sometimes you want to save a solution that corresponds exactly to the input mesh
 This is useful for visualization or post-processing on the original geometry.
 
 ```python
-io4dolfinx.write_function_on_input_mesh("solution_on_input.bp", u)
+io4dolfinx.write_function("solution_on_input.bp", u, on_input_mesh=True)
 ```
 
 See the [Checkpoint on input mesh](./original_checkpoint.py) for more details and examples.

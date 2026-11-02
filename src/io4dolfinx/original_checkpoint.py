@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import typing
-from pathlib import Path
 
 from mpi4py import MPI
 
@@ -16,7 +15,6 @@ import dolfinx
 import fenicsx_compat
 import numpy as np
 
-from .backends import FileMode, get_backend
 from .comm_helpers import all_to_all, send_to_input_order
 from .structures import FunctionData, MeshData
 from .utils import (
@@ -27,7 +25,7 @@ from .utils import (
     unroll_insert_position,
 )
 
-__all__ = ["write_function_on_input_mesh", "write_mesh_input_order"]
+__all__ = ["create_original_mesh_data", "create_function_data_on_original_mesh"]
 logger = logging.getLogger(__name__)
 
 
@@ -217,88 +215,4 @@ def create_function_data_on_original_mesh(
         dofmap_range=dofmap_imap.local_range,
         global_dofs_in_dofmap=dofmap_imap.size_global,
         name=func_name,
-    )
-
-
-def write_function_on_input_mesh(
-    filename: Path | str,
-    u: dolfinx.fem.Function,
-    time: float = 0.0,
-    name: typing.Optional[str] = None,
-    mode: FileMode = FileMode.append,
-    backend_args: dict[str, typing.Any] | None = None,
-    backend: str | None = None,
-):
-    """
-    Write function checkpoint (to be read with the input mesh).
-
-    Note:
-        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_function`.
-
-    Args:
-        filename: The filename to write to
-        u: The function to checkpoint
-        time: Time-stamp associated with function at current write step
-        mode: The mode to use (write or append)
-        name: Name of function. If None, the name of the function is used.
-        backend_args: Arguments to backend
-        backend: Choice of backend module
-    """
-    logger.debug(
-        f"Writing function on input mesh to {filename} at time {time} with name {name or u.name}"
-    )
-    logger.debug(f"Using backend {backend} with arguments {backend_args} and mode {mode}")
-    mesh = u.function_space.mesh
-    function_data = create_function_data_on_original_mesh(u, name)
-    fname = Path(filename)
-
-    backend_cls = get_backend(backend)
-    backend_args = backend_cls.get_default_backend_args(backend_args)
-    backend_cls.write_function(
-        fname,
-        mesh.comm,
-        function_data,
-        time=time,
-        mode=mode,
-        backend_args=backend_args,
-    )
-
-
-def write_mesh_input_order(
-    filename: Path | str,
-    mesh: dolfinx.mesh.Mesh,
-    time: float = 0.0,
-    mode: FileMode = FileMode.write,
-    backend: str | None = None,
-    backend_args: dict[str, typing.Any] | None = None,
-):
-    """
-    Write mesh to checkpoint file in original input ordering.
-
-    Note:
-        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_mesh`.
-
-    Args:
-        filename: The filename to write to
-        mesh: Mesh to checkpoint
-        time: Time-stamp associated with function at current write step
-        mode: The mode to use (write or append)
-        name: Name of function. If None, the name of the function is used.
-        backend_args: Arguments to backend
-        backend: Choice of backend module
-    """
-    logger.debug(f"Writing mesh in input order to {filename} at time {time}")
-    logger.debug(f"Using backend {backend} with arguments {backend_args} and mode {mode}")
-    mesh_data = create_original_mesh_data(mesh)
-    fname = Path(filename)
-
-    backend_cls = get_backend(backend)
-    backend_args = backend_cls.get_default_backend_args(backend_args)
-    backend_cls.write_mesh(
-        fname,
-        mesh.comm,
-        mesh_data,
-        backend_args=backend_args,
-        mode=mode,
-        time=time,
     )

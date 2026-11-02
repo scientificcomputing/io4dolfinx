@@ -10,7 +10,10 @@
 # An optional way of store an N-to-M checkpoint is to store the function data in the same
 # ordering as the mesh. The write operation will be more expensive, as it requires data
 # communication to ensure contiguous data being written to the checkpoint.
-# The method is exposed as {py:func}`io4dolfinx.write_function_on_input_mesh`.
+# This is done with {py:func}`io4dolfinx.write_function` with `on_input_mesh=True`,
+# and the mesh can be written in the same ordering with {py:func}`io4dolfinx.write_mesh`
+# with `on_input_mesh=True`. (`write_function_on_input_mesh` and `write_mesh_input_order`
+# do the same, but are deprecated.)
 # Below we will demonstrate this method.
 
 # +
@@ -72,12 +75,13 @@ def write_function(
     u = dolfinx.fem.Function(V)
     u.interpolate(f)
 
-    io4dolfinx.write_function_on_input_mesh(
+    io4dolfinx.write_function(
         function_filename.with_suffix(".bp"),
         u,
         mode=io4dolfinx.FileMode.write,
         time=0.0,
         name="Output",
+        on_input_mesh=True,
     )
     print(
         f"{mesh.comm.rank + 1}/{mesh.comm.size} Function written to ",
