@@ -512,6 +512,10 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .gmsh import backend as GMSHInterface
 
         return GMSHInterface
+    elif backend == "opencarp":
+        from .opencarp import backend as OpenCARPInterface
+
+        return OpenCARPInterface
     else:
         return import_module(backend)
 
@@ -525,6 +529,7 @@ BUILTIN_BACKENDS = (
     "exodus",
     "med",
     "gmsh",
+    "opencarp",
 )
 
 

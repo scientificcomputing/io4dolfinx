@@ -25,6 +25,7 @@ from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
+    send_to_input_order,
 )
 from .readers import create_geometry_function_space
 from .structures import ArrayData, FunctionData, MeshTagsData
@@ -724,6 +725,7 @@ def write_point_data(
     backend_args: dict[str, Any] | None,
     backend: str = "vtkhdf",
     mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """Write function to file by interpolating into geometry nodes.
 
@@ -737,6 +739,8 @@ def write_point_data(
         backend: Which backend to use.
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
+        on_input_mesh: If True, the node values are written in the node ordering of the
+            input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
@@ -748,8 +752,21 @@ def write_point_data(
     local_range = V.dofmap.index_map.local_range
     num_dofs_local = V.dofmap.index_map.size_local
     data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
+
+    if on_input_mesh:
+        # The dofs of the geometry space are the geometry nodes
+        input_nodes = np.asarray(
+            V.mesh.geometry.input_global_indices[:num_dofs_local], dtype=np.int64
+        )
+        assert isinstance(comm, MPI.Intracomm)
+        data, local_range = send_to_input_order(comm, input_nodes, data, data_shape[0])
+
     ad = ArrayData(
-        name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Point"
+        name=v_out.name,
+        values=data,
+        global_shape=data_shape,
+        local_range=local_range,
+        type="Point",
     )
     logger.debug(
         f"Using {backend} backend with arguments {backend_args} and mode {mode} to write point data"
@@ -768,6 +785,7 @@ def write_cell_data(
     backend_args: dict[str, Any] | None,
     backend: str = "vtkhdf",
     mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """Write function to file by interpolating into cell midpoints.
 
@@ -780,20 +798,42 @@ def write_cell_data(
         backend_args: The backend arguments
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
+        on_input_mesh: If True, the cell values are written in the cell ordering of the
+            input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
+    if u.function_space.ufl_element().family_name == "quadrature":
+        raise ValueError(
+            f"Cannot write {u.name!r} as cell data, as a function in a quadrature space cannot "
+            "be interpolated into DG-0."
+        )
     V = dolfinx.fem.functionspace(u.function_space.mesh, ("DG", 0, u.ufl_shape))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
     comm = v_out.function_space.mesh.comm
     data_shape = (V.dofmap.index_map.size_global, V.dofmap.index_map_bs)
-    local_range = V.dofmap.index_map.local_range
-    num_dofs_local = V.dofmap.index_map.size_local
-    data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
+    values = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)
+
+    if on_input_mesh:
+        # DG-0 dofs of owned cells are owned, so send the value of each owned cell
+        mesh = V.mesh
+        tdim = mesh.topology.dim
+        num_owned_cells = mesh.topology.index_map(tdim).size_local
+        input_cells = mesh.topology.original_cell_index[:num_owned_cells].astype(np.int64)
+        cell_values = values[V.dofmap.list[:num_owned_cells, 0]]
+        assert isinstance(comm, MPI.Intracomm)
+        data, local_range = send_to_input_order(comm, input_cells, cell_values, data_shape[0])
+    else:
+        local_range = V.dofmap.index_map.local_range
+        data = values[: V.dofmap.index_map.size_local]
 
     ad = ArrayData(
-        name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Cell"
+        name=v_out.name,
+        values=data,
+        global_shape=data_shape,
+        local_range=local_range,
+        type="Cell",
     )
     logger.debug(
         f"Using {backend} backend with arguments {backend_args} and mode {mode} to write cell data"
