@@ -22,10 +22,10 @@ import ufl
 
 from .backends import FileMode, ReadMode, get_backend
 from .comm_helpers import (
-    exchange_to_owners,
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
+    send_to_input_order,
 )
 from .readers import create_geometry_function_space
 from .structures import ArrayData, FunctionData, MeshTagsData
@@ -79,33 +79,6 @@ def _with_mesh_name(
     args = dict(backend_args) if backend_args else {}
     args["name"] = mesh_name
     return args
-
-
-def _to_input_order(
-    comm: MPI.Intracomm,
-    input_indices: npt.NDArray[np.int64],
-    values: npt.NDArray,
-    num_global: int,
-) -> tuple[npt.NDArray, tuple[int, int]]:
-    """Send values to the process holding their input index, so that each process
-    gets a contiguous chunk of the input ordering.
-
-    Args:
-        comm: The MPI communicator
-        input_indices: Input index of each owned entity on this process
-        values: Value of each owned entity, of shape ``(len(input_indices), ...)``
-        num_global: Global number of entities
-
-    Returns:
-        The values of the entities in this process' chunk, in input order, and the range
-        of the chunk
-    """
-    owners = index_owner(comm, input_indices, num_global)
-    (recv_indices, recv_values), *_ = exchange_to_owners(comm, owners, [input_indices, values])
-    local_range = compute_local_range(comm, num_global)
-    data = np.empty_like(recv_values)
-    data[recv_indices - local_range[0]] = recv_values
-    return data, (local_range[0], local_range[1])
 
 
 def write_attributes(
@@ -790,7 +763,7 @@ def write_point_data(
             V.mesh.geometry.input_global_indices[:num_dofs_local], dtype=np.int64
         )
         assert isinstance(comm, MPI.Intracomm)
-        data, local_range = _to_input_order(comm, input_nodes, data, data_shape[0])
+        data, local_range = send_to_input_order(comm, input_nodes, data, data_shape[0])
 
     ad = ArrayData(
         name=v_out.name,
@@ -845,9 +818,7 @@ def write_cell_data(
     v_out.interpolate(u)
     comm = v_out.function_space.mesh.comm
     data_shape = (V.dofmap.index_map.size_global, V.dofmap.index_map_bs)
-    local_range = V.dofmap.index_map.local_range
-    num_dofs_local = V.dofmap.index_map.size_local
-    data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
+    values = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)
 
     if on_input_mesh:
         # DG-0 dofs of owned cells are owned, so send the value of each owned cell
@@ -855,11 +826,12 @@ def write_cell_data(
         tdim = mesh.topology.dim
         num_owned_cells = mesh.topology.index_map(tdim).size_local
         input_cells = mesh.topology.original_cell_index[:num_owned_cells].astype(np.int64)
-        cell_values = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[
-            V.dofmap.list[:num_owned_cells, 0]
-        ]
+        cell_values = values[V.dofmap.list[:num_owned_cells, 0]]
         assert isinstance(comm, MPI.Intracomm)
-        data, local_range = _to_input_order(comm, input_cells, cell_values, data_shape[0])
+        data, local_range = send_to_input_order(comm, input_cells, cell_values, data_shape[0])
+    else:
+        local_range = V.dofmap.index_map.local_range
+        data = values[: V.dofmap.index_map.size_local]
 
     ad = ArrayData(
         name=v_out.name,
