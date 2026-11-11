@@ -577,6 +577,8 @@ def write_mesh(
         mesh: The mesh to write to file
 
         store_partition_info: Store mesh partitioning (including ghosting) to file
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         mesh_name: Name of the mesh in the file to act on. Defaults to the
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
@@ -733,7 +735,8 @@ def write_point_data(
         u: The function to store
         time: Time stamp
         mode: Append or write
-        backend_args: The backend arguments
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         backend: Which backend to use.
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
@@ -777,7 +780,8 @@ def write_cell_data(
         point_data: Data to write to file
         time: Time stamp
         mode: Append or write
-        backend_args: The backend arguments
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
     """
