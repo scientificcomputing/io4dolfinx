@@ -383,9 +383,11 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
 
 
 def _function_dtype(data_dtype: np.dtype, mesh: dolfinx.mesh.Mesh) -> np.dtype:
-    """The dtype of a function holding data read from file: real data takes the precision of the mesh
-    (a function space only allows its mesh's real type, e.g. float32 data on a float64 mesh), complex
-    data the complex type of that precision."""
+    """The dtype of a function holding data read from file.
+
+    Real data takes the precision of the mesh (a function space only allows its mesh's real type,
+    e.g. float32 data on a float64 mesh), complex data the complex type of that precision.
+    """
     real = np.dtype(mesh.geometry.x.dtype)
     if np.issubdtype(data_dtype, np.complexfloating):
         return np.result_type(real, np.complex64)

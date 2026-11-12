@@ -51,8 +51,8 @@ def test_read_mesh_and_cell_data(tmp_path):
 
 
 def test_single_precision_data_on_double_precision_mesh(tmp_path):
-    # A file with float32 points and data, read into a float64 mesh (backend_args dtype): the point and
-    # cell data must come back as functions on that mesh, in its precision
+    # A file with float32 points and data, read into a float64 mesh (backend_args dtype): the point
+    # and cell data must come back as functions on that mesh, in its precision
     tmp_path = MPI.COMM_WORLD.bcast(tmp_path, root=0)
     filename = tmp_path / "grid32.vtu"
     grid = pyvista.examples.load_hexbeam().triangulate()
