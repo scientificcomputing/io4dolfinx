@@ -382,6 +382,16 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     return dolfinx.fem.FunctionSpace(mesh, ufl_el, cpp_space)
 
 
+def _function_dtype(data_dtype: np.dtype, mesh: dolfinx.mesh.Mesh) -> np.dtype:
+    """The dtype of a function holding data read from file: real data takes the precision of the mesh
+    (a function space only allows its mesh's real type, e.g. float32 data on a float64 mesh), complex
+    data the complex type of that precision."""
+    real = np.dtype(mesh.geometry.x.dtype)
+    if np.issubdtype(data_dtype, np.complexfloating):
+        return np.result_type(real, np.complex64)
+    return real
+
+
 def read_point_data(
     filename: Path | str,
     name: str,
@@ -421,7 +431,7 @@ def read_point_data(
 
     # Create appropriate function space (based on coordinate map)
     V = create_geometry_function_space(mesh, num_components)
-    uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
+    uh = dolfinx.fem.Function(V, name=name, dtype=_function_dtype(dataset.dtype, mesh))
     # Assume that mesh is first order for now
     x_dofmap = fenicsx_compat.dofmap(mesh)
     igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
@@ -491,7 +501,7 @@ def read_cell_data(
     else:
         shape = (num_components,)
     V = dolfinx.fem.functionspace(mesh, ("DG", 0, shape))
-    u = dolfinx.fem.Function(V, dtype=dofs.dtype)
+    u = dolfinx.fem.Function(V, dtype=_function_dtype(dofs.dtype, mesh))
     data_array = u.x.array.reshape(-1, num_components)
     for i in range(num_components):
         local_entities, local_values = dolfinx.io.distribute_entity_data(
