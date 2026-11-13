@@ -1,5 +1,6 @@
 import itertools
 from pathlib import Path
+from unittest.mock import Mock
 
 from mpi4py import MPI
 
@@ -237,7 +238,7 @@ def test_read_write_P_3D_time(
         (io4dolfinx.read_attributes, ("nonexisting_file", MPI.COMM_WORLD, "")),
         (io4dolfinx.read_timestamps, ("nonexisting_file", MPI.COMM_WORLD, "")),
         (io4dolfinx.read_meshtags, ("nonexisting_file", MPI.COMM_WORLD, None, "")),
-        (io4dolfinx.read_function, ("nonexisting_file", None)),
+        (io4dolfinx.read_function, ("nonexisting_file", Mock())),
         (io4dolfinx.read_mesh, ("nonexisting_file", MPI.COMM_WORLD)),
     ],
 )

@@ -8,7 +8,7 @@
 
 from importlib.metadata import metadata
 
-from .backends import FileMode, get_backend
+from .backends import FileMode, get_backend, get_default_backend, set_default_backend
 from .checkpointing import (
     read_attributes,
     read_function,
@@ -19,11 +19,12 @@ from .checkpointing import (
     write_attributes,
     write_cell_data,
     write_function,
+    write_function_on_input_mesh,
     write_mesh,
+    write_mesh_input_order,
     write_meshtags,
     write_point_data,
 )
-from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
 from .readers import (
     read_cell_data,
     read_function_from_legacy_h5,
@@ -31,6 +32,12 @@ from .readers import (
     read_point_data,
 )
 from .snapshot import snapshot_checkpoint
+from .submesh import (
+    SubmeshCheckpoint,
+    read_submesh,
+    transfer_submesh_function,
+    write_submesh,
+)
 from .utils import reconstruct_mesh
 
 meta = metadata("io4dolfinx")
@@ -55,13 +62,18 @@ __all__ = [
     "write_function_on_input_mesh",
     "write_mesh_input_order",
     "write_attributes",
-    "write_data",
     "read_attributes",
     "read_function_names",
     "read_point_data",
     "read_timestamps",
     "get_backend",
+    "get_default_backend",
+    "set_default_backend",
     "write_cell_data",
     "write_point_data",
     "reconstruct_mesh",
+    "SubmeshCheckpoint",
+    "write_submesh",
+    "read_submesh",
+    "transfer_submesh_function",
 ]

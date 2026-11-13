@@ -9,6 +9,7 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 import h5py
 import numpy as np
 import numpy.typing as npt
@@ -16,13 +17,23 @@ import numpy.typing as npt
 from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from io4dolfinx.utils import check_file_exists, compute_local_range
 
-from .. import FileMode, ReadMode
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode
+from ..h5py import storage as h5_storage
 from ..h5py.backend import convert_file_mode, h5pyfile
-from ..pyvista.backend import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
+from ..vtk_cell_types import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
 
 read_mode = ReadMode.parallel
 
 _vtk_hdf_version = np.array([2, 1], dtype=np.int32)
+#: Top-level group for metadata io4dolfinx needs but VTKHDF has no slot for.
+#: The specification reserves everything outside ``/VTKHDF`` for exactly this:
+#: "Top-level groups outside of /VTKHDF do not contain any information related to
+#: the VTK data model and are outside of the scope of this specification. They can
+#: be useful to store meta-information that could be read and written by custom
+#: VTKHDF implementation."
+_metadata_group = "/io4dolfinx"
+#: Basix Lagrange variant of a mesh's coordinate element, per mesh name.
+_lagrange_variant_attr = "LagrangeVariant"
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -34,7 +45,10 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
     Returns:
         Updated backend arguments
     """
-    args = arguments or {"name": "mesh"}
+    # `arguments or {...}` would drop the default whenever the caller passed any
+    # other argument, so set it on a copy instead.
+    args = dict(arguments) if arguments else {}
+    args.setdefault("name", DEFAULT_MESH_NAME)
     return args
 
 
@@ -124,9 +138,29 @@ def _get_time_index(hdf: h5py.Group, time: float | str, filename: str | Path) ->
     return pos[0]
 
 
+def _read_lagrange_variant(h5file, name: str) -> int:
+    """Lagrange variant of mesh ``name``, or the VTKHDF default.
+
+    A file written by anything other than io4dolfinx -- or by io4dolfinx before
+    this metadata existed -- holds VTKHDF's equispaced higher-order cells.
+
+    Args:
+        h5file: The open HDF5 file
+        name: Name of the mesh
+
+    Returns:
+        The basix Lagrange variant as an integer.
+    """
+    equispaced = int(basix.LagrangeVariant.equispaced)
+    metadata = h5file.get(_metadata_group)
+    if metadata is None or name not in metadata:
+        return equispaced
+    return int(metadata[name].attrs.get(_lagrange_variant_attr, equispaced))
+
+
 def read_mesh_data(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     read_from_partition: bool,
     backend_args: dict[str, Any] | None,
@@ -149,6 +183,7 @@ def read_mesh_data(
         raise RuntimeError("Cannot read partition data with VTKHDF")
     with h5pyfile(filename, "r", comm=comm) as h5file:
         hdf = _get_vtk_group(h5file, backend_args["name"])
+        lagrange_variant = _read_lagrange_variant(h5file, backend_args["name"])
         if time is None:
             num_cells_global = hdf["Types"].size
             local_cell_range = compute_local_range(comm, num_cells_global)
@@ -211,11 +246,17 @@ def read_mesh_data(
     # NOTE: Currently we limit ourselfs to a single celltype, as it makes life easier,
     # other things have to change in `MeshReadData` to support this.
     num_nodes_per_cell = offset[1:] - offset[:-1]
-    unique_cells = find_all_unique_cell_types(MPI.COMM_WORLD, cell_types_local, num_nodes_per_cell)
+    unique_cells = find_all_unique_cell_types(comm, cell_types_local, num_nodes_per_cell)
     if unique_cells.shape[0] > 1:
         raise NotImplementedError("io4dolfinx does not support mixed celltype grids")
-    topology = topology.reshape(-1, num_nodes_per_cell[0])
+    if unique_cells.shape[0] == 0:
+        name = backend_args["name"]
+        raise ValueError(f"Grid '{name}' in {filename} has no cells on any process.")
+    # Take the width from the globally agreed cell type rather than from this
+    # process's own cells: a mesh with fewer cells than processes leaves some of
+    # them with nothing local to measure.
     cell_type, number_of_nodes = unique_cells[0]
+    topology = topology.reshape(-1, number_of_nodes)
     gtype = backend_args.get("dtype", points_local.dtype)
     if cell_type in _first_order_vtk.keys():
         ct = _first_order_vtk[cell_type]
@@ -227,7 +268,9 @@ def read_mesh_data(
         raise ValueError(f"Unknown VTK cell type {cell_type} in {filename}")
     perm = dolfinx.cpp.io.perm_vtk(dolfinx.mesh.to_type(ct), number_of_nodes)
     topology = topology[:, perm]
-    lvar = int(basix.LagrangeVariant.equispaced)
+    # Equispaced is the VTKHDF default; a file io4dolfinx wrote says which
+    # variant its nodes were actually placed with.
+    lvar = int(lagrange_variant)
     return ReadMeshData(
         cells=topology, cell_type=ct, x=points_local.astype(gtype), lvar=lvar, degree=degree
     )
@@ -236,7 +279,7 @@ def read_mesh_data(
 def read_point_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[np.ndarray, int]:
@@ -285,7 +328,7 @@ def read_point_data(
 def read_cell_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
@@ -335,7 +378,7 @@ def read_cell_data(
 
 def write_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, Any] | None,
@@ -349,12 +392,12 @@ def write_attributes(
         attributes: Dictionary of attributes to write
         backend_args: Arguments to backend
     """
-    raise NotImplementedError("The Pyvista backend cannot write attributes.")
+    raise NotImplementedError("The VTKHDF backend cannot write attributes.")
 
 
 def read_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -369,12 +412,12 @@ def read_attributes(
     Returns:
         Dictionary of attributes read from file
     """
-    raise NotImplementedError("The Pyvista backend cannot read attributes.")
+    raise NotImplementedError("The VTKHDF backend cannot read attributes.")
 
 
 def read_timestamps(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     function_name: str,
     backend_args: dict[str, Any] | None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
@@ -417,7 +460,7 @@ def read_timestamps(
 
 
 def read_function_names(
-    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+    filename: Path | str, comm: MPI.Comm, backend_args: dict[str, Any] | None
 ) -> list[str]:
     """Read all function names from a file.
 
@@ -452,12 +495,26 @@ def _create_dataset(
     maxshape: tuple[int | None, ...],
     mode: str,
     resize: bool = True,
+    filters: dict[str, Any] | None = None,
 ) -> h5py.Dataset:
+    """Create a dataset, or open (and resize) an existing one in append mode.
+
+    Args:
+        filters: h5py filter arguments for a new dataset, from
+            :func:`io4dolfinx.backends.h5py.storage.filter_options`. Omitted for small
+            bookkeeping datasets, which every rank writes independently and which must
+            therefore stay unfiltered.
+    """
     if name not in root.keys():
         mode = "w"
     if mode == "w":
         dataset = root.create_dataset(
-            name, shape=shape, dtype=dtype, chunks=chunks, maxshape=maxshape
+            name,
+            shape=shape,
+            dtype=dtype,
+            chunks=chunks,
+            maxshape=maxshape,
+            **(filters or {}),
         )
     elif mode == "a":
         dataset = root[name]
@@ -497,7 +554,7 @@ def _compute_append_slice(
 
 def write_mesh(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     mesh: MeshData,
     backend_args: dict[str, Any] | None,
     mode: FileMode,
@@ -517,8 +574,15 @@ def write_mesh(
     h5_mode = convert_file_mode(mode)
     backend_args = get_default_backend_args(backend_args)
     name = backend_args["name"]
+    storage_options = h5_storage.storage_options(comm, backend_args)
 
     with h5pyfile(filename, h5_mode, comm=comm) as h5file:
+        # Check all existing bulk arrays before changing attributes or resizing anything.
+        if storage_options and h5_mode == "a" and f"/VTKHDF/{name}" in h5file:
+            block = h5file[f"/VTKHDF/{name}"]
+            for key in ("Points", "Offsets", "Connectivity", "Types"):
+                if key in block:
+                    h5_storage.check_storage_options(block[key], storage_options)
         hdf = _create_group(h5file, "/VTKHDF", h5_mode)
         hdf.attrs.create("Type", "MultiBlockDataSet")
         hdf.attrs["Version"] = _vtk_hdf_version
@@ -532,6 +596,15 @@ def write_mesh(
         mesh_assembly = _create_group(assembly, name, h5_mode)
         if name not in mesh_assembly.keys():
             mesh_assembly[name] = h5py.SoftLink(f"/VTKHDF/{name}")
+
+        # VTKHDF defines its higher-order cells as equispaced and has nowhere to
+        # record a Lagrange variant, so it goes in our own top-level group, which
+        # the specification reserves for exactly this. Without it a degree>1 mesh
+        # reads back with its coordinates intact but its cells curving
+        # differently between them.
+        metadata = _create_group(h5file, _metadata_group, h5_mode)
+        mesh_metadata = _create_group(metadata, name, h5_mode)
+        mesh_metadata.attrs[_lagrange_variant_attr] = np.int32(mesh.lagrange_variant)
 
         # Write time dependent points
         number_of_points = _create_dataset(
@@ -554,11 +627,16 @@ def write_mesh(
             chunks=True,
             maxshape=(None, 3),
             mode=h5_mode,
+            filters=h5_storage.filter_options(storage_options, mesh.local_geometry.dtype),
         )
         insert_slice = _compute_append_slice(
             points, mesh.num_nodes_global, mesh.local_geometry_pos, h5_mode
         )
-        points[insert_slice, : mesh.local_geometry.shape[1]] = mesh.local_geometry
+        h5_storage.write_dataset(
+            points,
+            (insert_slice, slice(0, mesh.local_geometry.shape[1])),
+            mesh.local_geometry,
+        )
 
         # NOTE: VTKHDF currently does not support reading time dependent topology in
         # Paraview: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
@@ -596,16 +674,21 @@ def write_mesh(
             mode=h5_mode,
             maxshape=(None,),
             resize=False,  # Resize should really be True
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )
-        offset_data = np.arange(0, mesh.local_topology.size + 1, mesh.local_topology.shape[1])
+        # Each offset has one writer. Only the last nonempty rank writes the final offset.
+        first, last = mesh.local_topology_pos
+        include_end = last == mesh.num_cells_global and last > first
+        offset_data = np.arange(last - first + int(include_end), dtype=np.int64)
+        offset_data *= num_dofs_per_cell
         offset_data += num_dofs_per_cell * mesh.local_topology_pos[0]
         insert_slice = _compute_append_slice(
             offsets,
             mesh.num_cells_global + 1,
-            (mesh.local_topology_pos[0], mesh.local_topology_pos[1] + 1),
+            (first, last + int(include_end)),
             mode=h5_mode,
         )
-        offsets[insert_slice] = offset_data
+        h5_storage.write_dataset(offsets, insert_slice, offset_data)
         del offset_data
 
         # Permute and store topology data
@@ -621,6 +704,7 @@ def write_mesh(
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             topology,
@@ -628,13 +712,14 @@ def write_mesh(
             np.array(mesh.local_topology_pos) * num_dofs_per_cell,
             mode=h5_mode,
         )
-        topology[insert_slice] = topology_data
+        h5_storage.write_dataset(topology, insert_slice, topology_data)
         del topology_data
 
         # Store celltypes
         cell_types = np.full(
             mesh.local_topology.shape[0],
-            dolfinx.cpp.io.get_vtk_cell_type(dx_ct, dolfinx.mesh.cell_dim(dx_ct)),
+            fenicsx_compat.vtk_cell_type(dx_ct, num_dofs_per_cell),
+            dtype=np.uint8,
         )
         types = _create_dataset(
             mesh_group,
@@ -645,11 +730,12 @@ def write_mesh(
             chunks=True,
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.uint8),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             types, mesh.num_cells_global, mesh.local_topology_pos, h5_mode
         )
-        types[insert_slice] = cell_types
+        h5_storage.write_dataset(types, insert_slice, cell_types)
         del cell_types
 
         steps = _create_group(mesh_group, "Steps", mode=h5_mode)
@@ -744,7 +830,7 @@ def write_mesh(
 
 def write_meshtags(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     data: MeshTagsData,
     backend_args: dict[str, Any] | None,
 ):
@@ -759,6 +845,7 @@ def write_meshtags(
     backend_args = get_default_backend_args(backend_args)
     name = backend_args["name"]
     h5_mode = "a"
+    storage_options = h5_storage.storage_options(comm, backend_args)
     with h5pyfile(filename, h5_mode, comm=comm) as h5file:
         hdf = h5file["VTKHDF"]
         file_type = _decode_bytes_if_needed(hdf.attrs["Type"])
@@ -771,6 +858,12 @@ def write_meshtags(
         block = parent_mesh_group.parent
 
         tag_path = f"/VTKHDF/{name}_{data.name}"
+        # Check all existing bulk arrays before changing anything.
+        if tag_path in h5file:
+            tag_group = h5file[tag_path]
+            for key in (f"CellData/{data.name}", "Offsets", "Connectivity", "Types"):
+                if key in tag_group:
+                    h5_storage.check_storage_options(tag_group[key], storage_options)
         if data.name not in block.keys():
             block[data.name] = h5py.SoftLink(tag_path)
 
@@ -788,6 +881,7 @@ def write_meshtags(
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
+            filters=h5_storage.filter_options(storage_options, data.values.dtype),
         )
         assert data.local_start is not None
         insert_slice = _compute_append_slice(
@@ -796,7 +890,7 @@ def write_meshtags(
             np.array([data.local_start, data.local_start + data.indices.shape[0]]),
             mode=h5_mode,
         )
-        dataset[insert_slice] = data.values
+        h5_storage.write_dataset(dataset, insert_slice, data.values)
 
         # NOTE: The following is more or less a copy from write_mesh,
         # except that we pull out the point storage and use a softlink
@@ -842,20 +936,26 @@ def write_meshtags(
             mode=h5_mode,
             maxshape=(None,),
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
-        offset_data = np.arange(0, data.indices.size + 1, data.indices.shape[1])
+        # Each offset has one writer. Only the last nonempty rank writes the final offset.
         assert data.local_start is not None
-        offset_data += num_dofs_per_cell * data.local_start
+        first, last = data.local_start, data.local_start + data.indices.shape[0]
+        include_end = last == data.num_entities_global and last > first
+        offset_data = np.arange(first, last + int(include_end), dtype=np.int64)
+        offset_data *= num_dofs_per_cell
         insert_slice = _compute_append_slice(
             offsets,
             data.num_entities_global + 1,
-            (data.local_start, data.local_start + data.indices.shape[0] + 1),
+            (first, last + int(include_end)),
             mode=h5_mode,
         )
-        offsets[insert_slice] = offset_data
+        h5_storage.write_dataset(offsets, insert_slice, offset_data)
         del offset_data
 
         # Permute and store topology data
+        if data.cell_type is None:
+            raise ValueError("Cannot write meshtags without cell-type information")
         dx_ct = dolfinx.mesh.to_type(data.cell_type)
         top_perm = np.argsort(dolfinx.cpp.io.perm_vtk(dx_ct, num_dofs_per_cell))
         topology_data = data.indices[:, top_perm].flatten()
@@ -868,6 +968,7 @@ def write_meshtags(
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             topology,
@@ -876,13 +977,14 @@ def write_meshtags(
             * num_dofs_per_cell,
             mode=h5_mode,
         )
-        topology[insert_slice] = topology_data
+        h5_storage.write_dataset(topology, insert_slice, topology_data)
         del topology_data
 
         # Store celltypes
         cell_types = np.full(
             data.indices.shape[0],
-            dolfinx.cpp.io.get_vtk_cell_type(dx_ct, dolfinx.mesh.cell_dim(dx_ct)),
+            fenicsx_compat.vtk_cell_type(dx_ct, num_dofs_per_cell),
+            dtype=np.uint8,
         )
         types = _create_dataset(
             mesh_group,
@@ -893,6 +995,7 @@ def write_meshtags(
             chunks=True,
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.uint8),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             types,
@@ -900,7 +1003,7 @@ def write_meshtags(
             (data.local_start, data.local_start + data.indices.shape[0]),
             h5_mode,
         )
-        types[insert_slice] = cell_types
+        h5_storage.write_dataset(types, insert_slice, cell_types)
         del cell_types
 
         steps = _create_group(mesh_group, "Steps", mode=h5_mode)
@@ -944,7 +1047,7 @@ def write_meshtags(
 
 def read_meshtags_data(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> MeshTagsData:
@@ -983,7 +1086,7 @@ def read_meshtags_data(
 
 def read_dofmap(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> dolfinx.graph.AdjacencyList:
@@ -998,12 +1101,12 @@ def read_dofmap(
     Returns:
         Dofmap as an AdjacencyList
     """
-    raise NotImplementedError("The Pyvista backend cannot make checkpoints.")
+    raise NotImplementedError("The VTKHDF backend cannot make checkpoints.")
 
 
 def read_dofs(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     time: float,
     backend_args: dict[str, Any] | None,
@@ -1022,11 +1125,11 @@ def read_dofs(
         and the global starting point on the process.
         Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
     """
-    raise NotImplementedError("The Pyvista backend cannot make checkpoints.")
+    raise NotImplementedError("The VTKHDF backend cannot make checkpoints.")
 
 
 def read_cell_perms(
-    comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
+    comm: MPI.Comm, filename: Path | str, backend_args: dict[str, Any] | None
 ) -> npt.NDArray[np.uint32]:
     """
     Read cell permutation from file with given communicator,
@@ -1046,7 +1149,7 @@ def read_cell_perms(
 
 def write_function(
     filename: Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     u: FunctionData,
     time: float,
     mode: FileMode,
@@ -1067,7 +1170,7 @@ def write_function(
 
 
 def read_legacy_mesh(
-    filename: Path | str, comm: MPI.Intracomm, group: str
+    filename: Path | str, comm: MPI.Comm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
     """Read in the mesh topology, geometry and (optionally) cell type from a
     legacy DOLFIN HDF5-file.
@@ -1104,7 +1207,7 @@ def snapshot_checkpoint(
 
 
 def read_hdf5_array(
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     filename: Path | str,
     group: str,
     backend_args: dict[str, Any] | None,
@@ -1129,7 +1232,7 @@ def read_hdf5_array(
 def write_data(
     filename: Path | str,
     array_data: ArrayData,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     mode: FileMode,
     backend_args: dict[str, Any] | None,
@@ -1149,6 +1252,7 @@ def write_data(
     backend_args = get_default_backend_args(backend_args)
     mesh_name = backend_args["name"]
     extension = array_data.type
+    storage_options = h5_storage.storage_options(comm, backend_args)
     with h5pyfile(filename, h5_mode, comm=comm) as h5file:
         hdf = h5file["VTKHDF"]
         file_type = _decode_bytes_if_needed(hdf.attrs["Type"])
@@ -1159,6 +1263,10 @@ def write_data(
         # Find mesh block to add data to
         block = _get_vtk_group(h5file, mesh_name)
 
+        data_path = f"{extension}Data/{array_data.name}"
+        if storage_options and data_path in block:
+            h5_storage.check_storage_options(block[data_path], storage_options)
+
         data_group = _create_group(block, f"{extension}Data", mode=h5_mode)
         dataset = _create_dataset(
             data_group,
@@ -1168,6 +1276,7 @@ def write_data(
             chunks=True,
             maxshape=(None, array_data.values.shape[1]),
             mode=h5_mode,
+            filters=h5_storage.filter_options(storage_options, array_data.values.dtype),
         )
         insert_slice = _compute_append_slice(
             dataset,
@@ -1180,7 +1289,11 @@ def write_data(
             ),
             mode=h5_mode,
         )
-        dataset[insert_slice] = array_data.values
+        h5_storage.write_dataset(
+            dataset,
+            insert_slice,
+            array_data.values,
+        )
 
         steps = _create_group(block, "Steps", mode=h5_mode)
         pdo = _create_group(steps, f"{extension}DataOffsets", mode=h5_mode)

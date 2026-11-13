@@ -37,6 +37,12 @@ def backend(request):
     yield request.param
 
 
+@pytest.fixture
+def shared_tmp_path(tmp_path):
+    """The temporary directory of rank 0, shared by all ranks of ``MPI.COMM_WORLD``."""
+    return MPI.COMM_WORLD.bcast(tmp_path, root=0)
+
+
 @pytest.fixture(scope="module")
 def cluster():
     cluster = ipp.Cluster(engines="mpi", n=2)
@@ -216,7 +222,7 @@ def read_function_time_dep():
 def _generate_reference_map(
     mesh: dolfinx.mesh.Mesh,
     meshtag: dolfinx.mesh.MeshTags,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     root: int,
 ) -> typing.Optional[dict[str, tuple[int, npt.NDArray]]]:
     """

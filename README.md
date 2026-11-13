@@ -5,7 +5,9 @@
 
 ## Installation
 
-The library is compatible with the DOLFINx nightly release, v0.10.0, and v0.9.0.
+The library is compatible with DOLFINx v0.10.0 and newer, including the nightly release.
+
+Workarounds for API differences between DOLFINx versions live in [`fenicsx-compat`](https://github.com/scientificcomputing/fenicsx-compat), which `io4dolfinx` depends on.
 
 ```bash
 python3 -m pip install io4dolfinx
@@ -66,8 +68,10 @@ For scalability, the code uses [MPI Neighbourhood collectives](https://www.mpi-f
 ### Mesh IO (Import/Export)
 Most meshing formats supports associating data with the nodes of the mesh (the mesh can be higher order) and the cells of the mesh. The node data can be read in as P-th order Lagrange functions (where P is the order of the grid), while the cell data can be read in as piecewise constant (DG-0) functions.
 
-- [VTKHDF](./docs/backends/vtkhdf.rst): The new scalable format from VTK, called [VTKHDF](https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/index.html) is supported by the `vtkhdf` backend. 
+- [VTKHDF](./docs/backends/vtkhdf.rst): The new scalable format from VTK, called [VTKHDF](https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/index.html) is supported by the `vtkhdf` backend.
 - [XDMF](./docs/backends/xdmf.rst) (eXtensible Model Data Format): `.xdmf`. The `xdmf` backend supports the `HDF5` encoding, to ensure performance in parallel.
+- [Gmsh](./docs/backends/gmsh.rst): `.msh` files (MSH 2.2 and 4.1, ASCII and binary) are read and written with the [Gmsh](https://gmsh.info) Python API by the `gmsh` backend, including physical groups as mesh tags and time-dependent point and cell data.
+- [openCARP](./docs/backends/opencarp.rst): Linear triangle, quadrilateral, tetrahedral and hexahedral meshes with region tags, fibers and markers are written to and read from the ASCII format of the cardiac simulator [openCARP](https://opencarp.org) (`.pts`, `.elem`, `.lon`, `.vtx`, `.surf`) by the `opencarp` backend.
 - [PyVista](./docs/backends/pyvista.rst) (IO backend is meshio): The [pyvista](https://pyvista.org/) backend uses {py:func}`pyvista.read` to read in meshes, point data and cell data. `pyvista` relies on [meshio](https://github.com/nschloe/meshio) for most reading operations (including the XDMF ascii format).
 
 

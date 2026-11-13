@@ -4,6 +4,7 @@
 #
 # SPDX-License-Identifier:    MIT
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from .backends import FileMode, get_backend
 __all__ = [
     "snapshot_checkpoint",
 ]
+logger = logging.getLogger(__name__)
 
 
 def snapshot_checkpoint(
@@ -21,7 +23,7 @@ def snapshot_checkpoint(
     file: Path,
     mode: FileMode,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """Read or write a snapshot checkpoint
 
@@ -31,7 +33,8 @@ def snapshot_checkpoint(
     :param file: The file to write to or read from
     :param mode: Either read or write
     """
-
+    logger.debug(f"Performing snapshot checkpoint with mode {mode} on file {file}")
+    logger.debug(f"Using backend {backend} with arguments {backend_args}")
     backend_cls = get_backend(backend)
     default_args = backend_cls.get_default_backend_args(backend_args)
     if mode not in [FileMode.write, FileMode.read]:

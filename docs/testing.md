@@ -21,7 +21,8 @@ Install the library with the optional `test` dependencies to ensure you have
 packages like `pytest`, `coverage`, and `ipyparallel`
 
 ```bash
-python3 -m pip install ".[test]"
+python3 -m pip install . --group test --no-build-isolation
+python3 -m pip install -e . --no-build-isolation
 ```
 
 ### Running Tests

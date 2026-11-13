@@ -20,7 +20,7 @@ from dolfinx.graph import adjacencylist
 
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
-from .. import FileMode, ReadMode
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
 
 read_mode = ReadMode.parallel
 
@@ -60,8 +60,45 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
             h5file.close()
 
 
+def read_component_major_rows(
+    dataset: h5py.Dataset, num_entities_global: int, local_range: list[int]
+) -> np.ndarray:
+    """Read rows ``local_range`` of a 2D array stored component by component.
+
+    The array is a one-dimensional dataset holding all first components, then all
+    second components and so on, i.e. ``x0 x1 ... xn y0 y1 ... yn z0 z1 ... zn``
+    rather than ``x0 y0 z0 x1 y1 z1 ...`` (``MED_NO_INTERLACE`` in the MED format).
+    The rows are one block per component, read as a single hyperslab.
+
+    Args:
+        dataset: One-dimensional dataset
+        num_entities_global: Number of entities (rows) in the whole dataset
+        local_range: Range ``[start, end)`` of rows to read on this process
+
+    Returns:
+        Array of shape ``(end - start, num_components)``, where
+        ``num_components = dataset.size // num_entities_global``
+    """
+    if num_entities_global <= 0 or dataset.size == 0 or dataset.size % num_entities_global != 0:
+        raise ValueError(
+            f"Size {dataset.size} of {dataset.name} is not a positive multiple of "
+            f"{num_entities_global} entities."
+        )
+    num_components = dataset.size // num_entities_global
+    num_rows = local_range[1] - local_range[0]
+    if num_rows == 0:
+        # h5py.MultiBlockSlice rejects empty blocks
+        return np.empty((0, num_components), dtype=dataset.dtype)
+    blocks = h5py.MultiBlockSlice(
+        start=local_range[0], stride=num_entities_global, count=num_components, block=num_rows
+    )
+    return np.ascontiguousarray(dataset[blocks].reshape(num_components, num_rows).T)
+
+
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
-    args = arguments or {"legacy": False}  # If meshtags is read from legacy
+    args = dict(arguments) if arguments else {}
+    args.setdefault("legacy", False)  # If meshtags is read from legacy
+    args.setdefault("name", DEFAULT_MESH_NAME)  # Which mesh in the file to act on
     return args
 
 
@@ -79,7 +116,7 @@ def convert_file_mode(mode: FileMode) -> str:
 
 def write_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, Any] | None = None,
@@ -105,7 +142,7 @@ def write_attributes(
 
 def read_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -128,7 +165,7 @@ def read_attributes(
 
 def read_timestamps(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     function_name: str,
     backend_args: dict[str, Any] | None = None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
@@ -144,7 +181,7 @@ def read_timestamps(
         The time-stamps
     """
     check_file_exists(filename)
-    mesh_name = "mesh"
+    mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         mesh_directory = h5file[mesh_name]
         functions = mesh_directory["functions"]
@@ -155,7 +192,7 @@ def read_timestamps(
 
 def write_mesh(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     mesh: MeshData,
     backend_args: dict[str, Any] | None = None,
     mode: FileMode = FileMode.write,
@@ -172,7 +209,7 @@ def write_mesh(
     """
     backend_args = get_default_backend_args(backend_args)
     h5_mode = convert_file_mode(mode)
-    mesh_name = "mesh"
+    mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
         if mesh_name in h5file.keys() and h5_mode == "a":
             mesh_directory = h5file[mesh_name]
@@ -237,7 +274,7 @@ def write_mesh(
 
 def read_mesh_data(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
@@ -254,11 +291,12 @@ def read_mesh_data(
     """
 
     backend_args = get_default_backend_args(backend_args)
+    mesh_name = get_mesh_name(backend_args)
 
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        if "mesh" not in h5file.keys():
-            raise KeyError("Could not find mesh in file")
-        mesh_group = h5file["mesh"]
+        if mesh_name not in h5file.keys():
+            raise KeyError(f"Could not find mesh '{mesh_name}' in {filename}")
+        mesh_group = h5file[mesh_name]
         timestamps = mesh_group.attrs["timestamps"]
         assert time is not None
         parent_group = np.flatnonzero(np.isclose(timestamps, time))
@@ -319,7 +357,7 @@ def read_mesh_data(
 
 def write_meshtags(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     data: MeshTagsData,
     backend_args: dict[str, Any] | None = None,
 ):
@@ -333,10 +371,11 @@ def write_meshtags(
     """
     backend_args = get_default_backend_args(backend_args)
 
+    mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode="a", comm=comm, force_serial=False) as h5file:
-        if "mesh" not in h5file.keys():
-            raise KeyError("Could not find mesh in file")
-        mesh_group = h5file["mesh"]
+        if mesh_name not in h5file.keys():
+            raise KeyError(f"Could not find mesh '{mesh_name}' in file")
+        mesh_group = h5file[mesh_name]
         if "tags" not in mesh_group.keys():
             tags = mesh_group.create_group("tags")
         else:
@@ -366,7 +405,7 @@ def write_meshtags(
 
 
 def read_meshtags_data(
-    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None = None
+    filename: str | Path, comm: MPI.Comm, name: str, backend_args: dict[str, Any] | None = None
 ) -> MeshTagsData:
     """Read mesh tags from file.
 
@@ -394,14 +433,15 @@ def read_meshtags_data(
             dim = dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(cell_type))
             values = mesh["values"]
         else:
-            if "mesh" not in h5file.keys():
-                raise KeyError("No mesh found")
-            mesh = h5file["mesh"]
+            mesh_name = get_mesh_name(backend_args)
+            if mesh_name not in h5file.keys():
+                raise KeyError(f"No mesh '{mesh_name}' found")
+            mesh = h5file[mesh_name]
             if "tags" not in mesh.keys():
                 raise KeyError("Could not find 'tags' in file, are you sure this is a checkpoint?")
             tags = mesh["tags"]
             if name not in tags.keys():
-                raise KeyError(f"Could not find {name} in '/mesh/tags/' in {filename}")
+                raise KeyError(f"Could not find {name} in '/{mesh_name}/tags/' in {filename}")
             tag = tags[name]
 
             dim = tag.attrs["dim"]
@@ -410,12 +450,13 @@ def read_meshtags_data(
         num_entities_global = topology.shape[0]
         topology_range = compute_local_range(comm, num_entities_global)
         indices = topology[slice(*topology_range), :].astype(np.int64)
-        vals = values[slice(*topology_range)].astype(np.int32)
+        values_dtype = np.dtype(backend_args.get("values_dtype", np.int32))
+        vals = values[slice(*topology_range)].astype(values_dtype)
         return MeshTagsData(name=name, values=vals, indices=indices, dim=dim)
 
 
 def read_dofmap(
-    filename: str | Path, comm: MPI.Intracomm, name: str, backend_args: dict[str, Any] | None
+    filename: str | Path, comm: MPI.Comm, name: str, backend_args: dict[str, Any] | None
 ) -> dolfinx.graph.AdjacencyList:
     """Read the dofmap of a function with a given name.
 
@@ -426,14 +467,14 @@ def read_dofmap(
         backend_args: Arguments to backend
 
     Returns:
-        Dofmap as an {py:class}`dolfinx.graph.AdjacencyList`
+        Dofmap as an :class:`dolfinx.graph.AdjacencyList`
     """
     backend_args = {} if backend_args is None else backend_args
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
         # If dofmap is read with full path, it is passed through backend_args
         dofmap_key = backend_args.get("dofmap", None)
         if dofmap_key is None:
-            mesh_name = "mesh"  # Prepare for multiple meshes
+            mesh_name = get_mesh_name(backend_args)
             if mesh_name not in h5file.keys():
                 raise KeyError(f"No mesh '{mesh_name}' found in {filename}")
             mesh = h5file[mesh_name]
@@ -470,7 +511,7 @@ def read_dofmap(
 
 def read_dofs(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     time: float,
     backend_args: dict[str, Any] | None,
@@ -490,7 +531,7 @@ def read_dofs(
         Process 0 has [0, M), process 1 [M, N), process 2 [N, O) etc.
     """
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_name = "mesh"  # Prepare for multiple meshes
+        mesh_name = get_mesh_name(backend_args)
         if mesh_name not in h5file.keys():
             raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
         mesh = h5file[mesh_name]
@@ -515,7 +556,7 @@ def read_dofs(
 
 
 def read_cell_perms(
-    comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
+    comm: MPI.Comm, filename: Path | str, backend_args: dict[str, Any] | None
 ) -> npt.NDArray[np.uint32]:
     """
     Read cell permutation from file with given communicator,
@@ -532,7 +573,7 @@ def read_cell_perms(
     """
 
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_name = "mesh"  # Prepare for multiple meshes
+        mesh_name = get_mesh_name(backend_args)
         if mesh_name not in h5file.keys():
             raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
         mesh = h5file[mesh_name]
@@ -545,7 +586,7 @@ def read_cell_perms(
 
 def write_function(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     u: FunctionData,
     time: float,
     mode: FileMode,
@@ -562,7 +603,7 @@ def write_function(
         backend_args: Arguments to backend
     """
 
-    mesh_name = "mesh"  # Prepare for multiple meshes
+    mesh_name = get_mesh_name(backend_args)
     backend_args = get_default_backend_args(backend_args)
     h5_mode = convert_file_mode(mode)
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
@@ -625,7 +666,7 @@ def write_function(
 
 
 def read_legacy_mesh(
-    filename: Path | str, comm: MPI.Intracomm, group: str
+    filename: Path | str, comm: MPI.Comm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
     """Read in the mesh topology, geometry and (optionally) cell type from a
     legacy DOLFIN HDF5-file.
@@ -677,7 +718,7 @@ def read_legacy_mesh(
 
 
 def read_hdf5_array(
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     filename: Path | str,
     group: str,
     backend_args: dict[str, Any] | None = None,
@@ -739,7 +780,7 @@ def snapshot_checkpoint(
 
 
 def read_function_names(
-    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+    filename: Path | str, comm: MPI.Comm, backend_args: dict[str, Any] | None
 ) -> list[str]:
     """Read all function names from a file.
 
@@ -754,7 +795,7 @@ def read_function_names(
     check_file_exists(filename)
     backend_args = get_default_backend_args(backend_args)
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_name = "mesh"  # Prepare for multiple meshes
+        mesh_name = get_mesh_name(backend_args)
         if mesh_name not in h5file.keys():
             raise RuntimeError(f"No mesh '{mesh_name}' found in {filename}")
         mesh = h5file[mesh_name]
@@ -767,7 +808,7 @@ def read_function_names(
 def read_point_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[np.ndarray, int]:
@@ -789,7 +830,7 @@ def read_point_data(
 def read_cell_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
@@ -812,7 +853,7 @@ def read_cell_data(
 def write_data(
     filename: Path | str,
     array_data: ArrayData,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     mode: FileMode,
     backend_args: dict[str, Any] | None,

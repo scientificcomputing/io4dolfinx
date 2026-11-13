@@ -1,21 +1,39 @@
+"""
+Helpers for sending and receiving values for checkpointing
+"""
+
 from __future__ import annotations
+
+from typing import Callable, TypeVar
 
 from mpi4py import MPI
 
 import numpy as np
 import numpy.typing as npt
 
-from .utils import compute_insert_position, compute_local_range, valid_function_types
+from .utils import (
+    compute_insert_position,
+    compute_local_range,
+    index_owner,
+    valid_function_types,
+)
 
 __all__ = [
     "send_dofmap_and_recv_values",
     "send_and_recv_cell_perm",
     "send_dofs_and_recv_values",
+    "neighbourhood_ranks",
+    "exchange_to_owners",
+    "send_to_input_order",
     "numpy_to_mpi",
+    "all_to_all",
+    "run_on_root",
+    "run_on_all",
+    "gather_rows",
+    "gather_concatenate",
 ]
-"""
-Helpers for sending and receiving values for checkpointing
-"""
+
+T = TypeVar("T")
 
 numpy_to_mpi = {
     np.float64: MPI.DOUBLE,
@@ -24,18 +42,51 @@ numpy_to_mpi = {
     np.complex128: MPI.DOUBLE_COMPLEX,
     np.int64: MPI.INT64_T,
     np.int32: MPI.INT32_T,
+    np.uint32: MPI.UINT32_T,
 }
 
 
+def all_to_all(comm, send_data, recv_data):
+    """
+    Exchange a single item with each neighbor in a distributed graph communicator.
+
+    Note:
+        The count is passed explicitly, and is 1 on every process. MPI-4.1 9.6.2 requires
+        the type signature of ``sendcount``/``sendtype`` at a process to equal that of
+        ``recvcount``/``recvtype`` at *any other* process in the communicator, not just at
+        its neighbors, so the count must be identical on every process whatever its degree.
+        Left implicit, mpi4py derives it as ``buffer size // degree`` and falls back to the
+        whole buffer when the degree is zero, making it rank-local: 1 where the degree is
+        nonzero, 0 where it is zero. Such a call is erroneous; Open MPI rejects it with
+        ``MPI_ERR_TRUNCATE`` while MPICH happens to accept it. See
+        https://github.com/open-mpi/ompi/issues/14452 for the discussion.
+
+        ``all_to_allv`` is not affected: the vector variant is only required to match
+        pairwise along each edge, so per-process counts may legitimately differ there.
+    """
+    dtype = numpy_to_mpi[send_data.dtype.type]
+    assert recv_data.dtype == send_data.dtype, (
+        f"Data types do not match, {recv_data.dtype} != {send_data.dtype}"
+    )
+    indegree, outdegree, _ = comm.Get_dist_neighbors_count()
+    assert (d_size := send_data.size) == outdegree, (
+        f"Number of send data {d_size} does not match number of destinations {outdegree}"
+    )
+    assert (d_size := recv_data.size) == indegree, (
+        f"Number of recv data {d_size} does not match number of sources {indegree}"
+    )
+    comm.Neighbor_alltoall([send_data, 1, dtype], [recv_data, 1, dtype])
+
+
 def send_dofmap_and_recv_values(
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     source_ranks: npt.NDArray[np.int32],
     dest_ranks: npt.NDArray[np.int32],
     output_owners: npt.NDArray[np.int32],
     dest_size: npt.NDArray[np.int32],
     input_cells: npt.NDArray[np.int64],
     dofmap_pos: npt.NDArray[np.int32],
-    num_cells_global: np.int64,
+    num_cells_global: int | np.int64,
     values: npt.NDArray[valid_function_types],
     dofmap_offsets: npt.NDArray[np.int32],
 ) -> npt.NDArray[valid_function_types]:
@@ -77,10 +128,11 @@ def send_dofmap_and_recv_values(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros(len(source_ranks), dtype=np.int32)
+    assert isinstance(comm, MPI.Intracomm)
     mesh_to_data_comm = comm.Create_dist_graph_adjacent(
         source_ranks.tolist(), dest_ranks.tolist(), reorder=False
     )
-    mesh_to_data_comm.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data_comm, dest_size, recv_size)
 
     # Prepare data-structures for receiving
     total_incoming = sum(recv_size)
@@ -131,7 +183,7 @@ def send_and_recv_cell_perm(
     cells: npt.NDArray[np.int64],
     perms: npt.NDArray[np.uint32],
     cell_owners: npt.NDArray[np.int32],
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.uint32]]:
     """
     Send global cell index and permutation to corresponding entry in `dest_ranks`.
@@ -145,7 +197,7 @@ def send_and_recv_cell_perm(
     dest_ranks, _dest_size = np.unique(cell_owners, return_counts=True)
     dest_size = _dest_size.astype(np.int32)
     del _dest_size
-
+    assert isinstance(comm, MPI.Intracomm)
     mesh_to_data = comm.Create_dist_graph(
         [comm.rank], [len(dest_ranks)], dest_ranks.tolist(), reorder=False
     )
@@ -162,7 +214,7 @@ def send_and_recv_cell_perm(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros_like(source, dtype=np.int32)
-    mesh_to_data.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data, dest_size, recv_size)
 
     # Prepare data-structures for receiving
     total_incoming = sum(recv_size)
@@ -188,7 +240,7 @@ def send_and_recv_cell_perm(
 def send_dofs_and_recv_values(
     input_dofmap: npt.NDArray[np.int64],
     dofmap_owners: npt.NDArray[np.int32],
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     input_array: npt.NDArray[valid_function_types],
     array_start: int,
 ):
@@ -206,6 +258,7 @@ def send_dofs_and_recv_values(
     dest_size = _dest_size.astype(np.int32)
     del _dest_size
 
+    assert isinstance(comm, MPI.Intracomm)
     dofmap_to_values = comm.Create_dist_graph(
         [comm.rank], [len(dest_ranks)], dest_ranks.tolist(), reorder=False
     )
@@ -228,11 +281,7 @@ def send_dofs_and_recv_values(
 
     # Send sizes to create data structures for receiving from NeighAlltoAllv
     recv_size = np.zeros_like(source, dtype=np.int32)
-    recv_size.resize(max(len(recv_size), 1))  # Minimal resize to work with ompi
-    dest_size.resize(max(len(dest_size), 1))  # Mininal resize to work with ompi
-    dofmap_to_values.Neighbor_alltoall(dest_size, recv_size)
-    dest_size.resize(len(dest))
-    recv_size.resize(len(source))
+    all_to_all(dofmap_to_values, dest_size, recv_size)
 
     # Send input dofs to processes holding input array
     inc_dofs = np.zeros(sum(recv_size), dtype=np.int64)
@@ -258,3 +307,210 @@ def send_dofs_and_recv_values(
     values = np.empty_like(inc_values, dtype=input_array.dtype)
     values[proc_to_local] = inc_values
     return values
+
+
+def neighbourhood_ranks(
+    comm: MPI.Intracomm, destinations: npt.NDArray[np.int32]
+) -> tuple[npt.NDArray[np.int32], npt.NDArray[np.int32]]:
+    """Find the ranks this process exchanges data with.
+
+    A process knows which ranks it must send to, but not which ranks will send
+    to it. Building a distributed graph over the whole communicator and reading
+    its neighbours back discovers the incoming side without an all-to-all.
+
+    Both lists are sorted ascending so that every process packs and unpacks
+    neighbour blocks in the same order.
+
+    Args:
+        comm: The MPI communicator
+        destinations: Ranks this process sends to (duplicates allowed)
+
+    Returns:
+        ``(sources, destinations)``, each sorted and without duplicates.
+    """
+    dest = np.unique(np.asarray(destinations, dtype=np.int32))
+    graph = comm.Create_dist_graph([comm.rank], [len(dest)], dest.tolist(), reorder=False)
+    sources, _, _ = graph.Get_dist_neighbors()
+    graph.Free()
+    return np.unique(np.asarray(sources, dtype=np.int32)), dest
+
+
+def exchange_to_owners(
+    comm: MPI.Intracomm,
+    owners: npt.NDArray[np.int32],
+    arrays: list[npt.NDArray],
+) -> tuple[
+    list[npt.NDArray],
+    npt.NDArray[np.int32],
+    npt.NDArray[np.int32],
+    npt.NDArray[np.int32],
+    npt.NDArray[np.int32],
+]:
+    """Send each entry of ``arrays`` to the rank naming it in ``owners``.
+
+    Entry ``i`` of every array in ``arrays`` travels together to ``owners[i]``.
+    Data is packed grouped by destination rank in ascending rank order and is
+    received grouped by source rank in ascending rank order, preserving the
+    sender's relative order within each group. Both properties matter to callers
+    that must pair a reply with the request that produced it.
+
+    Args:
+        comm: The MPI communicator
+        owners: Destination rank of each entry; ``-1`` is not allowed
+        arrays: Arrays to send, each of length ``len(owners)``. The leading axis
+            is the one distributed; trailing axes travel as a block.
+
+    Returns:
+        ``(received, sources, send_counts, recv_counts, insert_position)`` where
+        ``received`` holds the incoming counterpart of each entry of ``arrays``,
+        ``sources`` the ascending source ranks, ``send_counts`` and
+        ``recv_counts`` the number of entries exchanged with each destination and
+        source, and ``insert_position`` the index each local entry was packed at
+        (so a reply can be unpacked back into local order).
+    """
+    owners = np.asarray(owners, dtype=np.int32)
+    sources, destinations = neighbourhood_ranks(comm, owners)
+
+    send_counts = np.zeros(len(destinations), dtype=np.int32)
+    if len(owners) > 0:
+        present, counts = np.unique(owners, return_counts=True)
+        send_counts[np.searchsorted(destinations, present)] = counts
+    insert_position = compute_insert_position(owners, destinations, send_counts)
+
+    recv_counts = np.zeros(len(sources), dtype=np.int32)
+    forward = comm.Create_dist_graph_adjacent(
+        sources.tolist(), destinations.tolist(), reorder=False
+    )
+    all_to_all(forward, send_counts, recv_counts)
+
+    received = []
+    for array in arrays:
+        array = np.asarray(array)
+        block = int(np.prod(array.shape[1:], dtype=np.int64)) if array.ndim > 1 else 1
+        packed = np.zeros(array.shape, dtype=array.dtype)
+        packed[insert_position] = array
+        out = np.zeros((int(recv_counts.sum()), *array.shape[1:]), dtype=array.dtype)
+        # Canonical type, so that e.g. ``longlong`` (as used by DOLFINx index arrays)
+        # maps like ``int64``
+        mpi_type = numpy_to_mpi[np.dtype(array.dtype.str).type]
+        forward.Neighbor_alltoallv(
+            [packed.reshape(-1), send_counts * block, mpi_type],
+            [out.reshape(-1), recv_counts * block, mpi_type],
+        )
+        received.append(out)
+    forward.Free()
+    return received, sources, send_counts, recv_counts, insert_position
+
+
+def send_to_input_order(
+    comm: MPI.Intracomm,
+    input_indices: npt.NDArray[np.int64],
+    values: list[npt.NDArray],
+    num_global: int,
+) -> tuple[list[npt.NDArray], tuple[int, int]]:
+    """Send values to the process holding their input index, so that each process
+    gets a contiguous chunk of the input ordering.
+
+    Collective: the input indices are checked on all ranks, so that an invalid
+    numbering raises an error on every rank instead of leaving some waiting.
+
+    Args:
+        comm: The MPI communicator
+        input_indices: Input index of each owned entity on this process. Over all
+            processes, they must number the entities ``0, ..., num_global - 1``, each
+            exactly once.
+        values: Arrays with a value of each owned entity, each of shape
+            ``(len(input_indices), ...)``. They are sent together.
+        num_global: Global number of entities
+
+    Returns:
+        The values of the entities in this process' chunk, in input order, one array
+        per entry of ``values``, and the range of the chunk
+
+    Raises:
+        ValueError: If the input indices do not number the entities, e.g. for a
+            submesh, whose input indices refer to its parent mesh.
+    """
+    error = ValueError(
+        f"The input indices do not number the {num_global} entities, so the data cannot be "
+        "written in the input ordering. This is the case for a submesh, whose input "
+        "indices refer to its parent mesh."
+    )
+    input_indices = np.asarray(input_indices, dtype=np.int64)
+    in_range = bool(np.all((input_indices >= 0) & (input_indices < num_global)))
+    if not comm.allreduce(in_range, op=MPI.LAND):
+        raise error
+
+    owners = index_owner(comm, input_indices, num_global)
+    (recv_indices, *recv_values), *_ = exchange_to_owners(comm, owners, [input_indices, *values])
+    local_range = compute_local_range(comm, num_global)
+    num_local = int(local_range[1] - local_range[0])
+    # In range on every rank, but an index may still appear twice and another not at all
+    local = recv_indices - local_range[0]
+    complete = len(local) == num_local and len(np.unique(local)) == num_local
+    if not comm.allreduce(complete, op=MPI.LAND):
+        raise error
+
+    data = []
+    for received in recv_values:
+        ordered = np.empty_like(received)
+        ordered[local] = received
+        data.append(ordered)
+    return data, (int(local_range[0]), int(local_range[1]))
+
+
+def run_on_root(comm: MPI.Comm, fn: Callable[[], T]) -> T | None:
+    """Run a function on rank 0 and raise any error it raises on all ranks.
+
+    Returns:
+        The result of ``fn`` on rank 0, ``None`` on the other ranks
+    """
+    result, error = None, None
+    if comm.rank == 0:
+        try:
+            result = fn()
+        except Exception as e:
+            error = e
+    error = comm.bcast(error, root=0)
+    if error is not None:
+        raise error
+    return result
+
+
+def run_on_all(comm: MPI.Comm, fn: Callable[[], T]) -> T:
+    """Run a function on all ranks and raise an error raised on any rank on all ranks,
+    so that no rank is left waiting in a later collective call."""
+    result, error = None, None
+    try:
+        result = fn()
+    except Exception as e:
+        error = e
+    errors = [e for e in comm.allgather(error) if e is not None]
+    if errors:
+        raise errors[0]
+    return result  # type: ignore[return-value]
+
+
+def gather_rows(
+    comm: MPI.Comm, local: npt.NDArray, local_range: tuple[int, int] | list[int], num_global: int
+) -> npt.NDArray | None:
+    """Gather rows distributed in contiguous chunks to rank 0.
+
+    Returns:
+        All ``num_global`` rows on rank 0, ``None`` on the other ranks
+    """
+    chunks = comm.gather((int(local_range[0]), np.asarray(local)), root=0)
+    if comm.rank != 0:
+        return None
+    assert chunks is not None
+    first = chunks[0][1]
+    rows = np.empty((num_global, *first.shape[1:]), dtype=first.dtype)
+    for start, chunk in chunks:
+        rows[start : start + len(chunk)] = chunk
+    return rows
+
+
+def gather_concatenate(comm: MPI.Comm, local: npt.NDArray) -> npt.NDArray | None:
+    """Concatenate an array over all ranks on rank 0, in rank order."""
+    chunks = comm.gather(local, root=0)
+    return None if chunks is None else np.concatenate(chunks)

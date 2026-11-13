@@ -5,7 +5,6 @@
 # SPDX-License-Identifier:    MIT
 
 
-import inspect
 import pathlib
 
 from mpi4py import MPI
@@ -106,7 +105,9 @@ def test_legacy_function(backend):
     v = ufl.TestFunction(V)
     a = ufl.inner(u, v) * ufl.dx
     x = ufl.SpatialCoordinate(mesh)
-    f = ufl.conditional(ufl.gt(x[0], 0.5), x[1], 2 * x[0])
+    # NOTE: must stay exactly representable in the DG2 space (see tests/create_legacy_data.py)
+    # so the projection is quadrature-scheme independent when compared to legacy dolfin's.
+    f = x[0] ** 2 + 2 * x[1] * x[2] - x[1]
     L = ufl.inner(f, v) * ufl.dx
 
     if not dolfinx.has_petsc4py:
@@ -115,12 +116,13 @@ def test_legacy_function(backend):
     from dolfinx.fem.petsc import LinearProblem
 
     uh = dolfinx.fem.Function(V)
-    if "petsc_options_prefix" in inspect.signature(LinearProblem.__init__).parameters.keys():
-        extra_options = {"petsc_options_prefix": "legacy_test"}
-    else:
-        extra_options = {}
     problem = LinearProblem(
-        a, L, bcs=[], u=uh, petsc_options={"ksp_type": "preonly", "pc_type": "lu"}, **extra_options
+        a,
+        L,
+        bcs=[],
+        u=uh,
+        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+        petsc_options_prefix="legacy_test",
     )
     problem.solve()
 
@@ -152,19 +154,22 @@ def test_read_legacy_function_from_checkpoint(backend):
     v = ufl.TestFunction(V)
     a = ufl.inner(u, v) * ufl.dx
     x = ufl.SpatialCoordinate(mesh)
-    f = ufl.conditional(ufl.gt(x[0], 0.5), x[1], 2 * x[0])
+    # NOTE: must stay exactly representable in the DG2 space (see tests/create_legacy_data.py)
+    # so the projection is quadrature-scheme independent when compared to legacy dolfin's.
+    f = x[0] ** 2 + 2 * x[1] * x[2] - x[1]
     L = ufl.inner(f, v) * ufl.dx
 
     if not dolfinx.has_petsc4py:
         pytest.skip("dolfinx not configured with PETSc4py")
 
     uh = dolfinx.fem.Function(V)
-    if "petsc_options_prefix" in inspect.signature(LinearProblem.__init__).parameters.keys():
-        extra_options = {"petsc_options_prefix": "legacy_checkpoint_test"}
-    else:
-        extra_options = {}
     problem = LinearProblem(
-        a, L, bcs=[], u=uh, petsc_options={"ksp_type": "preonly", "pc_type": "lu"}, **extra_options
+        a,
+        L,
+        bcs=[],
+        u=uh,
+        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+        petsc_options_prefix="legacy_checkpoint_test",
     )
     problem.solve()
 

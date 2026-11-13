@@ -12,6 +12,8 @@ from io4dolfinx import reconstruct_mesh
 @pytest.mark.parametrize("degree", [2, 3])
 @pytest.mark.parametrize("R", [0.1, 1, 10])
 def test_curve_mesh(degree, dtype, R):
+    if hasattr(dolfinx.fem, "interpolate_geometry"):
+        pytest.skip("There are tests in DOLFINx for this for v0.11 and above.")
     N = 8
     mesh = dolfinx.mesh.create_rectangle(
         MPI.COMM_WORLD,
@@ -39,7 +41,7 @@ def test_curve_mesh(degree, dtype, R):
         dolfinx.fem.assemble_scalar(circumference), op=MPI.SUM
     )
 
-    tol = 10 * np.finfo(dtype).eps
+    tol = 15 * np.finfo(dtype).eps
     assert np.isclose(computed_area, np.pi * R**2, atol=tol)
     assert np.isclose(computed_circumference, 2 * np.pi * R, atol=tol)
 

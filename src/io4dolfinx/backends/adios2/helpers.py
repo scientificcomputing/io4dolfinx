@@ -12,22 +12,14 @@ from typing import NamedTuple
 from mpi4py import MPI
 
 import adios2
-import dolfinx.cpp.graph
 import dolfinx.graph
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 
-from io4dolfinx.utils import compute_local_range, valid_function_types
+from ...utils import compute_local_range, valid_function_types
 
-
-def resolve_adios_scope(adios2):
-    scope = adios2.bindings if hasattr(adios2, "bindings") else adios2
-    if not scope.is_built_with_mpi:
-        raise ImportError("ADIOS2 must be built with MPI support")
-    return scope
-
-
-adios2 = resolve_adios_scope(adios2)
+adios2 = fenicsx_compat.resolve_adios_scope(adios2)
 
 
 __all__ = [
@@ -60,7 +52,7 @@ def ADIOSFile(
     engine: str,
     mode: adios2.Mode,
     io_name: str,
-    comm: MPI.Intracomm | None = None,
+    comm: MPI.Comm | None = None,
 ):
     io = adios.DeclareIO(io_name)
     io.SetEngine(engine)
@@ -118,7 +110,7 @@ def check_variable_exists(
 
 def read_adjacency_list(
     adios: adios2.ADIOS,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     filename: Path | str,
     data_name: str,
     offsets_name: str,
@@ -221,7 +213,7 @@ def read_array(
     filename: Path | str,
     array_name: str,
     engine: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: float = 0.0,
     time_name: str = "",
     legacy: bool = False,

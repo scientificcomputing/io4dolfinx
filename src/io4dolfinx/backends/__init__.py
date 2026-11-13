@@ -11,7 +11,56 @@ import numpy.typing as npt
 
 from ..structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 
-__all__ = ["FileMode", "IOBackend", "get_backend"]
+__all__ = [
+    "DEFAULT_MESH_NAME",
+    "FileMode",
+    "IOBackend",
+    "get_backend",
+    "get_mesh_name",
+    "set_default_backend",
+]
+
+_DEFAULT_BACKEND = "adios2"
+
+#: Name used for a mesh when the caller does not supply one. A file written
+#: before named meshes existed holds exactly this mesh, so backends must store
+#: it exactly as they did before (see :func:`get_mesh_name`).
+DEFAULT_MESH_NAME = "mesh"
+
+
+def get_mesh_name(backend_args: dict[str, Any] | None) -> str:
+    """Get the name of the mesh a backend call refers to.
+
+    A checkpoint may hold several meshes -- for instance a mesh and a submesh of
+    it -- distinguished by name. Backends take the name from
+    ``backend_args["name"]``.
+
+    Args:
+        backend_args: Arguments to backend, or None
+
+    Returns:
+        The mesh name, :data:`DEFAULT_MESH_NAME` if none was given.
+    """
+    if backend_args is None:
+        return DEFAULT_MESH_NAME
+    name = backend_args.get("name", DEFAULT_MESH_NAME)
+    return DEFAULT_MESH_NAME if name is None else str(name)
+
+
+def set_default_backend(backend: str):
+    """Set the global default backend for io4dolfinx."""
+    global _DEFAULT_BACKEND
+    if backend not in BUILTIN_BACKENDS:
+        try:
+            get_backend(backend)
+        except ImportError as e:
+            raise ImportError(f"Backend {backend} not found.") from e
+    _DEFAULT_BACKEND = backend
+
+
+def get_default_backend():
+    """Get the global default backend for io4dolfinx."""
+    return _DEFAULT_BACKEND
 
 
 class ReadMode(Enum):
@@ -42,6 +91,18 @@ class FileMode(Enum):
 
 # See https://peps.python.org/pep-0544/#modules-as-implementations-of-protocols
 class IOBackend(Protocol):
+    """Interface a storage backend must provide.
+
+    .. note::
+        A checkpoint may hold more than one mesh, each with its own topology,
+        geometry, meshtags, cell permutations and functions. Every method that
+        touches mesh-associated data takes the mesh it refers to from
+        ``backend_args["name"]``; use :func:`get_mesh_name` to read it, so that
+        omitting it selects :data:`DEFAULT_MESH_NAME` consistently. A backend
+        must store that default mesh exactly as it did before named meshes
+        existed, so that older checkpoints stay readable.
+    """
+
     read_mode: ReadMode
 
     def get_default_backend_args(self, arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -57,7 +118,7 @@ class IOBackend(Protocol):
     def write_attributes(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         attributes: dict[str, np.ndarray],
         backend_args: dict[str, Any] | None,
@@ -75,7 +136,7 @@ class IOBackend(Protocol):
     def read_attributes(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         backend_args: dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -94,7 +155,7 @@ class IOBackend(Protocol):
     def read_timestamps(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         function_name: str,
         backend_args: dict[str, Any] | None,
     ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
@@ -113,7 +174,7 @@ class IOBackend(Protocol):
     def write_mesh(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         mesh: MeshData,
         backend_args: dict[str, Any] | None,
         mode: FileMode,
@@ -134,7 +195,7 @@ class IOBackend(Protocol):
     def write_meshtags(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         data: MeshTagsData,
         backend_args: dict[str, Any] | None,
     ):
@@ -150,7 +211,7 @@ class IOBackend(Protocol):
     def read_mesh_data(
         self,
         filename: Path | str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         read_from_partition: bool,
         backend_args: dict[str, Any] | None,
@@ -171,7 +232,7 @@ class IOBackend(Protocol):
     def read_meshtags_data(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         backend_args: dict[str, Any] | None,
     ) -> MeshTagsData:
@@ -190,7 +251,7 @@ class IOBackend(Protocol):
     def read_dofmap(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         backend_args: dict[str, Any] | None,
     ) -> dolfinx.graph.AdjacencyList:
@@ -203,13 +264,13 @@ class IOBackend(Protocol):
             backend_args: Arguments to backend
 
         Returns:
-            Dofmap as an {py:class}`dolfinx.graph.AdjacencyList`
+            Dofmap as an :class:`dolfinx.graph.AdjacencyList`
         """
 
     def read_dofs(
         self,
         filename: str | Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         name: str,
         time: float,
         backend_args: dict[str, Any] | None,
@@ -230,11 +291,14 @@ class IOBackend(Protocol):
         """
 
     def read_cell_perms(
-        self, comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
+        self, comm: MPI.Comm, filename: Path | str, backend_args: dict[str, Any] | None
     ) -> npt.NDArray[np.uint32]:
         """
         Read cell permutation from file with given communicator,
         Split in continuous chunks based on number of cells in the input data.
+
+        Cell permutations belong to a mesh, not to a function, so which mesh is
+        meant is taken from ``backend_args["name"]``.
 
         Args:
             comm: MPI communicator used in storage
@@ -249,7 +313,7 @@ class IOBackend(Protocol):
     def write_function(
         self,
         filename: Path,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         u: FunctionData,
         time: float,
         mode: FileMode,
@@ -267,7 +331,7 @@ class IOBackend(Protocol):
         """
 
     def read_legacy_mesh(
-        self, filename: Path | str, comm: MPI.Intracomm, group: str
+        self, filename: Path | str, comm: MPI.Comm, group: str
     ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
         """Read in the mesh topology, geometry and (optionally) cell type from a
         legacy DOLFIN HDF5-file.
@@ -302,7 +366,7 @@ class IOBackend(Protocol):
 
     def read_hdf5_array(
         self,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         filename: Path | str,
         group: str,
         backend_args: dict[str, Any] | None,
@@ -326,7 +390,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         name: str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         backend_args: dict[str, Any] | None,
     ) -> tuple[np.ndarray, int]:
@@ -344,7 +408,7 @@ class IOBackend(Protocol):
         ...
 
     def read_function_names(
-        self, filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+        self, filename: Path | str, comm: MPI.Comm, backend_args: dict[str, Any] | None
     ) -> list[str]:
         """Read all function names from a file.
 
@@ -362,7 +426,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         name: str,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         backend_args: dict[str, Any] | None,
     ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
@@ -385,7 +449,7 @@ class IOBackend(Protocol):
         self,
         filename: Path | str,
         array_data: ArrayData,
-        comm: MPI.Intracomm,
+        comm: MPI.Comm,
         time: str | float | None,
         mode: FileMode,
         backend_args: dict[str, Any] | None,
@@ -404,7 +468,7 @@ class IOBackend(Protocol):
         ...
 
 
-def get_backend(backend: str) -> IOBackend:
+def get_backend(backend: str | None = None) -> IOBackend:
     """Get backend class from backend name.
 
     Args:
@@ -413,6 +477,9 @@ def get_backend(backend: str) -> IOBackend:
     Returns:
         Backend class
     """
+    if backend is None:
+        backend = _DEFAULT_BACKEND
+
     if backend == "h5py":
         from .h5py import backend as H5PYInterface
 
@@ -437,10 +504,50 @@ def get_backend(backend: str) -> IOBackend:
         from .exodus import backend as EXODUSInterface
 
         return EXODUSInterface
+    elif backend == "med":
+        from .med import backend as MEDInterface
 
+        return MEDInterface
+    elif backend == "gmsh":
+        from .gmsh import backend as GMSHInterface
+
+        return GMSHInterface
+    elif backend == "opencarp":
+        from .opencarp import backend as OpenCARPInterface
+
+        return OpenCARPInterface
     elif backend == "nastran":
         from .nastran import backend as NASTRANInterface
 
         return NASTRANInterface
     else:
         return import_module(backend)
+
+
+BUILTIN_BACKENDS = (
+    "h5py",
+    "adios2",
+    "pyvista",
+    "xdmf",
+    "vtkhdf",
+    "exodus",
+    "med",
+    "gmsh",
+    "opencarp",
+)
+
+
+def list_builtin_backends() -> list[str]:
+    """List available builtin backends.
+
+    Returns:
+        List of available backends
+    """
+    lst = []
+    for backend in BUILTIN_BACKENDS:
+        try:
+            get_backend(backend)
+        except ImportError:
+            continue
+        lst.append(backend)
+    return lst

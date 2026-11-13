@@ -1,3 +1,4 @@
+"""Internal library classes for storing mesh and function data"""
 # Copyright (C) 2024 Jørgen Schartum Dokken
 #
 # This file is part of io4dolfinx
@@ -12,7 +13,6 @@ import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import AdjacencyList
 
-"""Internal library classes for storing mesh and function data"""
 __all__ = ["MeshData", "FunctionData", "ReadMeshData", "MeshTagsData"]
 
 
@@ -78,6 +78,9 @@ class ReadMeshData:
     degree: int  #: The degree of the underlying Lagrange element
     #: Partitioning information per cell on the process
     partition_graph: AdjacencyList | None = None
+    #: Geometry uses the degree 2 serendipity element with nodes at vertices and edge
+    #: midpoints (8-node quadrilateral, 20-node hexahedron) instead of Lagrange
+    serendipity: bool = False
 
 
 @dataclass

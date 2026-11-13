@@ -6,26 +6,29 @@
 
 from __future__ import annotations
 
+import logging
 import typing
+import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 import ufl
-from packaging.version import Version
 
-from . import compat
 from .backends import FileMode, ReadMode, get_backend
 from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
+    send_to_input_order,
 )
+from .original_checkpoint import create_function_data_on_original_mesh, create_original_mesh_data
 from .readers import create_geometry_function_space
 from .structures import ArrayData, FunctionData, MeshTagsData
 from .utils import (
@@ -33,6 +36,7 @@ from .utils import (
     compute_dofmap_pos,
     compute_local_range,
     index_owner,
+    input_cell_index,
     unroll_dofmap,
     unroll_insert_position,
 )
@@ -51,14 +55,42 @@ __all__ = [
     "write_attributes",
 ]
 
+logger = logging.getLogger(__name__)
+
+
+def _with_mesh_name(
+    backend_args: dict[str, Any] | None, mesh_name: str | None
+) -> dict[str, Any] | None:
+    """Select which mesh in the file a backend call refers to.
+
+    A checkpoint may hold several meshes -- a mesh and a submesh of it, say --
+    and backends take the one to act on from ``backend_args["name"]``. This
+    folds an explicit ``mesh_name`` in without mutating the caller's dictionary.
+    ``mesh_name=None`` leaves ``backend_args`` untouched, so an existing
+    ``backend_args["name"]`` still wins and files written before named meshes
+    existed stay readable.
+
+    Args:
+        backend_args: Arguments for the backend, or None
+        mesh_name: Name of the mesh to act on, or None for the default
+
+    Returns:
+        Backend arguments naming the requested mesh.
+    """
+    if mesh_name is None:
+        return backend_args
+    args = dict(backend_args) if backend_args else {}
+    args["name"] = mesh_name
+    return args
+
 
 def write_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """Write attributes to file.
 
@@ -70,6 +102,8 @@ def write_attributes(
         backend_args: Arguments for backend, for instance file type.
         backend: What backend to use for writing.
     """
+    logger.debug(f"Writing attributes to {filename} for attribute {name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to write attributes")
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
     backend_cls.write_attributes(filename, comm, name, attributes, backend_args)
@@ -77,10 +111,10 @@ def write_attributes(
 
 def read_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ) -> dict[str, typing.Any]:
     """Read attributes from file.
 
@@ -93,6 +127,8 @@ def read_attributes(
     Returns:
         The attributes
     """
+    logger.debug(f"Reading attributes from {filename} for attribute {name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read attributes")
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
     return backend_cls.read_attributes(filename, comm, name, backend_args)
@@ -100,10 +136,11 @@ def read_attributes(
 
 def read_timestamps(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     function_name: str,
     backend_args: dict[str, typing.Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
+    mesh_name: str | None = None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
     """
     Read time-stamps from a checkpoint file.
@@ -114,9 +151,15 @@ def read_timestamps(
         function_name: Name of the function to read time-stamps for
         backend_args: Arguments for backend, for instance file type.
         backend: What backend to use for writing.
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     Returns:
         The time-stamps
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Reading time-stamps from {filename} for function {function_name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read time-stamps")
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
@@ -129,7 +172,9 @@ def write_meshtags(
     meshtags: dolfinx.mesh.MeshTags,
     meshtag_name: typing.Optional[str] = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
+    on_input_mesh: bool = False,
+    mesh_name: str | None = None,
 ):
     """
     Write meshtags associated with input mesh to file.
@@ -143,9 +188,19 @@ def write_meshtags(
         mesh: The mesh associated with the meshtags
         meshtags: The meshtags to write to file
         meshtag_name: Name of the meshtag. If None, the meshtag name is used.
-        backend_args: Option to IO backend.
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         backend: IO backend
+        on_input_mesh: If True, the meshtags are written with the node ordering
+            of the input mesh. Use the same value for every write to a file;
+            see :ref:`input-ordering`.
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Writing meshtags to {filename} for meshtag {meshtag_name or meshtags.name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to write meshtags")
 
     # Extract data from meshtags (convert to global geometry node indices for each entity)
     tag_entities = meshtags.indices
@@ -155,25 +210,27 @@ def write_meshtags(
     local_values = meshtags.values[: len(local_tag_entities)]
 
     num_saved_tag_entities = len(local_tag_entities)
+    assert isinstance(mesh.comm, MPI.Intracomm)
     local_start = mesh.comm.exscan(num_saved_tag_entities, op=MPI.SUM)
     local_start = local_start if mesh.comm.rank != 0 else 0
     global_num_tag_entities = mesh.comm.allreduce(num_saved_tag_entities, op=MPI.SUM)
 
-    dof_layout = compat.cmap(mesh).create_dof_layout()
-    if hasattr(dof_layout, "num_entity_closure_dofs"):
-        num_dofs_per_entity = dof_layout.num_entity_closure_dofs(dim)
-    else:
-        num_dofs_per_entity = len(dof_layout.entity_closure_dofs(dim, 0))
-
+    dof_layout = fenicsx_compat.cmap(mesh).create_dof_layout()
+    num_dofs_per_entity = len(dof_layout.entity_closure_dofs(dim, 0))
+    mesh.topology.create_connectivity(dim, mesh.topology.dim)
+    mesh.topology.create_connectivity(0, mesh.topology.dim)
     entities_to_geometry = dolfinx.cpp.mesh.entities_to_geometry(
         mesh._cpp_object, dim, local_tag_entities, False
     )
 
-    indices = (
-        mesh.geometry.index_map()
-        .local_to_global(entities_to_geometry.reshape(-1))
-        .reshape(entities_to_geometry.shape)
-    )
+    if on_input_mesh:
+        indices = mesh.geometry.input_global_indices[entities_to_geometry]
+    else:
+        indices = (
+            mesh.geometry.index_map()
+            .local_to_global(entities_to_geometry.reshape(-1))
+            .reshape(entities_to_geometry.shape)
+        )
     name = meshtag_name or meshtags.name
 
     tag_ct = dolfinx.cpp.mesh.cell_entity_type(mesh.topology.cell_type, dim, 0).name
@@ -199,26 +256,40 @@ def read_meshtags(
     mesh: dolfinx.mesh.Mesh,
     meshtag_name: str,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
+    mesh_name: str | None = None,
 ) -> dolfinx.mesh.MeshTags:
     """
     Read meshtags from file and return a :class:`dolfinx.mesh.MeshTags` object.
 
     Args:
         filename: Path to meshtags file (with file-extension)
-        mesh: The mesh associated with the meshtags
+        mesh: The mesh associated with the meshtags. Its numbering must match the
+            one the meshtags were written in; see :ref:`input-ordering`.
         meshtag_name: The name of the meshtag to read
         engine: Adios2 Engine
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     Returns:
         The meshtags
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Reading meshtags from {filename} for meshtag {meshtag_name}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read meshtags")
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
     data = backend_cls.read_meshtags_data(filename, mesh.comm, meshtag_name, backend_args)
 
+    indices = data.indices
+    if indices.shape[0] == 0:
+        # A backend without entities may not know the number of geometry nodes per entity
+        layout = fenicsx_compat.cmap(mesh).create_dof_layout()
+        num_nodes = len(layout.entity_closure_dofs(int(data.dim), 0))
+        indices = np.zeros((0, num_nodes), dtype=np.int64)
     local_entities, local_values = dolfinx.io.distribute_entity_data(
-        mesh, int(data.dim), data.indices, data.values
+        mesh, int(data.dim), indices, data.values
     )
     mesh.topology.create_connectivity(data.dim, 0)
     mesh.topology.create_connectivity(data.dim, mesh.topology.dim)
@@ -238,17 +309,29 @@ def read_function(
     time: float = 0.0,
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
+    mesh_name: str | None = None,
 ):
     """
     Read checkpoint from file and fill it into `u`.
 
     Args:
         filename: Path to checkpoint
-        u: Function to fill
+        u: Function to fill. Its mesh's numbering must match the one the function
+            was written in; see :ref:`input-ordering`.
         time: Time-stamp associated with checkpoint
         name: If not provided, `u.name` is used to search through the input file for the function
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(
+        f"Reading function checkpoint from {filename} for function {name or u.name} at time {time}"
+    )
+    logger.debug(
+        f"Using {backend} backend with arguments {backend_args} to read function checkpoint"
+    )
     check_file_exists(filename)
 
     mesh = u.function_space.mesh
@@ -256,16 +339,17 @@ def read_function(
     if name is None:
         name = u.name
 
-    # ----------------------Step 1---------------------------------
+    check_file_exists(filename)
+    backend_cls = get_backend(backend)
+    backend_args = backend_cls.get_default_backend_args(backend_args)
+
     # Compute index of input cells and get cell permutation
     num_owned_cells = mesh.topology.index_map(mesh.topology.dim).size_local
     input_cells = mesh.topology.original_cell_index[:num_owned_cells]
-    mesh.topology.create_entity_permutations()
-    cell_perm = mesh.topology.get_cell_permutation_info()[:num_owned_cells]
+    cell_perm = fenicsx_compat.cell_permutation_info(mesh.topology)[:num_owned_cells]
 
     # Compute mesh->input communicator
     # 1.1 Compute mesh->input communicator
-    backend_cls = get_backend(backend)
     owners: npt.NDArray[np.int32]
     if backend_cls.read_mode == ReadMode.serial:
         owners = np.zeros(input_cells, dtype=np.int32)
@@ -277,12 +361,6 @@ def read_function(
     # -------------------Step 2------------------------------------
     # Send and receive global cell index and cell perm
     inc_cells, inc_perms = send_and_recv_cell_perm(input_cells, cell_perm, owners, mesh.comm)
-
-    # -------------------Step 3-----------------------------------
-    # Read dofmap from file and compute dof owners
-    check_file_exists(filename)
-    backend_cls = get_backend(backend)
-    backend_args = backend_cls.get_default_backend_args(backend_args)
 
     input_dofmap = backend_cls.read_dofmap(filename, comm, name, backend_args)
 
@@ -355,8 +433,9 @@ def read_function(
 
     unique_owners, owner_count = np.unique(owners, return_counts=True)
     # FIXME: In C++ use NBX to find neighbourhood
+    assert isinstance(V.mesh.comm, MPI.Intracomm)
     sub_comm = V.mesh.comm.Create_dist_graph(
-        [V.mesh.comm.rank], [len(unique_owners)], unique_owners, reorder=False
+        [V.mesh.comm.rank], [len(unique_owners)], unique_owners.tolist(), reorder=False
     )
     source, dest, _ = sub_comm.Get_dist_neighbors()
     sub_comm.Free()
@@ -379,13 +458,14 @@ def read_function(
 
 def read_mesh(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     ghost_mode: dolfinx.mesh.GhostMode = dolfinx.mesh.GhostMode.shared_facet,
     time: float | str | None = 0.0,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
     max_facet_to_cell_links: int = 2,
+    mesh_name: str | None = None,
 ) -> dolfinx.mesh.Mesh:
     """
     Read an ADIOS2 mesh into DOLFINx.
@@ -400,9 +480,16 @@ def read_mesh(
         backend_args: List of arguments to reader backend
         max_facet_to_cell_links: Maximum number of cells a facet
             can be connected to.
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
     Returns:
         The distributed mesh
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Reading mesh from {filename}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args}")
+    logger.debug(f"Time {time} and read_from_partition {read_from_partition}")
     # Read in data in a distributed fashin
     check_file_exists(filename)
     backend_cls = get_backend(backend)
@@ -419,46 +506,64 @@ def read_mesh(
     )
 
     # Create DOLFINx mesh
-    element = basix.ufl.element(
-        basix.ElementFamily.P,
-        dist_in_data.cell_type,
-        dist_in_data.degree,
-        basix.LagrangeVariant(int(dist_in_data.lvar)),
-        shape=(dist_in_data.x.shape[1],),
-        dtype=dist_in_data.x.dtype,
-    )
-    domain = ufl.Mesh(element)
-    if (partition_graph := dist_in_data.partition_graph) is not None:
-
-        def partitioner(comm: MPI.Intracomm, n, m, topo):
-            assert len(topo[0]) % (len(partition_graph.offsets) - 1) == 0
-            if Version(dolfinx.__version__) > Version("0.9.0"):
-                return partition_graph._cpp_object
-            else:
-                return partition_graph
-    else:
+    element: basix.ufl._ElementBase
+    if dist_in_data.serendipity:
         try:
-            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(
-                ghost_mode, max_facet_to_cell_links=max_facet_to_cell_links
-            )
-        except TypeError:
-            partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode)
+            from dolfinx.io.utils import _serendipity_coordinate_element
+        except ImportError as e:
+            raise NotImplementedError(
+                "Meshes with serendipity geometry (8-node quadrilaterals, 20-node "
+                "hexahedra) require the main branch of DOLFINx."
+            ) from e
+        element = basix.ufl.blocked_element(
+            _serendipity_coordinate_element(
+                dolfinx.mesh.to_type(dist_in_data.cell_type), dist_in_data.x.dtype
+            ),
+            shape=(dist_in_data.x.shape[1],),
+        )
+    else:
+        element = basix.ufl.element(
+            basix.ElementFamily.P,
+            dist_in_data.cell_type,
+            dist_in_data.degree,
+            basix.LagrangeVariant(int(dist_in_data.lvar)),
+            shape=(dist_in_data.x.shape[1],),
+            dtype=dist_in_data.x.dtype,
+        )
+    domain = ufl.Mesh(element)
+    # `dolfinx.mesh.PartitioningFunc` is not available in all supported
+    # versions of DOLFINx, and the accepted callback signature varies (see
+    # below), so type the callback permissively.
+    partitioner: Callable[..., dolfinx.cpp.graph.AdjacencyList_int32] | None = None
+    if (partition_graph := dist_in_data.partition_graph) is not None:
+        # The arguments DOLFINx passes to a partitioner callback have changed
+        # over time: 0.11 calls it with
+        # ``(comm, nparts, cell_types, local_graph)``, while newer versions call
+        # it with ``(comm, nparts, dual_graph, cell_weights, edge_weights,
+        # ghosting)`` (see https://github.com/FEniCS/dolfinx/pull/4403).
+        # We read the partitioning from file, so the returned graph does not
+        # depend on any of these arguments. Accept them all and stay agnostic to
+        # the calling convention rather than branching on `dolfinx.__version__`,
+        # which does not distinguish pre-releases and post-releases reliably.
+        def _custom_partitioner(*args: Any, **kwargs: Any) -> dolfinx.cpp.graph.AdjacencyList_int32:
+            if hasattr(partition_graph, "_cpp_object"):
+                cpp_obj = partition_graph._cpp_object
+                assert isinstance(cpp_obj, dolfinx.cpp.graph.AdjacencyList_int32)
+                return cpp_obj
+            else:
+                assert isinstance(partition_graph, dolfinx.cpp.graph.AdjacencyList_int32)
+                return partition_graph
 
-        # Should change to the commented code below when we require python
-        # minimum version to be >=3.12 see https://github.com/python/cpython/pull/116198
-        # import inspect
-        # sig = inspect.signature(dolfinx.mesh.create_cell_partitioner)
-        # part_kwargs = {}
-        # if "max_facet_to_cell_links" in list(sig.parameters.keys()):
-        #     part_kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
-        # partitioner = dolfinx.cpp.mesh.create_cell_partitioner(ghost_mode, **part_kwargs)
+        partitioner = _custom_partitioner
 
-    return dolfinx.mesh.create_mesh(
+    return fenicsx_compat.create_mesh(
         comm,
-        cells=dist_in_data.cells,
-        x=dist_in_data.x,
-        e=domain,
+        dist_in_data.cells,
+        domain,
+        dist_in_data.x,
         partitioner=partitioner,
+        ghost_mode=ghost_mode,
+        max_facet_to_cell_links=max_facet_to_cell_links,
     )
 
 
@@ -469,7 +574,9 @@ def write_mesh(
     time: float = 0.0,
     store_partition_info: bool = False,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
+    mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """
     Write a mesh to file.
@@ -479,9 +586,34 @@ def write_mesh(
         mesh: The mesh to write to file
 
         store_partition_info: Store mesh partitioning (including ghosting) to file
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
+        on_input_mesh: If True, the mesh is written with the node and cell ordering of
+            the input mesh, so the file does not depend on the number of processes.
+            Cannot be combined with ``store_partition_info``. Use the same value for
+            every write to a file; see :ref:`input-ordering`.
     """
-    mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
-
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Writing mesh to {filename}")
+    if on_input_mesh:
+        if store_partition_info:
+            raise ValueError(
+                "Cannot store partition info for a mesh written in the input ordering."
+            )
+        logger.debug("Preparing mesh data in the input ordering")
+        mesh_data = create_original_mesh_data(mesh)
+    else:
+        logger.debug(
+            f"Preparing mesh data for storage storing partition info: {store_partition_info}"
+        )
+        mesh_data = prepare_meshdata_for_storage(
+            mesh=mesh, store_partition_info=store_partition_info
+        )
+    logger.debug(f"Write mesh using {backend} backend, with arguments {backend_args}")
+    logger.debug(f"Mode {mode} and time {time}")
     _internal_mesh_writer(
         filename,
         mesh.comm,
@@ -500,7 +632,9 @@ def write_function(
     mode: FileMode = FileMode.append,
     name: str | None = None,
     backend_args: dict[str, Any] | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
+    mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """
     Write function checkpoint to file.
@@ -513,13 +647,34 @@ def write_function(
         name: Name of function to write. If None, the name of the function is used.
         backend_args: Arguments to the IO backend.
         backend: The backend to use
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
+        on_input_mesh: If True, the function is written against the input mesh, to be
+            read with a mesh written with ``on_input_mesh=True`` (or read from the
+            input mesh file). Use the same value for every write to a file;
+            see :ref:`input-ordering`.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    n = u.name if name is None else name
+    logger.debug(f"Writing function checkpoint to {filename} for function {n} at time {time}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args}")
+    if on_input_mesh:
+        _internal_function_writer(
+            Path(filename),
+            u.function_space.mesh.comm,
+            create_function_data_on_original_mesh(u, name),
+            time,
+            backend_args=backend_args,
+            backend=backend,
+            mode=mode,
+        )
+        return
     dofmap = u.function_space.dofmap
     values = u.x.array
     mesh = u.function_space.mesh
     comm = mesh.comm
-    mesh.topology.create_entity_permutations()
-    cell_perm = mesh.topology.get_cell_permutation_info()
+    cell_perm = fenicsx_compat.cell_permutation_info(mesh.topology)
     num_cells_local = mesh.topology.index_map(mesh.topology.dim).size_local
     local_cell_range = mesh.topology.index_map(mesh.topology.dim).local_range
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
@@ -539,7 +694,12 @@ def write_function(
     # Convert imap index to global index
     imap_global = dofmap.index_map.local_to_global(dmap_loc)
     dofmap_global = imap_global * index_map_bs + dmap_rem
-    dofmap_imap = dolfinx.common.IndexMap(mesh.comm, num_dofs_local_dmap)
+    dofmap_imap = fenicsx_compat.create_index_map(
+        mesh.comm,
+        num_dofs_local_dmap,
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.int32),
+    )
 
     # Compute dofmap offsets
     local_dofmap_offsets = np.arange(num_cells_local + 1, dtype=np.int64)
@@ -560,7 +720,7 @@ def write_function(
         dofmap_range=dofmap_imap.local_range,
         global_dofs_in_dofmap=dofmap_imap.size_global,
         values=values[:num_dofs_local].copy(),
-        dof_range=local_dof_range,
+        dof_range=(local_dof_range[0], local_dof_range[1]),
         num_dofs_global=num_dofs_global,
         name=name or u.name,
     )
@@ -571,11 +731,97 @@ def write_function(
     )
 
 
+def write_function_on_input_mesh(
+    filename: Path | str,
+    u: dolfinx.fem.Function,
+    time: float = 0.0,
+    name: str | None = None,
+    mode: FileMode = FileMode.append,
+    backend_args: dict[str, Any] | None = None,
+    backend: str | None = None,
+):
+    """
+    Write function checkpoint (to be read with the input mesh).
+
+    Deprecated: use :func:`write_function` with ``on_input_mesh=True``.
+
+    Note:
+        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_function`.
+
+    Args:
+        filename: The filename to write to
+        u: The function to checkpoint
+        time: Time-stamp associated with function at current write step
+        mode: The mode to use (write or append)
+        name: Name of function. If None, the name of the function is used.
+        backend_args: Arguments to backend
+        backend: Choice of backend module
+    """
+    warnings.warn(
+        "write_function_on_input_mesh is deprecated and will be removed in a future release. "
+        + "Use write_function with on_input_mesh=True instead.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    write_function(
+        filename,
+        u,
+        time=time,
+        mode=mode,
+        name=name,
+        backend_args=backend_args,
+        backend=backend,
+        on_input_mesh=True,
+    )
+
+
+def write_mesh_input_order(
+    filename: Path | str,
+    mesh: dolfinx.mesh.Mesh,
+    time: float = 0.0,
+    mode: FileMode = FileMode.write,
+    backend: str | None = None,
+    backend_args: dict[str, Any] | None = None,
+):
+    """
+    Write mesh to checkpoint file in original input ordering.
+
+    Deprecated: use :func:`write_mesh` with ``on_input_mesh=True``.
+
+    Note:
+        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_mesh`.
+
+    Args:
+        filename: The filename to write to
+        mesh: Mesh to checkpoint
+        time: Time-stamp associated with function at current write step
+        mode: The mode to use (write or append)
+        backend_args: Arguments to backend
+        backend: Choice of backend module
+    """
+    warnings.warn(
+        "write_mesh_input_order is deprecated and will be removed in a future release. "
+        + "Use write_mesh with on_input_mesh=True instead.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    write_mesh(
+        Path(filename),
+        mesh,
+        mode=mode,
+        time=time,
+        backend_args=backend_args,
+        backend=backend,
+        on_input_mesh=True,
+    )
+
+
 def read_function_names(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     backend_args: dict[str, Any] | None = None,
     backend: str = "h5py",
+    mesh_name: str | None = None,
 ) -> list[str]:
     """Read all function names from a file.
 
@@ -583,10 +829,17 @@ def read_function_names(
         filename: Path to file
         comm: MPI communicator to launch IO on.
         backend_args: Arguments to backend
+        mesh_name: Name of the mesh in the file to act on. Defaults to the
+            mesh written without an explicit name, so existing checkpoints and
+            call sites are unaffected.
 
     Returns:
         A list of function names.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Reading function names from {filename}")
+    logger.debug(f"Using {backend} backend with arguments {backend_args} to read function names")
+    check_file_exists(filename)
     backend_cls = get_backend(backend)
     return backend_cls.read_function_names(filename, comm, backend_args=backend_args)
 
@@ -598,6 +851,8 @@ def write_point_data(
     mode: FileMode,
     backend_args: dict[str, Any] | None,
     backend: str = "vtkhdf",
+    mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """Write function to file by interpolating into geometry nodes.
 
@@ -607,9 +862,16 @@ def write_point_data(
         u: The function to store
         time: Time stamp
         mode: Append or write
-        backend_args: The backend arguments
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         backend: Which backend to use.
+        mesh_name: Name of the mesh in the file to write the data against.
+            Defaults to the mesh written without an explicit name.
+        on_input_mesh: If True, the node values are written in the node ordering of the
+            input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
     V = create_geometry_function_space(u.function_space.mesh, int(np.prod(u.ufl_shape)))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
@@ -618,8 +880,22 @@ def write_point_data(
     local_range = V.dofmap.index_map.local_range
     num_dofs_local = V.dofmap.index_map.size_local
     data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
+
+    if on_input_mesh:
+        # The dofs of the geometry space are the geometry nodes
+        input_nodes = V.mesh.geometry.input_global_indices[:num_dofs_local]
+        assert isinstance(comm, MPI.Intracomm)
+        (data,), local_range = send_to_input_order(comm, input_nodes, [data], data_shape[0])
+
     ad = ArrayData(
-        name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Point"
+        name=v_out.name,
+        values=data,
+        global_shape=data_shape,
+        local_range=local_range,
+        type="Point",
+    )
+    logger.debug(
+        f"Using {backend} backend with arguments {backend_args} and mode {mode} to write point data"
     )
     backend_cls = get_backend(backend)
     return backend_cls.write_data(
@@ -634,6 +910,8 @@ def write_cell_data(
     mode: FileMode,
     backend_args: dict[str, Any] | None,
     backend: str = "vtkhdf",
+    mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """Write function to file by interpolating into cell midpoints.
 
@@ -643,22 +921,52 @@ def write_cell_data(
         point_data: Data to write to file
         time: Time stamp
         mode: Append or write
-        backend_args: The backend arguments
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
+        mesh_name: Name of the mesh in the file to write the data against.
+            Defaults to the mesh written without an explicit name.
+        on_input_mesh: If True, the cell values are written in the cell ordering of the
+            input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
+    if u.function_space.ufl_element().family_name == "quadrature":
+        raise ValueError(
+            f"Cannot write {u.name!r} as cell data, as a function in a quadrature space cannot "
+            "be interpolated into DG-0."
+        )
     V = dolfinx.fem.functionspace(u.function_space.mesh, ("DG", 0, u.ufl_shape))
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
     comm = v_out.function_space.mesh.comm
     data_shape = (V.dofmap.index_map.size_global, V.dofmap.index_map_bs)
-    local_range = V.dofmap.index_map.local_range
-    num_dofs_local = V.dofmap.index_map.size_local
-    data = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)[:num_dofs_local]
+    values = v_out.x.array.reshape(-1, V.dofmap.index_map_bs)
 
-    backend_cls = get_backend(backend)
+    if on_input_mesh:
+        # DG-0 dofs of owned cells are owned, so send the value of each owned cell
+        mesh = V.mesh
+        tdim = mesh.topology.dim
+        num_owned_cells = mesh.topology.index_map(tdim).size_local
+        input_cells = input_cell_index(mesh)[:num_owned_cells]
+        cell_values = values[V.dofmap.list[:num_owned_cells, 0]]
+        assert isinstance(comm, MPI.Intracomm)
+        (data,), local_range = send_to_input_order(comm, input_cells, [cell_values], data_shape[0])
+    else:
+        local_range = V.dofmap.index_map.local_range
+        data = values[: V.dofmap.index_map.size_local]
+
     ad = ArrayData(
-        name=v_out.name, values=data, global_shape=data_shape, local_range=local_range, type="Cell"
+        name=v_out.name,
+        values=data,
+        global_shape=data_shape,
+        local_range=local_range,
+        type="Cell",
+    )
+    logger.debug(
+        f"Using {backend} backend with arguments {backend_args} and mode {mode} to write cell data"
     )
     backend_cls = get_backend(backend)
+
     return backend_cls.write_data(
         filename, comm=comm, mode=mode, time=time, array_data=ad, backend_args=backend_args
     )

@@ -66,7 +66,7 @@ filename = "legacy_data.h5"
 mesh = io4dolfinx.read_mesh_from_legacy_h5(filename, comm, group="/mesh")
 ```
 
-#### Create the appropriate FunctionSpace 
+#### Create the appropriate FunctionSpace
 You must know the element family and degree used in the legacy simulation
 ```python
 V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))

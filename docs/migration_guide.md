@@ -80,5 +80,3 @@ io4dolfinx.write_function("solution.bp", u, time=0.0, backend="h5py")
 ```
 ````
 `````
-
-

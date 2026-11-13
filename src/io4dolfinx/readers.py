@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import typing
 from pathlib import Path
@@ -15,12 +16,13 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 import ufl
 
 from .backends import ReadMode, get_backend
-from .comm_helpers import send_dofs_and_recv_values
+from .comm_helpers import all_to_all, send_dofs_and_recv_values
 from .utils import (
     check_file_exists,
     compute_dofmap_pos,
@@ -30,9 +32,25 @@ from .utils import (
 )
 
 __all__ = ["read_mesh_from_legacy_h5", "read_function_from_legacy_h5", "read_point_data"]
+logger = logging.getLogger(__name__)
 
 
-def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.int64]:
+def _with_mesh_name(
+    backend_args: dict[str, Any] | None, mesh_name: str | None
+) -> dict[str, Any] | None:
+    """Select which mesh in the file a backend call refers to.
+
+    See :func:`io4dolfinx.checkpointing._with_mesh_name`; duplicated here to keep
+    :mod:`io4dolfinx.readers` free of a circular import.
+    """
+    if mesh_name is None:
+        return backend_args
+    args = dict(backend_args) if backend_args else {}
+    args["name"] = mesh_name
+    return args
+
+
+def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int | np.int64) -> npt.NDArray[np.int64]:
     """
     Map xxxyyyzzz to xyzxyz
     """
@@ -57,18 +75,18 @@ def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int) -> npt.NDArray[np.i
 
 def send_cells_and_receive_dofmap_index(
     filename: pathlib.Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     source_ranks: npt.NDArray[np.int32],
     dest_ranks: npt.NDArray[np.int32],
     dest_size: npt.NDArray[np.int32],
     output_owners: npt.NDArray[np.int32],
     input_cells: npt.NDArray[np.int64],
     dofmap_pos: npt.NDArray[np.int32],
-    num_cells_global: np.int64,
+    num_cells_global: int | np.int64,
     dofmap_path: str,
     xdofmap_path: str,
-    bs: int,
-    backend: str,
+    bs: int | np.int64,
+    backend: str | None,
 ) -> npt.NDArray[np.int64]:
     """
     Given a set of positions in input dofmap, give the global input index of this dofmap entry
@@ -77,11 +95,12 @@ def send_cells_and_receive_dofmap_index(
     check_file_exists(filename)
 
     recv_size = np.zeros(len(source_ranks), dtype=np.int32)
+    assert isinstance(comm, MPI.Intracomm)
     mesh_to_data_comm = comm.Create_dist_graph_adjacent(
         source_ranks.tolist(), dest_ranks.tolist(), reorder=False
     )
     # Send sizes to create data structures for receiving from NeighAlltoAllv
-    mesh_to_data_comm.Neighbor_alltoall(dest_size, recv_size)
+    all_to_all(mesh_to_data_comm, dest_size, recv_size)
 
     # Sort output for sending and fill send data
     out_cells = np.zeros(len(output_owners), dtype=np.int64)
@@ -145,10 +164,10 @@ def send_cells_and_receive_dofmap_index(
 
 def read_mesh_from_legacy_h5(
     filename: pathlib.Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     group: str,
     cell_type: str = "tetrahedron",
-    backend: str = "adios2",
+    backend: str | None = None,
     max_facet_to_cell_links: int = 2,
 ) -> dolfinx.mesh.Mesh:
     """
@@ -164,6 +183,8 @@ def read_mesh_from_legacy_h5(
         max_facet_to_cell_links: Maximum number of cells a facet
             can be connected to.
     """
+    logger.debug(f"Reading mesh from {filename} at group {group}")
+    logger.debug(f"Using backend {backend} with max_facet_to_cell_links {max_facet_to_cell_links}")
     # Make sure we use the HDF5File and check that the file is present
     check_file_exists(filename)
 
@@ -181,50 +202,24 @@ def read_mesh_from_legacy_h5(
     )
     domain = ufl.Mesh(element)
 
-    try:
-        return dolfinx.mesh.create_mesh(
-            comm=MPI.COMM_WORLD,
-            cells=mesh_topology,
-            x=mesh_geometry,
-            e=domain,
-            partitioner=None,
-            max_facet_to_cell_links=max_facet_to_cell_links,
-        )
-    except TypeError:
-        return dolfinx.mesh.create_mesh(
-            comm=MPI.COMM_WORLD,
-            cells=mesh_topology,
-            x=mesh_geometry,
-            e=domain,
-            partitioner=None,
-        )
-
-    # Should change to the commented code below when we require python
-    # minimum version to be >=3.12 see https://github.com/python/cpython/pull/116198
-    # import inspect
-    # sig = inspect.signature(dolfinx.mesh.create_mesh)
-    # kwargs: dict[str, int] = {}
-    # if "max_facet_to_cell_links" in list(sig.parameters.keys()):
-    #     kwargs["max_facet_to_cell_links"] = max_facet_to_cell_links
-
-    # return dolfinx.mesh.create_mesh(
-    #     comm=MPI.COMM_WORLD,
-    #     cells=mesh_topology,
-    #     x=mesh_geometry,
-    #     e=domain,
-    #     partitioner=None,
-    #     **kwargs,
-    # )
+    return dolfinx.mesh.create_mesh(
+        comm=MPI.COMM_WORLD,
+        cells=mesh_topology,
+        x=mesh_geometry,
+        e=domain,
+        partitioner=None,
+        max_facet_to_cell_links=max_facet_to_cell_links,
+    )
 
 
 def read_function_from_legacy_h5(
     filename: pathlib.Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     u: dolfinx.fem.Function,
     group: str = "mesh",
     step: typing.Optional[int] = None,
     vector_group: str | None = None,
-    backend: str = "adios2",
+    backend: str | None = None,
 ):
     """
     Read function from a `h5`-file generated by legacy DOLFIN `HDF5File.write`
@@ -240,7 +235,8 @@ def read_function_from_legacy_h5(
             the function is saved as a regular function (i.e with `HDF5File.write`)
         backend: The IO backend
     """
-
+    logger.debug(f"Reading function from {filename} at group {group}")
+    logger.debug(f"Using backend {backend} with group {group} and step {step}")
     # Make sure we use the HDF5File and check that the file is present
     filename = pathlib.Path(filename)
     if filename.suffix == ".xdmf":
@@ -273,8 +269,9 @@ def read_function_from_legacy_h5(
 
     unique_owners, owner_count = np.unique(owners, return_counts=True)
     # FIXME: In C++ use NBX to find neighbourhood
+    assert isinstance(mesh.comm, MPI.Intracomm)
     _tmp_comm = mesh.comm.Create_dist_graph(
-        [mesh.comm.rank], [len(unique_owners)], unique_owners, reorder=False
+        [mesh.comm.rank], [len(unique_owners)], unique_owners.tolist(), reorder=False
     )
     source, dest, _ = _tmp_comm.Get_dist_neighbors()
     _tmp_comm.Free()
@@ -340,7 +337,7 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     """Reconstruct a vector space with the N components using the geometry dofmap to ensure
     a 1-1 mapping between mesh nodes and DOFs."""
     geom_imap = mesh.geometry.index_map()
-    geom_dofmap = mesh.geometry.dofmap
+    geom_dofmap = fenicsx_compat.dofmap(mesh)
     ufl_domain = mesh.ufl_domain()
     assert ufl_domain is not None
     sub_el = ufl_domain.ufl_coordinate_element().sub_elements[0]
@@ -354,6 +351,12 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
         ufl_el = basix.ufl.blocked_element(sub_el, shape=(N,))
         value_shape = (N,)
 
+    _fe_constructor: (
+        type[dolfinx.cpp.fem.FiniteElement_float32] | type[dolfinx.cpp.fem.FiniteElement_float64]
+    )
+    _fem_constructor: (
+        type[dolfinx.cpp.fem.FunctionSpace_float32] | type[dolfinx.cpp.fem.FunctionSpace_float64]
+    )
     if ufl_el.dtype == np.float32:
         _fe_constructor = dolfinx.cpp.fem.FiniteElement_float32
         _fem_constructor = dolfinx.cpp.fem.FunctionSpace_float32
@@ -362,20 +365,33 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
         _fem_constructor = dolfinx.cpp.fem.FunctionSpace_float64
     else:
         raise RuntimeError(f"Unsupported type {ufl_el.dtype}")
-    try:
-        cpp_el = _fe_constructor(ufl_el.basix_element._e, block_shape=value_shape, symmetric=False)
-    except TypeError:
-        cpp_el = _fe_constructor(ufl_el.basix_element._e, block_size=N, symmetric=False)
+    cpp_el = fenicsx_compat.finite_element_ctor_kwargs(
+        _fe_constructor,
+        ufl_el.basix_element._e,
+        gdim=mesh.geometry.dim,
+        value_shape=value_shape,
+    )
     dof_layout = dolfinx.cpp.fem.create_element_dof_layout(cpp_el, [])
-    cpp_dofmap = dolfinx.cpp.fem.DofMap(dof_layout, geom_imap, N, adj_list, N)
+    cpp_dofmap = dolfinx.cpp.fem.DofMap(
+        dof_layout, fenicsx_compat.unwrap_index_map(geom_imap), N, adj_list, N
+    )
 
     # Create function space
-    try:
-        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap)
-    except TypeError:
-        cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap, value_shape=value_shape)
+    cpp_space = _fem_constructor(mesh._cpp_object, cpp_el, cpp_dofmap)  # type: ignore[arg-type]
 
     return dolfinx.fem.FunctionSpace(mesh, ufl_el, cpp_space)
+
+
+def _function_dtype(data_dtype: np.dtype, mesh: dolfinx.mesh.Mesh) -> np.dtype:
+    """The dtype of a function holding data read from file.
+
+    Real data takes the precision of the mesh (a function space only allows its mesh's real type,
+    e.g. float32 data on a float64 mesh), complex data the complex type of that precision.
+    """
+    real = np.dtype(mesh.geometry.x.dtype)
+    if np.issubdtype(data_dtype, np.complexfloating):
+        return np.result_type(real, np.complex64)
+    return real
 
 
 def read_point_data(
@@ -385,23 +401,30 @@ def read_point_data(
     time: float | None = None,
     backend_args: dict[str, Any] | None = None,
     backend: str = "xdmf",
+    mesh_name: str | None = None,
 ) -> dolfinx.fem.Function:
     """Read data from the nodes of a mesh.
 
     Note:
-        Backend has to implement {py:class}`io4dolfinx.backends.read_cell_data`.
+        Backend has to implement :meth:`io4dolfinx.backends.IOBackend.read_point_data`.
 
     Args:
         filename: Path to file
         name: Name of point data
-        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`. Its numbering must
+            match the one the data was written in; see :ref:`input-ordering`.
         time: Time-step to read from.
+        mesh_name: Name of the mesh in the file the data belongs to. Defaults
+            to the mesh written without an explicit name.
 
     Returns:
         A function in the space equivalent to the mesh
         coordinate element (up to shape).
     """
 
+    backend_args = _with_mesh_name(backend_args, mesh_name)
+    logger.debug(f"Reading point data from {filename} with name {name} at time {time}")
+    logger.debug(f"Using backend {backend} with arguments {backend_args}")
     backend_cls = get_backend(backend)
     dataset, local_range_start = backend_cls.read_point_data(
         filename=filename, name=name, comm=mesh.comm, time=time, backend_args=backend_args
@@ -411,9 +434,9 @@ def read_point_data(
 
     # Create appropriate function space (based on coordinate map)
     V = create_geometry_function_space(mesh, num_components)
-    uh = dolfinx.fem.Function(V, name=name, dtype=dataset.dtype)
+    uh = dolfinx.fem.Function(V, name=name, dtype=_function_dtype(dataset.dtype, mesh))
     # Assume that mesh is first order for now
-    x_dofmap = mesh.geometry.dofmap
+    x_dofmap = fenicsx_compat.dofmap(mesh)
     igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
 
     # This is dependent on how the data is read in. If distributed equally this is correct
@@ -449,21 +472,26 @@ def read_cell_data(
     time: float | None = None,
     backend_args: dict[str, Any] | None = None,
     backend: str = "xdmf",
+    mesh_name: str | None = None,
 ) -> dolfinx.fem.Function:
-    """Read data from the nodes of a mesh.
+    """Read data from the cells of a mesh.
 
     Note:
-        Backend has to implement {py:class}`io4dolfinx.backends.read_cell_data`.
+        Backend has to implement :meth:`io4dolfinx.backends.IOBackend.read_cell_data`.
 
     Args:
         filename: Path to file
         name: Name of point data
-        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`. Its numbering must
+            match the one the data was written in; see :ref:`input-ordering`.
         time: Time-step to read from.
+        mesh_name: Name of the mesh in the file the data belongs to. Defaults
+            to the mesh written without an explicit name.
 
     Returns:
         A function in a DG-0 space on the mesh. The cells not found in input is set to zero.
     """
+    backend_args = _with_mesh_name(backend_args, mesh_name)
 
     backend_cls = get_backend(backend)
 
@@ -477,7 +505,7 @@ def read_cell_data(
     else:
         shape = (num_components,)
     V = dolfinx.fem.functionspace(mesh, ("DG", 0, shape))
-    u = dolfinx.fem.Function(V, dtype=dofs.dtype)
+    u = dolfinx.fem.Function(V, dtype=_function_dtype(dofs.dtype, mesh))
     data_array = u.x.array.reshape(-1, num_components)
     for i in range(num_components):
         local_entities, local_values = dolfinx.io.distribute_entity_data(

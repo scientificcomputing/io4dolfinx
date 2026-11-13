@@ -10,16 +10,16 @@ Vectorized numpy operations used internally in io4dolfinx
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
 from pathlib import Path
 
 from mpi4py import MPI
 
-import basix.ufl
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
-import ufl
-from packaging.version import Version
 
 __all__ = [
     "check_file_exists",
@@ -30,7 +30,15 @@ __all__ = [
     "compute_insert_position",
     "unroll_insert_position",
     "reconstruct_mesh",
+    "codim_names",
+    "match_rows",
+    "strip_suffix",
+    "input_cell_index",
 ]
+
+#: Codimension of the entities named ``"cell"``, ``"facet"``, ``"ridge"`` and ``"peak"``,
+#: as in :func:`dolfinx.io.gmsh.model_to_mesh`
+codim_names = {"cell": 0, "facet": 1, "ridge": 2, "peak": 3}
 
 
 def check_file_exists(filename: Path | str):
@@ -44,10 +52,7 @@ valid_real_types = np.float32 | np.float64
 
 
 def element_signature(V):
-    if Version(dolfinx.__version__) > Version("0.9.0"):
-        return V.element.signature
-    else:
-        return V.element.signature()
+    return V.element.signature
 
 
 def compute_insert_position(
@@ -111,7 +116,7 @@ def unroll_insert_position(
     return unrolled_ip
 
 
-def compute_local_range(comm: MPI.Intracomm, N: np.int64):
+def compute_local_range(comm: MPI.Comm, N: int | np.int64):
     """
     Divide a set of `N` objects into `M` partitions, where `M` is
     the size of the MPI communicator `comm`.
@@ -133,7 +138,7 @@ def compute_local_range(comm: MPI.Intracomm, N: np.int64):
 
 
 def index_owner(
-    comm: MPI.Intracomm, indices: npt.NDArray[np.int64], N: np.int64
+    comm: MPI.Comm, indices: npt.NDArray[np.int64], N: int | np.int64
 ) -> npt.NDArray[np.int32]:
     """
     Find which rank (local to comm) which owns an `index`, given that
@@ -173,9 +178,19 @@ def compute_dofmap_pos(
     Compute a map from each owned dof in the dofmap to a single cell owned by the
     process, and the relative position of the dof.
 
+    .. note::
+        Every owned dof must be reachable from a cell owned by the process. This
+        holds for a mesh created by :func:`dolfinx.mesh.create_mesh`, but not
+        necessarily for one created by :func:`dolfinx.mesh.create_submesh`, which
+        builds its vertex map allowing owner changes: a rank may own a vertex --
+        and therefore a dof -- that is only incident to cells it ghosts. Such
+        dofs cannot be assigned a position and raise rather than silently
+        yielding an arbitrary one.
+
     :param V: The function space
     :returns: The tuple (`cells`, `dof_pos`) where each array is the size of the
         number of owned dofs (unrolled for block size)
+    :raises RuntimeError: If an owned dof is not contained in any owned cell.
     """
     dofs = V.dofmap.list
     mesh = V.mesh
@@ -183,10 +198,12 @@ def compute_dofmap_pos(
     dofmap_bs = V.dofmap.bs
     num_owned_dofs = V.dofmap.index_map.size_local * V.dofmap.index_map_bs
 
-    local_cell = np.empty(
-        num_owned_dofs, dtype=np.int32
+    # Initialize to -1 rather than leaving uninitialized, so that a dof that is
+    # never visited below is detectable instead of holding arbitrary memory.
+    local_cell = np.full(
+        num_owned_dofs, -1, dtype=np.int32
     )  # Local cell index for each dof owned by process
-    dof_pos = np.empty(num_owned_dofs, dtype=np.int32)  # Position in dofmap for said dof
+    dof_pos = np.full(num_owned_dofs, -1, dtype=np.int32)  # Position in dofmap for said dof
 
     unrolled_dofmap = unroll_dofmap(dofs[:num_owned_cells, :], dofmap_bs)
     markers = unrolled_dofmap < num_owned_dofs
@@ -198,6 +215,17 @@ def compute_dofmap_pos(
     indicator = unrolled_dofmap[markers].reshape(-1)
     local_cell[indicator] = cell_indicator[markers].reshape(-1)
     dof_pos[indicator] = local_indices[markers].reshape(-1)
+
+    num_unreachable = int(np.count_nonzero(local_cell < 0))
+    if num_unreachable > 0:
+        raise RuntimeError(
+            f"{num_unreachable} of {num_owned_dofs} owned dofs are not contained in any"
+            " cell owned by this process, so their position in the dofmap is undefined."
+            " This happens on meshes created with `dolfinx.mesh.create_submesh`, which"
+            " may move vertex ownership to a process that does not own an incident cell."
+            " Read the function on a standalone mesh (see `io4dolfinx.read_submesh`)"
+            " rather than on a mesh derived with `create_submesh`."
+        )
     return local_cell, dof_pos
 
 
@@ -216,45 +244,61 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
         The new mesh
 
     """
-    # Extract cell properties
-    ud = mesh.ufl_domain()
-    assert ud is not None
-    c_el = ud.ufl_coordinate_element()
-    family = c_el.family_name
-    lvar = c_el.lagrange_variant
-    ct = c_el.cell_type
-
-    # Create new UFL element
-    new_c_el = basix.ufl.element(
-        family,
-        ct,
-        coordinate_element_degree,
-        shape=(mesh.geometry.dim,),
-        lagrange_variant=lvar,
-        dtype=mesh.geometry.x.dtype,
+    warnings.warn(
+        "reconstruct_mesh is deprecated and will be removed in a future release. "
+        + "Use dolfinx.fem.interpolate_geometry instead, available from DOLFINx>=0.11, "
+        + "or fenicsx_compat.reconstruct_mesh.",
+        category=DeprecationWarning,
+        stacklevel=2,
     )
+    return fenicsx_compat.reconstruct_mesh(mesh, coordinate_element_degree)
 
-    # Extract new node coordinates
-    V_tmp = dolfinx.fem.functionspace(mesh, new_c_el)
-    gdim = mesh.geometry.dim
-    x = V_tmp.tabulate_dof_coordinates()[:, :gdim]
 
-    # Create new geoemtry
-    geom_imap = V_tmp.dofmap.index_map
-    geom_dofmap = V_tmp.dofmap.list
-    num_nodes_local = geom_imap.size_local + geom_imap.num_ghosts
-    original_input_indices = geom_imap.local_to_global(np.arange(num_nodes_local, dtype=np.int32))
-    coordinate_element = dolfinx.fem.coordinate_element(
-        mesh.topology.cell_type, coordinate_element_degree, lvar, dtype=mesh.geometry.x.dtype
-    )
-    # Could use create_geometry here when things are fixed
-    geom = dolfinx.mesh.Geometry(
-        type(mesh.geometry._cpp_object)(
-            geom_imap, geom_dofmap, coordinate_element._cpp_object, x, original_input_indices
-        )
-    )
+def match_rows(reference: npt.NDArray[np.int64], query: npt.NDArray[np.int64]) -> npt.NDArray:
+    """Find the rows of ``reference`` holding the same nodes as each row of ``query``.
 
-    # Create new mesh
-    new_top = mesh.topology
-    cpp_mesh = type(mesh._cpp_object)(mesh.comm, new_top._cpp_object, geom._cpp_object)
-    return dolfinx.mesh.Mesh(cpp_mesh, ufl.Mesh(new_c_el))
+    Returns:
+        Index into ``reference`` of each query row, ``-1`` if it has no match. If
+        several rows match, the first one is used.
+    """
+    if len(query) == 0:
+        return np.zeros(0, dtype=np.int64)
+    rows = np.vstack([np.sort(reference, axis=1), np.sort(query, axis=1)])
+    _, inverse = np.unique(rows, axis=0, return_inverse=True)
+    inverse = inverse.reshape(-1)
+    lookup = np.full(inverse.max() + 1, -1, dtype=np.int64)
+    matched, first = np.unique(inverse[: len(reference)], return_index=True)
+    lookup[matched] = first
+    return lookup[inverse[len(reference) :]]
+
+
+def strip_suffix(filename: Path | str, suffixes: Sequence[str]) -> Path:
+    """Remove the suffix of a filename if it is one of ``suffixes``.
+
+    For formats that store a dataset as several files sharing a base name.
+
+    Args:
+        filename: Base name, or the path of one of its files
+        suffixes: Suffixes of the files of the format, e.g. ``(".pts", ".elem")``
+
+    Returns:
+        The base name
+    """
+    path = Path(filename)
+    return path.with_suffix("") if path.suffix in suffixes else path
+
+
+def input_cell_index(mesh: dolfinx.mesh.Mesh) -> npt.NDArray[np.int64]:
+    """The index of each local cell in the input mesh, for writing data in the input ordering.
+
+    Raises:
+        ValueError: If the mesh has no input cell indices, as for a submesh. DOLFINx raises a
+            ``RuntimeError`` or a ``ValueError``, depending on its version.
+    """
+    try:
+        return mesh.topology.original_cell_index
+    except (RuntimeError, ValueError) as e:
+        raise ValueError(
+            "The mesh has no input cell indices, so the data cannot be written in the input "
+            "ordering. This is the case for a submesh."
+        ) from e
