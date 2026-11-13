@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from ...ascii_helpers import read_count, read_rows, write_rows
+from ...ascii_helpers import read_rows, write_rows
 from ...utils import match_rows, strip_suffix
 
 __all__ = [
@@ -25,6 +25,7 @@ __all__ = [
     "cell_types",
     "element_tdim",
     "dolfinx_to_opencarp",
+    "opencarp_to_dolfinx",
     "mirror_permutation",
     "element_faces",
     "face_element_types",
@@ -42,7 +43,6 @@ __all__ = [
     "read_elem",
     "write_elem",
     "orientation",
-    "facet_normals",
     "oriented_facets",
     "sort_facets",
 ]
@@ -68,6 +68,11 @@ dolfinx_to_opencarp = {
     "Qd": np.array([0, 1, 3, 2]),
     "Tt": np.array([0, 1, 2, 3]),
     "Hx": np.array([0, 1, 3, 2, 4, 6, 7, 5]),
+}
+
+# Node permutation ``p`` with ``dolfinx[i] = opencarp[p[i]]``, the inverse of the above
+opencarp_to_dolfinx = {
+    element: np.argsort(permutation) for element, permutation in dolfinx_to_opencarp.items()
 }
 
 # Node permutation mirroring an element in openCARP ordering, flipping its orientation
@@ -113,7 +118,7 @@ def get_scale(backend_args: dict[str, Any]) -> float:
     """
     try:
         scale = float(backend_args["scale"])
-    except KeyError as e:
+    except (KeyError, TypeError) as e:
         raise ValueError(
             "The openCARP backend needs backend_args['scale'], the factor converting mesh "
             "coordinates to µm (e.g. 1000.0 for a mesh in mm, 1.0 for a mesh in µm)."
@@ -215,10 +220,10 @@ def read_elem_type(path: Path) -> str:
 def read_elem(
     path: Path, local_range: tuple[int, int] | list[int] | None = None
 ) -> tuple[str, npt.NDArray[np.int64], npt.NDArray[np.int32]]:
-    """Read the elements of an ``.elem`` file.
+    """Read the elements of an ``.elem`` file, or the faces of a ``.surf`` file.
 
     Args:
-        path: The ``.elem`` file
+        path: The ``.elem`` or ``.surf`` file
         local_range: Range of elements to read, all if ``None``
 
     Returns:
@@ -229,30 +234,38 @@ def read_elem(
     """
     elem_type = read_elem_type(path)
     num_nodes = len(dolfinx_to_opencarp[elem_type])
-    if local_range is None:
-        local_range = (0, read_count(path))
-    rows = read_rows(path, local_range, num_nodes + 2)
-    if other := sorted(set(rows[:, 0]) - {elem_type}):
+    with open(path) as f:
+        f.readline()
+        num_columns = len(f.readline().split())
+    # The type column is read as strings, the nodes and tags as integers
+    types = read_rows(path, 1, local_range, usecols=0)
+    if other := sorted(set(types[:, 0]) - {elem_type}):
         raise NotImplementedError(
             f"Meshes with several element types are not supported, {path} has "
             f"{[elem_type, *other]}."
         )
-    cells = rows[:, 1 : 1 + num_nodes].astype(np.int64)
-    if rows.shape[1] > 1 + num_nodes:
-        tags = rows[:, 1 + num_nodes].astype(np.int32)
+    numbers = read_rows(
+        path, num_columns - 1, local_range, dtype=np.int64, usecols=range(1, num_columns)
+    )
+    cells = numbers[:, :num_nodes]
+    if num_columns > 1 + num_nodes:
+        tags = numbers[:, num_nodes].astype(np.int32)
     else:
         tags = np.zeros(len(cells), dtype=np.int32)
     return elem_type, cells, tags
 
 
 def write_elem(
-    path: Path, elem_type: str, cells: npt.NDArray[np.int64], tags: npt.NDArray[np.int32]
+    path: Path,
+    elem_type: str,
+    cells: npt.NDArray[np.int64],
+    tags: npt.NDArray[np.int32] | None = None,
 ):
-    """Write elements with their region tags to an ``.elem`` file."""
-    rows = np.column_stack([cells, tags])
-    # Each line is the element type followed by the nodes and the tag
+    """Write elements, with their region tags if given, to an ``.elem`` or ``.surf`` file."""
+    rows = cells if tags is None else np.column_stack([cells, tags])
+    # Each line is the element type followed by the nodes, and the tag if given
     fmt = " ".join([elem_type] + ["%d"] * rows.shape[1])
-    write_rows(path, [str(len(cells))], rows, fmt)
+    write_rows(path, [str(len(rows))], rows, fmt)
 
 
 def orientation(
@@ -274,14 +287,6 @@ def orientation(
         return normal[:, 2]
     third = 3 if elem_type == "Tt" else 4
     return np.einsum("ij,ij->i", normal, p[:, third] - p[:, 0])
-
-
-def facet_normals(x: npt.NDArray[np.floating], facets: npt.NDArray[np.int64]) -> npt.NDArray:
-    """Get a normal of each triangle or quadrilateral, with nodes in cyclic order."""
-    p = x[facets]
-    if facets.shape[1] == 3:
-        return np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
-    return np.cross(p[:, 2] - p[:, 0], p[:, 3] - p[:, 1])
 
 
 def oriented_facets(
@@ -315,8 +320,15 @@ def oriented_facets(
     cell_centres = face_cell_centres[order][match]
 
     facets = facets.copy()
-    outward = x[facets].mean(axis=1) - cell_centres
-    inward = np.einsum("ij,ij->i", facet_normals(x, facets), outward) < 0
+    p = x[facets]
+    # A normal of each facet, from two edges of a triangle or the diagonals of a
+    # quadrilateral, with nodes in cyclic order
+    if facets.shape[1] == 3:
+        normals = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
+    else:
+        normals = np.cross(p[:, 2] - p[:, 0], p[:, 3] - p[:, 1])
+    outward = p.mean(axis=1) - cell_centres
+    inward = np.einsum("ij,ij->i", normals, outward) < 0
     facets[inward] = facets[inward][:, mirror_permutation[face_element_types[elem_type]]]
     return facets
 

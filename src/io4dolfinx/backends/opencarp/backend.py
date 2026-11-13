@@ -319,7 +319,7 @@ def read_mesh_data(
     elem_type = helpers.read_elem_type(elem)
 
     def read():
-        x = read_rows(pts, compute_local_range(comm, read_count(pts)), 3).astype(np.float64)
+        x = read_rows(pts, 3, compute_local_range(comm, read_count(pts)), dtype=np.float64)
         _, cells, _ = helpers.read_elem(elem, compute_local_range(comm, read_count(elem)))
         return x, cells
 
@@ -334,7 +334,7 @@ def read_mesh_data(
             )
         x = x[:, :2]
     return ReadMeshData(
-        cells=cells[:, np.argsort(helpers.dolfinx_to_opencarp[elem_type])],
+        cells=cells[:, helpers.opencarp_to_dolfinx[elem_type]],
         cell_type=helpers.cell_types[elem_type],
         x=x / scale,
         lvar=int(basix.LagrangeVariant.equispaced),
@@ -411,7 +411,7 @@ def write_meshtags(
         write_surf = args["surf"] and helpers.element_tdim[elem_type] == 3 and data.dim == 2
         if write_surf:
             pts = helpers.mesh_file(filename, ".pts")
-            x = read_rows(pts, (0, read_count(pts)), 3).astype(np.float64)
+            x = read_rows(pts, 3, dtype=np.float64)
             face_type = helpers.face_element_types[elem_type]
             # DOLFINx orders the nodes of a quadrilateral facet as a tensor product
             facets = indices[:, helpers.dolfinx_to_opencarp[face_type]]
@@ -427,12 +427,7 @@ def write_meshtags(
             )
             if write_surf:
                 faces = helpers.sort_facets(facets[marked])
-                write_rows(
-                    helpers.marker_file(filename, name, ".surf"),
-                    [str(len(faces))],
-                    faces,
-                    " ".join([face_type] + ["%d"] * faces.shape[1]),
-                )
+                helpers.write_elem(helpers.marker_file(filename, name, ".surf"), face_type, faces)
             index[name] = {"value": int(value), "dim": int(data.dim), "surf": bool(write_surf)}
         helpers.write_marker_index(filename, index)
 
@@ -469,7 +464,7 @@ def read_meshtags_data(
         elem_type, cells, tags = run_on_all(
             comm, lambda: helpers.read_elem(elem, compute_local_range(comm, read_count(elem)))
         )
-        cells = cells[:, np.argsort(helpers.dolfinx_to_opencarp[elem_type])]
+        cells = cells[:, helpers.opencarp_to_dolfinx[elem_type]]
         return MeshTagsData(
             name=name, values=tags, indices=cells, dim=helpers.element_tdim[elem_type]
         )
@@ -508,16 +503,15 @@ def read_meshtags_data(
         for path in files:
             marker = path.name[len(base.name) + 1 : -len(path.suffix)]
             if dim == 2:
-                rows = read_rows(path, (0, read_count(path)), 4)
-                face_types = set(rows[:, 0])
-                if len(face_types) > 1 or not face_types <= {"Tr", "Qd"}:
-                    raise NotImplementedError(f"Unsupported face types {face_types} in {path}.")
-                face_type = face_types.pop() if face_types else "Tr"
-                perm = np.argsort(helpers.dolfinx_to_opencarp[face_type])
-                entities = rows[:, 1:].astype(np.int64)[:, perm]
+                if read_count(path) == 0:
+                    entities = np.zeros((0, 3), dtype=np.int64)
+                else:
+                    face_type, faces, _ = helpers.read_elem(path)
+                    if face_type not in helpers.face_element_types.values():
+                        raise NotImplementedError(f"Unsupported face type {face_type} in {path}.")
+                    entities = faces[:, helpers.opencarp_to_dolfinx[face_type]]
             else:
-                rows = read_rows(path, (0, read_count(path)), 1, header=2)
-                entities = rows.astype(np.int64).reshape(-1, 1)
+                entities = read_rows(path, 1, header=2, dtype=np.int64)
             all_indices.append(entities)
             all_values.append(
                 np.full(len(entities), helpers.marker_value(args["markers"], index, marker))
@@ -695,13 +689,13 @@ def read_cell_data(
     def read():
         local_range = compute_local_range(comm, read_count(elem))
         elem_type, cells, _ = helpers.read_elem(elem, local_range)
-        rows = read_rows(lon, local_range, 3 * num_directions).astype(np.float64)
+        rows = read_rows(lon, 3 * num_directions, local_range, dtype=np.float64)
         return elem_type, cells, rows
 
     elem_type, cells, rows = run_on_all(comm, read)
     column = 3 * helpers.direction_names.index(name)
     dofs = rows[:, column : column + helpers.element_tdim[elem_type]]
-    cells = cells[:, np.argsort(helpers.dolfinx_to_opencarp[elem_type])]
+    cells = cells[:, helpers.opencarp_to_dolfinx[elem_type]]
     return cells, np.ascontiguousarray(dofs)
 
 
@@ -780,7 +774,7 @@ def write_data(
             if read_count(lon) != 1:
                 raise ValueError(f"{lon} already holds fibers and sheets.")
             check_row_count(lon, num_cells)
-            fibers = read_rows(lon, (0, num_cells), 3).astype(np.float64)
+            fibers = read_rows(lon, 3, (0, num_cells), dtype=np.float64)
             rows = np.hstack([fibers, rows])
         write_rows(lon, [str(rows.shape[1] // 3)], rows, helpers.float_format)
 
