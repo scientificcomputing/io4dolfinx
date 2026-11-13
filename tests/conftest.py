@@ -38,9 +38,20 @@ def backend(request):
 
 
 @pytest.fixture
+def tmp_path(tmp_path):
+    """The temporary directory of rank 0, shared by all ranks of ``MPI.COMM_WORLD``.
+
+    Under MPI, pytest gives each rank its own directory, unless the ranks share
+    ``--basetemp`` as in Debian's CI. Sharing it in every run makes tests that write
+    the same file from several ranks fail here too (issue #31).
+    """
+    return MPI.COMM_WORLD.bcast(tmp_path, root=0)
+
+
+@pytest.fixture
 def shared_tmp_path(tmp_path):
     """The temporary directory of rank 0, shared by all ranks of ``MPI.COMM_WORLD``."""
-    return MPI.COMM_WORLD.bcast(tmp_path, root=0)
+    return tmp_path
 
 
 @pytest.fixture(scope="module")
