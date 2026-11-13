@@ -10,6 +10,7 @@ import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 
+from ...format import METADATA_KEYS
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
@@ -102,6 +103,77 @@ def convert_file_mode(mode: FileMode) -> adios2.Mode:  # type: ignore[override]
             return adios2.Mode.Read
         case _:
             raise NotImplementedError(f"FileMode {mode} not implemented.")
+
+
+def _metadata_prefix(kind: str, name: str | None, backend_args: dict[str, Any]) -> str:
+    """Prefix of the names of the attributes holding the metadata of an object.
+
+    Args:
+        kind: ``"mesh"``, ``"function"`` or ``"meshtags"``
+        name: Name of the function or mesh tags, unused for a mesh
+        backend_args: Arguments to backend, naming the mesh the object belongs to
+    """
+    prefix = mesh_prefix(backend_args)
+    match kind:
+        case "mesh":
+            return prefix
+        case "function" | "meshtags":
+            return f"{prefix}{name}_"
+        case _:
+            raise ValueError(f"Unknown kind of object {kind!r}")
+
+
+def _define_metadata(io: adios2.IO, attribute_prefix: str, metadata: dict[str, Any]):
+    """Store the metadata of an object as attributes, when the object is first written."""
+    for key, value in metadata.items():
+        io.DefineAttribute(f"{attribute_prefix}{key}", value)
+
+
+def read_metadata(
+    filename: Path | str,
+    comm: MPI.Comm,
+    kind: str,
+    name: str | None = None,
+    backend_args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read the metadata stored with an object, see :mod:`io4dolfinx.format`.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator
+        kind: ``"mesh"``, ``"function"`` or ``"meshtags"``
+        name: Name of the function or mesh tags, unused for a mesh
+        backend_args: Arguments to backend
+
+    Returns:
+        The metadata, empty if the object does not exist or has none
+    """
+    backend_args = get_default_backend_args(backend_args)
+    if not Path(filename).exists():
+        return {}
+    attribute_prefix = _metadata_prefix(kind, name, backend_args)
+    wanted = {f"{attribute_prefix}{key}": key for key in METADATA_KEYS}
+    metadata: dict[str, Any] = {}
+    adios = adios2.ADIOS(comm)
+    with ADIOSFile(
+        adios=adios,
+        filename=filename,
+        mode=adios2.Mode.Read,
+        engine=backend_args["engine"],
+        io_name="MetadataReader",
+    ) as adios_file:
+        # Attributes become available in the step they were written in
+        for _ in range(adios_file.file.Steps()):
+            adios_file.file.BeginStep()
+            available = adios_file.io.AvailableAttributes()
+            for attribute, key in wanted.items():
+                if key not in metadata and attribute in available:
+                    data = adios_file.io.InquireAttribute(attribute)
+                    metadata[key] = data.DataString()[0] if data.Type() == "string" else data.Data()
+            adios_file.file.EndStep()
+            if len(metadata) == len(wanted):
+                break
+    return metadata
 
 
 def write_attributes(
@@ -281,6 +353,7 @@ def write_mesh(
         adios_file.file.Put(pointvar, mesh.local_geometry, adios2.Mode.Sync)
 
         if not topology_exists:
+            _define_metadata(adios_file.io, prefix, mesh.metadata)
             adios_file.io.DefineAttribute(f"{prefix}CellType", mesh.cell_type)
             adios_file.io.DefineAttribute(
                 f"{prefix}Degree", np.array([mesh.degree], dtype=np.int32)
@@ -537,6 +610,7 @@ def write_meshtags(
         adios_file.io.DefineAttribute(
             f"{prefix}{data.name}_dim", np.array([data.dim], dtype=np.uint8)
         )
+        _define_metadata(adios_file.io, f"{prefix}{data.name}_", data.metadata)
         adios_file.file.PerformPuts()
         adios_file.file.EndStep()
 
@@ -905,6 +979,7 @@ def write_function(
             adios_file.file.Put(pvar, u.cell_permutations)
 
         if not dofmap_exists:
+            _define_metadata(adios_file.io, f"{prefix}{u.name}_", u.metadata)
             # Add dofmap
             dofmap_var = adios_file.io.DefineVariable(
                 f"{prefix}{u.name}_dofmap",
