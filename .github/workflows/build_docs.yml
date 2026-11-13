@@ -30,6 +30,10 @@ env:
   OMPI_ALLOW_RUN_AS_ROOT: 1
   OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
   PRTE_MCA_rmaps_default_mapping_policy: :oversubscribe
+  HDF5_MPI: ON
+  HDF5_DIR: /usr/lib/hdf5-mpi
+  CC: mpicc
+
   # Works around open-mpi/ompi#13918: MPI_Dist_graph_create deadlocks at
   # random under the treematch topology component, because it exchanges edge
   # metadata on hard-coded tags -50/-51 that the nonblocking-collective tag
@@ -63,10 +67,6 @@ jobs:
       # Without HDF5_MPI, h5py builds against the image's parallel HDF5 in
       # serial mode, so the multi-rank ipyparallel examples cannot use it.
       - name: Install h5py with MPI support
-        env:
-          HDF5_MPI: "ON"
-          HDF5_DIR: /usr/local
-          CC: mpicc
         run: |
           python3 -m pip install "Cython>=3.0.11" "pkgconfig>=1.5.5"
           python3 -m pip install h5py --no-binary=h5py --no-build-isolation
