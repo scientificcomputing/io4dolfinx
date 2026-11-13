@@ -1,26 +1,60 @@
 name: Github Pages
 
+# The web page has the documentation of main, built against DOLFINx nightly, where its root leads,
+# and of each minor release, which the version switcher lists. Each version is built once and its
+# HTML archived in the `docs-archive` release, so a push to main only builds main, and a new tag
+# only builds that tag. A version that fails to build keeps its archived build.
+# See .github/docs-versions.toml and .github/scripts/docs_site.py.
 on:
   push:
     branches: [main]
-  # pull_request:
-  #   branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Allow one concurrent deployment
+# Allow one concurrent deployment, without cancelling one that is in progress
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+env:
+  ARCHIVE: docs-archive
+  GH_REPO: ${{ github.repository }}
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
-  build-docs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      # The scripts and the list of versions always come from main, also when run for a tag
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: List archived builds
+        run: |
+          gh release view "$ARCHIVE" --json assets --jq '.assets[].name' > archived.txt \
+            || touch archived.txt  # The release doesn't exist before the first run
+          cat archived.txt
+
+      - name: Plan builds
+        id: plan
+        run: python3 .github/scripts/docs_site.py plan archived.txt
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     uses: ./.github/workflows/build_docs.yml
     with:
-      tag: "stable"
+      ref: ${{ matrix.ref }}
+      image: ${{ matrix.image }}
+      asset: ${{ matrix.asset }}
 
   test-code:
     uses: ./.github/workflows/test_dolfinx_versions.yml
@@ -28,44 +62,74 @@ jobs:
       dolfinx_tag: "stable"
 
   deploy:
-    needs: [build-docs, test-code]
-
+    needs: [plan, build, test-code]
+    # Publish whatever built, as a version that failed keeps its archived build, but only if
+    # the tests pass
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.test-code.result == 'success' }}
+    permissions:
+      contents: write # To keep the builds in the docs-archive release
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Download docs artifact
-        # docs artifact is uploaded by build-docs job
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Download fresh builds
         uses: actions/download-artifact@v8
         with:
-          name: docs
-          path: "./public"
+          pattern: docs-*.tar.gz
+          path: fresh
+          merge-multiple: true
 
-      - name: Download code coverage report artifact
-        # docs artifact is uploaded by build-docs job
+      # main is archived too, so that a failed build of it falls back to the last one that built
+      - name: Archive fresh builds
+        run: |
+          gh release view "$ARCHIVE" > /dev/null 2>&1 \
+            || gh release create "$ARCHIVE" --prerelease --latest=false \
+                 --title "Documentation archive" \
+                 --notes "Built HTML of each version of the documentation, used to publish the web page. Do not delete."
+          shopt -s nullglob
+          for f in fresh/docs-*.tar.gz; do
+            gh release upload "$ARCHIVE" "$f" --clobber
+          done
+
+      - name: Assemble site
+        run: python3 .github/scripts/docs_site.py assemble fresh site
+
+      - name: Add version switcher
+        run: python3 .github/scripts/docs_site.py inject site
+
+      - name: Download code coverage report (stable)
         uses: actions/download-artifact@v8
         with:
           name: code-coverage-report-stable
-          path: "./public/code-coverage-report-stable"
+          path: site/code-coverage-report-stable
 
-      - name: Download code coverage report artifact
-        # docs artifact is uploaded by build-docs job
+      - name: Download code coverage report (nightly)
         uses: actions/download-artifact@v8
         with:
           name: code-coverage-report-nightly
-          path: "./public/code-coverage-report-nightly"
+          path: site/code-coverage-report-nightly
 
+      - name: Remove unused builds from the archive
+        run: |
+          keep=$(python3 .github/scripts/docs_site.py used)
+          for asset in $(gh release view "$ARCHIVE" --json assets --jq '.assets[].name'); do
+            case " ${keep} " in
+              *" ${asset} "*) ;;
+              *) echo "Removing ${asset}"; gh release delete-asset "$ARCHIVE" "$asset" --yes ;;
+            esac
+          done
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: "./public"
-
-      - name: Checkout
-        uses: actions/checkout@v7
+          path: site
 
       - name: Setup Pages
         uses: actions/configure-pages@v6

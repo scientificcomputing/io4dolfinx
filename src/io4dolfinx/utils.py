@@ -11,6 +11,7 @@ Vectorized numpy operations used internally in io4dolfinx
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 
 from mpi4py import MPI
@@ -30,6 +31,9 @@ __all__ = [
     "unroll_insert_position",
     "reconstruct_mesh",
     "codim_names",
+    "match_rows",
+    "strip_suffix",
+    "input_cell_index",
 ]
 
 #: Codimension of the entities named ``"cell"``, ``"facet"``, ``"ridge"`` and ``"peak"``,
@@ -248,3 +252,53 @@ def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) ->
         stacklevel=2,
     )
     return fenicsx_compat.reconstruct_mesh(mesh, coordinate_element_degree)
+
+
+def match_rows(reference: npt.NDArray[np.int64], query: npt.NDArray[np.int64]) -> npt.NDArray:
+    """Find the rows of ``reference`` holding the same nodes as each row of ``query``.
+
+    Returns:
+        Index into ``reference`` of each query row, ``-1`` if it has no match. If
+        several rows match, the first one is used.
+    """
+    if len(query) == 0:
+        return np.zeros(0, dtype=np.int64)
+    rows = np.vstack([np.sort(reference, axis=1), np.sort(query, axis=1)])
+    _, inverse = np.unique(rows, axis=0, return_inverse=True)
+    inverse = inverse.reshape(-1)
+    lookup = np.full(inverse.max() + 1, -1, dtype=np.int64)
+    matched, first = np.unique(inverse[: len(reference)], return_index=True)
+    lookup[matched] = first
+    return lookup[inverse[len(reference) :]]
+
+
+def strip_suffix(filename: Path | str, suffixes: Sequence[str]) -> Path:
+    """Remove the suffix of a filename if it is one of ``suffixes``.
+
+    For formats that store a dataset as several files sharing a base name.
+
+    Args:
+        filename: Base name, or the path of one of its files
+        suffixes: Suffixes of the files of the format, e.g. ``(".pts", ".elem")``
+
+    Returns:
+        The base name
+    """
+    path = Path(filename)
+    return path.with_suffix("") if path.suffix in suffixes else path
+
+
+def input_cell_index(mesh: dolfinx.mesh.Mesh) -> npt.NDArray[np.int64]:
+    """The index of each local cell in the input mesh, for writing data in the input ordering.
+
+    Raises:
+        ValueError: If the mesh has no input cell indices, as for a submesh. DOLFINx raises a
+            ``RuntimeError`` or a ``ValueError``, depending on its version.
+    """
+    try:
+        return mesh.topology.original_cell_index
+    except (RuntimeError, ValueError) as e:
+        raise ValueError(
+            "The mesh has no input cell indices, so the data cannot be written in the input "
+            "ordering. This is the case for a submesh."
+        ) from e

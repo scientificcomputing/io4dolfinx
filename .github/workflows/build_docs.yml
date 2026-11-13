@@ -1,12 +1,30 @@
 name: Build documentation
 
+# Builds the documentation and uploads its HTML as the artifact `docs`. The deploy workflow
+# (deploy_pages.yml) also uses it to build each version of the web page: given `ref`, `image`
+# and `asset`, it builds that commit in that image and uploads the HTML as the tarball `asset`.
 on:
   workflow_call:
     inputs:
       tag:
         description: "Tag of DOLFINx docker image"
         default: "stable"
-        required: true
+        required: false
+        type: string
+      ref:
+        description: "Commit, branch or tag to build, if not the one that triggered the workflow"
+        default: ""
+        required: false
+        type: string
+      image:
+        description: "DOLFINx docker image to build in, replacing `tag`"
+        default: ""
+        required: false
+        type: string
+      asset:
+        description: "Upload the HTML as this tarball, e.g. docs-v1.5.1.tar.gz, for the deploy"
+        default: ""
+        required: false
         type: string
   workflow_dispatch:
     inputs:
@@ -55,11 +73,13 @@ jobs:
     timeout-minutes: 30
     needs: get_image_tag
     runs-on: ubuntu-latest
-    container: ghcr.io/fenics/dolfinx/dolfinx:${{ needs.get_image_tag.outputs.image }}
+    container: ${{ inputs.image || format('ghcr.io/fenics/dolfinx/dolfinx:{0}', needs.get_image_tag.outputs.image) }}
 
     steps:
       # This action sets the current path to the root of your github repo
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Update pip
         run: python3 -m pip install --upgrade pip setuptools
@@ -72,8 +92,14 @@ jobs:
           python3 -m pip install h5py --no-binary=h5py --no-build-isolation
           python3 -c "import h5py; assert h5py.get_config().mpi, 'h5py built without MPI'"
 
+      # Releases before v1.4.0 have the docs dependencies as an extra, not a dependency group
       - name: Install docs dependencies
-        run: python3 -m pip install . --group docs
+        run: |
+          if grep -q '^\[dependency-groups\]' pyproject.toml; then
+            python3 -m pip install . --group docs
+          else
+            python3 -m pip install ".[docs]"
+          fi
 
       - name: Install dependencies
         run: python3 -m pip install -e . --no-build-isolation
@@ -83,8 +109,22 @@ jobs:
 
       - name: Upload documentation as artifact
         uses: actions/upload-artifact@v7
-        if: always()
+        if: ${{ always() && !inputs.asset }}
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.PUBLISH_DIR }}
           if-no-files-found: error
+
+      # A tarball keeps hidden files and permissions, and is what gets archived
+      - name: Package documentation for the web page
+        if: ${{ inputs.asset }}
+        run: tar -czf "${{ inputs.asset }}" -C "${{ env.PUBLISH_DIR }}" .
+
+      - name: Upload packaged documentation
+        if: ${{ inputs.asset }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.asset }}
+          path: ${{ inputs.asset }}
+          if-no-files-found: error
+          retention-days: 1

@@ -411,7 +411,8 @@ def read_point_data(
     Args:
         filename: Path to file
         name: Name of point data
-        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`. Its numbering must
+            match the one the data was written in; see :ref:`input-ordering`.
         time: Time-step to read from.
         mesh_name: Name of the mesh in the file the data belongs to. Defaults
             to the mesh written without an explicit name.
@@ -481,7 +482,8 @@ def read_cell_data(
     Args:
         filename: Path to file
         name: Name of point data
-        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`.
+        mesh: The corresponding :py:class:`dolfinx.mesh.Mesh`. Its numbering must
+            match the one the data was written in; see :ref:`input-ordering`.
         time: Time-step to read from.
         mesh_name: Name of the mesh in the file the data belongs to. Defaults
             to the mesh written without an explicit name.
