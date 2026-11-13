@@ -36,6 +36,7 @@ from .utils import (
     compute_dofmap_pos,
     compute_local_range,
     index_owner,
+    input_cell_index,
     unroll_dofmap,
     unroll_insert_position,
 )
@@ -867,8 +868,7 @@ def write_point_data(
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
         on_input_mesh: If True, the node values are written in the node ordering of the
-            input mesh, matching a mesh written with :func:`write_mesh` with ``on_input_mesh=True``.
-            Use the same value for every write to a file; see :ref:`input-ordering`.
+            input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
@@ -883,11 +883,9 @@ def write_point_data(
 
     if on_input_mesh:
         # The dofs of the geometry space are the geometry nodes
-        input_nodes = np.asarray(
-            V.mesh.geometry.input_global_indices[:num_dofs_local], dtype=np.int64
-        )
+        input_nodes = V.mesh.geometry.input_global_indices[:num_dofs_local]
         assert isinstance(comm, MPI.Intracomm)
-        data, local_range = send_to_input_order(comm, input_nodes, data, data_shape[0])
+        (data,), local_range = send_to_input_order(comm, input_nodes, [data], data_shape[0])
 
     ad = ArrayData(
         name=v_out.name,
@@ -928,8 +926,7 @@ def write_cell_data(
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
         on_input_mesh: If True, the cell values are written in the cell ordering of the
-            input mesh, matching a mesh written with :func:`write_mesh` with ``on_input_mesh=True``.
-            Use the same value for every write to a file; see :ref:`input-ordering`.
+            input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
@@ -950,10 +947,10 @@ def write_cell_data(
         mesh = V.mesh
         tdim = mesh.topology.dim
         num_owned_cells = mesh.topology.index_map(tdim).size_local
-        input_cells = mesh.topology.original_cell_index[:num_owned_cells].astype(np.int64)
+        input_cells = input_cell_index(mesh)[:num_owned_cells]
         cell_values = values[V.dofmap.list[:num_owned_cells, 0]]
         assert isinstance(comm, MPI.Intracomm)
-        data, local_range = send_to_input_order(comm, input_cells, cell_values, data_shape[0])
+        (data,), local_range = send_to_input_order(comm, input_cells, [cell_values], data_shape[0])
     else:
         local_range = V.dofmap.index_map.local_range
         data = values[: V.dofmap.index_map.size_local]
