@@ -752,7 +752,7 @@ def test_point_data_on_curved_submesh(tmp_path, dim, degree, codim):
         mesh.topology.create_connectivity(sub_dim, tdim)
         entities = dolfinx.mesh.exterior_facet_indices(mesh.topology)
     submesh = dolfinx.mesh.create_submesh(mesh, sub_dim, entities)[0]
-    assert submesh.geometry.cmaps[0].degree == degree
+    assert fenicsx_compat.cmap(submesh).degree == degree
 
     def f(x):
         return np.sin(1.7 * x[0]) + 0.5 * x[1] - 0.3 * x[tdim - 1]
@@ -761,7 +761,7 @@ def test_point_data_on_curved_submesh(tmp_path, dim, degree, codim):
     u = dolfinx.fem.Function(V, name="u")
     u.interpolate(f)
     nodes_written = submesh.geometry.index_map().size_global
-    variant_written = submesh.geometry.cmaps[0].variant
+    variant_written = fenicsx_compat.cmap(submesh).variant
 
     io4dolfinx.write_mesh(path, submesh, mesh_name="curved", backend="vtkhdf")
     io4dolfinx.write_point_data(
@@ -778,8 +778,8 @@ def test_point_data_on_curved_submesh(tmp_path, dim, degree, codim):
     stored = io4dolfinx.read_mesh(path, comm, mesh_name="curved", backend="vtkhdf", time=0.0)
     # The higher-order geometry must survive whole: degree, node placement and
     # node count, not just the coordinates.
-    assert stored.geometry.cmaps[0].degree == degree
-    assert stored.geometry.cmaps[0].variant == variant_written
+    assert fenicsx_compat.cmap(stored).degree == degree
+    assert fenicsx_compat.cmap(stored).variant == variant_written
     assert stored.geometry.index_map().size_global == nodes_written
 
     read_back = io4dolfinx.read_point_data(
@@ -811,7 +811,7 @@ def test_transfer_on_curved_higher_order_parent(tmp_path, backend, degree):
     mesh.topology.create_connectivity(tdim - 1, tdim)
     facets = dolfinx.mesh.exterior_facet_indices(mesh.topology)
     submesh, cell_map, _, _ = dolfinx.mesh.create_submesh(mesh, tdim - 1, facets)
-    assert submesh.geometry.cmaps[0].degree == degree
+    assert fenicsx_compat.cmap(submesh).degree == degree
 
     def f(x):
         return np.sin(1.7 * x[0]) + 0.5 * x[1] - 0.3 * x[2]
@@ -828,13 +828,13 @@ def test_transfer_on_curved_higher_order_parent(tmp_path, backend, degree):
     del mesh, submesh, cell_map, u
 
     parent = io4dolfinx.read_mesh(path, comm, backend=backend)
-    assert parent.geometry.cmaps[0].degree == degree
+    assert fenicsx_compat.cmap(parent).degree == degree
     stored = io4dolfinx.read_mesh(path, comm, mesh_name="shell", backend=backend)
     u_stored = dolfinx.fem.Function(dolfinx.fem.functionspace(stored, element), name="u")
     io4dolfinx.read_function(path, u_stored, time=0.0, name="u", mesh_name="shell", backend=backend)
 
     checkpoint = io4dolfinx.read_submesh(path, parent, mesh_name="shell", backend=backend)
-    assert checkpoint.submesh.geometry.cmaps[0].degree == degree
+    assert fenicsx_compat.cmap(checkpoint.submesh).degree == degree
     V_sub = dolfinx.fem.functionspace(checkpoint.submesh, element)
     u_sub = dolfinx.fem.Function(V_sub, name="u")
     io4dolfinx.transfer_submesh_function(u_stored, u_sub, checkpoint.post_code)
@@ -943,9 +943,11 @@ def test_lagrange_variant_survives_mesh_roundtrip(tmp_path, store, degree):
     variant = basix.LagrangeVariant.gll_isaac if degree > 2 else basix.LagrangeVariant.unset
     cmap = dolfinx.fem.coordinate_element(base.topology.cell_type, degree, int(variant))
     mesh = dolfinx.fem.interpolate_geometry(base, cmap)
-    written = (mesh.geometry.cmaps[0].degree, mesh.geometry.cmaps[0].variant)
+    cmap = fenicsx_compat.cmap(mesh)
+    written = (cmap.degree, cmap.variant)
 
     io4dolfinx.write_mesh(path, mesh, backend=store)
     read_kwargs = {"time": 0.0} if store == "vtkhdf" else {}
     read_back = io4dolfinx.read_mesh(path, comm, backend=store, **read_kwargs)
-    assert (read_back.geometry.cmaps[0].degree, read_back.geometry.cmaps[0].variant) == written
+    cmap = fenicsx_compat.cmap(read_back)
+    assert (cmap.degree, cmap.variant) == written
