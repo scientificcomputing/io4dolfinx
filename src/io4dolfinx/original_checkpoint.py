@@ -40,19 +40,19 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
     original_cell_index = mesh.topology.original_cell_index[:num_owned_cells]
     original_node_index = mesh.geometry.input_global_indices
     local_geometry_dofmap = fenicsx_compat.dofmap(mesh)[:num_owned_cells, :]
-    global_geometry_dofmap = original_node_index[local_geometry_dofmap].astype(np.int64)
-    sorted_recv_dofmap, local_cell_range = send_to_input_order(
-        mesh.comm, original_cell_index, global_geometry_dofmap, num_cells_global
+    global_geometry_dofmap = original_node_index[local_geometry_dofmap]
+    (sorted_recv_dofmap,), local_cell_range = send_to_input_order(
+        mesh.comm, original_cell_index, [global_geometry_dofmap], num_cells_global
     )
 
     # 2. Send the coordinates of each owned node to the process owning its original index
     gdim = mesh.geometry.dim
     num_owned_nodes = mesh.geometry.index_map().size_local
     num_nodes_global = mesh.geometry.index_map().size_global
-    geometry, local_node_range = send_to_input_order(
+    (geometry,), local_node_range = send_to_input_order(
         mesh.comm,
         original_node_index[:num_owned_nodes],
-        mesh.geometry.x[:num_owned_nodes, :gdim].copy(),
+        [mesh.geometry.x[:num_owned_nodes, :gdim]],
         num_nodes_global,
     )
     cmap = fenicsx_compat.cmap(mesh)
@@ -92,17 +92,9 @@ def create_function_data_on_original_mesh(
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
     original_cell_index = mesh.topology.original_cell_index[:num_owned_cells]
 
-    # 1. Send the permutation info of each owned cell to the process owning its original
-    # cell index
-    cell_permutation_info, local_cell_range = send_to_input_order(
-        mesh.comm,
-        original_cell_index,
-        fenicsx_compat.cell_permutation_info(mesh.topology)[:num_owned_cells].copy(),
-        num_cells_global,
-    )
-
-    # 2. Send the dofs of each owned cell, as global dof indices, in the same way. The
-    # dof values themselves stay in the DOLFINx ordering.
+    # Send the permutation info and the dofs, as global dof indices, of each owned cell
+    # to the process owning its original cell index. The dof values themselves stay in
+    # the DOLFINx ordering.
     dofmap = u.function_space.dofmap
     index_map_bs = dofmap.index_map_bs
     unrolled_dofmap = unroll_dofmap(dofmap.list[:num_owned_cells, :], dofmap.bs)
@@ -111,8 +103,9 @@ def create_function_data_on_original_mesh(
     imap_global = dofmap.index_map.local_to_global(dmap_loc)
     num_dofs_per_cell = unrolled_dofmap.shape[1]
     dofmap_global = (imap_global * index_map_bs + dmap_rem).reshape(-1, num_dofs_per_cell)
-    cell_dofs, _ = send_to_input_order(
-        mesh.comm, original_cell_index, dofmap_global.astype(np.int64), num_cells_global
+    cell_permutations = fenicsx_compat.cell_permutation_info(mesh.topology)[:num_owned_cells]
+    (cell_permutation_info, cell_dofs), local_cell_range = send_to_input_order(
+        mesh.comm, original_cell_index, [cell_permutations, dofmap_global], num_cells_global
     )
     final_dofmap = cell_dofs.reshape(-1)
 

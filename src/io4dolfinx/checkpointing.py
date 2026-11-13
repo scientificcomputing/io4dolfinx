@@ -759,11 +759,9 @@ def write_point_data(
 
     if on_input_mesh:
         # The dofs of the geometry space are the geometry nodes
-        input_nodes = np.asarray(
-            V.mesh.geometry.input_global_indices[:num_dofs_local], dtype=np.int64
-        )
+        input_nodes = V.mesh.geometry.input_global_indices[:num_dofs_local]
         assert isinstance(comm, MPI.Intracomm)
-        data, local_range = send_to_input_order(comm, input_nodes, data, data_shape[0])
+        (data,), local_range = send_to_input_order(comm, input_nodes, [data], data_shape[0])
 
     ad = ArrayData(
         name=v_out.name,
@@ -825,10 +823,10 @@ def write_cell_data(
         mesh = V.mesh
         tdim = mesh.topology.dim
         num_owned_cells = mesh.topology.index_map(tdim).size_local
-        input_cells = mesh.topology.original_cell_index[:num_owned_cells].astype(np.int64)
+        input_cells = mesh.topology.original_cell_index[:num_owned_cells]
         cell_values = values[V.dofmap.list[:num_owned_cells, 0]]
         assert isinstance(comm, MPI.Intracomm)
-        data, local_range = send_to_input_order(comm, input_cells, cell_values, data_shape[0])
+        (data,), local_range = send_to_input_order(comm, input_cells, [cell_values], data_shape[0])
     else:
         local_range = V.dofmap.index_map.local_range
         data = values[: V.dofmap.index_map.size_local]

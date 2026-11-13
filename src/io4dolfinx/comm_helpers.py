@@ -390,7 +390,9 @@ def exchange_to_owners(
         packed = np.zeros(array.shape, dtype=array.dtype)
         packed[insert_position] = array
         out = np.zeros((int(recv_counts.sum()), *array.shape[1:]), dtype=array.dtype)
-        mpi_type = numpy_to_mpi[array.dtype.type]
+        # Canonical type, so that e.g. ``longlong`` (as used by DOLFINx index arrays)
+        # maps like ``int64``
+        mpi_type = numpy_to_mpi[np.dtype(array.dtype.str).type]
         forward.Neighbor_alltoallv(
             [packed.reshape(-1), send_counts * block, mpi_type],
             [out.reshape(-1), recv_counts * block, mpi_type],
@@ -403,29 +405,57 @@ def exchange_to_owners(
 def send_to_input_order(
     comm: MPI.Intracomm,
     input_indices: npt.NDArray[np.int64],
-    values: npt.NDArray,
+    values: list[npt.NDArray],
     num_global: int,
-) -> tuple[npt.NDArray, tuple[int, int]]:
+) -> tuple[list[npt.NDArray], tuple[int, int]]:
     """Send values to the process holding their input index, so that each process
     gets a contiguous chunk of the input ordering.
 
+    Collective: the input indices are checked on all ranks, so that an invalid
+    numbering raises an error on every rank instead of leaving some waiting.
+
     Args:
         comm: The MPI communicator
-        input_indices: Input index of each owned entity on this process
-        values: Value of each owned entity, of shape ``(len(input_indices), ...)``
+        input_indices: Input index of each owned entity on this process. Over all
+            processes, they must number the entities ``0, ..., num_global - 1``, each
+            exactly once.
+        values: Arrays with a value of each owned entity, each of shape
+            ``(len(input_indices), ...)``. They are sent together.
         num_global: Global number of entities
 
     Returns:
-        The values of the entities in this process' chunk, in input order, and the range
-        of the chunk
+        The values of the entities in this process' chunk, in input order, one array
+        per entry of ``values``, and the range of the chunk
+
+    Raises:
+        ValueError: If the input indices do not number the entities, e.g. for a
+            submesh, whose input indices refer to its parent mesh.
     """
+    error = ValueError(
+        f"The input indices do not number the {num_global} entities, so the data cannot be "
+        "written in the input ordering. This is the case for a submesh, whose input "
+        "indices refer to its parent mesh."
+    )
     input_indices = np.asarray(input_indices, dtype=np.int64)
+    in_range = bool(np.all((input_indices >= 0) & (input_indices < num_global)))
+    if not comm.allreduce(in_range, op=MPI.LAND):
+        raise error
+
     owners = index_owner(comm, input_indices, num_global)
-    (recv_indices, recv_values), *_ = exchange_to_owners(comm, owners, [input_indices, values])
+    (recv_indices, *recv_values), *_ = exchange_to_owners(comm, owners, [input_indices, *values])
     local_range = compute_local_range(comm, num_global)
-    assert len(recv_indices) == local_range[1] - local_range[0]
-    data = np.empty_like(recv_values)
-    data[recv_indices - local_range[0]] = recv_values
+    num_local = int(local_range[1] - local_range[0])
+    # In range on every rank, but an index may still appear twice and another not at all
+    local = recv_indices - local_range[0]
+    complete = len(local) == num_local and len(np.unique(local)) == num_local
+    if not comm.allreduce(complete, op=MPI.LAND):
+        raise error
+
+    data = []
+    for received in recv_values:
+        ordered = np.empty_like(received)
+        ordered[local] = received
+        data.append(ordered)
     return data, (int(local_range[0]), int(local_range[1]))
 
 
