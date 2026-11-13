@@ -4,12 +4,19 @@ Helpers for sending and receiving values for checkpointing
 
 from __future__ import annotations
 
+from typing import Callable, TypeVar
+
 from mpi4py import MPI
 
 import numpy as np
 import numpy.typing as npt
 
-from .utils import compute_insert_position, compute_local_range, valid_function_types
+from .utils import (
+    compute_insert_position,
+    compute_local_range,
+    index_owner,
+    valid_function_types,
+)
 
 __all__ = [
     "send_dofmap_and_recv_values",
@@ -17,9 +24,16 @@ __all__ = [
     "send_dofs_and_recv_values",
     "neighbourhood_ranks",
     "exchange_to_owners",
+    "send_to_input_order",
     "numpy_to_mpi",
     "all_to_all",
+    "run_on_root",
+    "run_on_all",
+    "gather_rows",
+    "gather_concatenate",
 ]
+
+T = TypeVar("T")
 
 numpy_to_mpi = {
     np.float64: MPI.DOUBLE,
@@ -28,6 +42,7 @@ numpy_to_mpi = {
     np.complex128: MPI.DOUBLE_COMPLEX,
     np.int64: MPI.INT64_T,
     np.int32: MPI.INT32_T,
+    np.uint32: MPI.UINT32_T,
 }
 
 
@@ -375,7 +390,9 @@ def exchange_to_owners(
         packed = np.zeros(array.shape, dtype=array.dtype)
         packed[insert_position] = array
         out = np.zeros((int(recv_counts.sum()), *array.shape[1:]), dtype=array.dtype)
-        mpi_type = numpy_to_mpi[array.dtype.type]
+        # Canonical type, so that e.g. ``longlong`` (as used by DOLFINx index arrays)
+        # maps like ``int64``
+        mpi_type = numpy_to_mpi[np.dtype(array.dtype.str).type]
         forward.Neighbor_alltoallv(
             [packed.reshape(-1), send_counts * block, mpi_type],
             [out.reshape(-1), recv_counts * block, mpi_type],
@@ -383,3 +400,117 @@ def exchange_to_owners(
         received.append(out)
     forward.Free()
     return received, sources, send_counts, recv_counts, insert_position
+
+
+def send_to_input_order(
+    comm: MPI.Intracomm,
+    input_indices: npt.NDArray[np.int64],
+    values: list[npt.NDArray],
+    num_global: int,
+) -> tuple[list[npt.NDArray], tuple[int, int]]:
+    """Send values to the process holding their input index, so that each process
+    gets a contiguous chunk of the input ordering.
+
+    Collective: the input indices are checked on all ranks, so that an invalid
+    numbering raises an error on every rank instead of leaving some waiting.
+
+    Args:
+        comm: The MPI communicator
+        input_indices: Input index of each owned entity on this process. Over all
+            processes, they must number the entities ``0, ..., num_global - 1``, each
+            exactly once.
+        values: Arrays with a value of each owned entity, each of shape
+            ``(len(input_indices), ...)``. They are sent together.
+        num_global: Global number of entities
+
+    Returns:
+        The values of the entities in this process' chunk, in input order, one array
+        per entry of ``values``, and the range of the chunk
+
+    Raises:
+        ValueError: If the input indices do not number the entities, e.g. for a
+            submesh, whose input indices refer to its parent mesh.
+    """
+    error = ValueError(
+        f"The input indices do not number the {num_global} entities, so the data cannot be "
+        "written in the input ordering. This is the case for a submesh, whose input "
+        "indices refer to its parent mesh."
+    )
+    input_indices = np.asarray(input_indices, dtype=np.int64)
+    in_range = bool(np.all((input_indices >= 0) & (input_indices < num_global)))
+    if not comm.allreduce(in_range, op=MPI.LAND):
+        raise error
+
+    owners = index_owner(comm, input_indices, num_global)
+    (recv_indices, *recv_values), *_ = exchange_to_owners(comm, owners, [input_indices, *values])
+    local_range = compute_local_range(comm, num_global)
+    num_local = int(local_range[1] - local_range[0])
+    # In range on every rank, but an index may still appear twice and another not at all
+    local = recv_indices - local_range[0]
+    complete = len(local) == num_local and len(np.unique(local)) == num_local
+    if not comm.allreduce(complete, op=MPI.LAND):
+        raise error
+
+    data = []
+    for received in recv_values:
+        ordered = np.empty_like(received)
+        ordered[local] = received
+        data.append(ordered)
+    return data, (int(local_range[0]), int(local_range[1]))
+
+
+def run_on_root(comm: MPI.Comm, fn: Callable[[], T]) -> T | None:
+    """Run a function on rank 0 and raise any error it raises on all ranks.
+
+    Returns:
+        The result of ``fn`` on rank 0, ``None`` on the other ranks
+    """
+    result, error = None, None
+    if comm.rank == 0:
+        try:
+            result = fn()
+        except Exception as e:
+            error = e
+    error = comm.bcast(error, root=0)
+    if error is not None:
+        raise error
+    return result
+
+
+def run_on_all(comm: MPI.Comm, fn: Callable[[], T]) -> T:
+    """Run a function on all ranks and raise an error raised on any rank on all ranks,
+    so that no rank is left waiting in a later collective call."""
+    result, error = None, None
+    try:
+        result = fn()
+    except Exception as e:
+        error = e
+    errors = [e for e in comm.allgather(error) if e is not None]
+    if errors:
+        raise errors[0]
+    return result  # type: ignore[return-value]
+
+
+def gather_rows(
+    comm: MPI.Comm, local: npt.NDArray, local_range: tuple[int, int] | list[int], num_global: int
+) -> npt.NDArray | None:
+    """Gather rows distributed in contiguous chunks to rank 0.
+
+    Returns:
+        All ``num_global`` rows on rank 0, ``None`` on the other ranks
+    """
+    chunks = comm.gather((int(local_range[0]), np.asarray(local)), root=0)
+    if comm.rank != 0:
+        return None
+    assert chunks is not None
+    first = chunks[0][1]
+    rows = np.empty((num_global, *first.shape[1:]), dtype=first.dtype)
+    for start, chunk in chunks:
+        rows[start : start + len(chunk)] = chunk
+    return rows
+
+
+def gather_concatenate(comm: MPI.Comm, local: npt.NDArray) -> npt.NDArray | None:
+    """Concatenate an array over all ranks on rank 0, in rank order."""
+    chunks = comm.gather(local, root=0)
+    return None if chunks is None else np.concatenate(chunks)
