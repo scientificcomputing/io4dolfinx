@@ -61,7 +61,7 @@ io4dolfinx.write_function(filename, u, time=0.3, name="my_curl_function")
 # before reading in the function.
 # We **cannot** use {py:func}`io4dolfinx.read_function` to read function data to the
 # original `mesh` object.
-# To do this, we need to use {py:func}`io4dolfinx.write_function_on_input_mesh`, see
+# To do this, we need to use {py:func}`io4dolfinx.write_function` with `on_input_mesh=True`, see
 # [Writing function on input mesh checkpoint](./original_checkpoint).
 # for more details.
 # ```

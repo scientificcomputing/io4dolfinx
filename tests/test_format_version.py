@@ -17,16 +17,18 @@ def filename(path, backend):
     return path / ("checkpoint.bp" if backend == "adios2" else "checkpoint.h5")
 
 
-def write_checkpoint(path, backend, time=0.0, mode=io4dolfinx.FileMode.write):
+def write_checkpoint(path, backend, time=0.0, mode=io4dolfinx.FileMode.write, on_input_mesh=False):
     """Write a mesh, a function and mesh tags."""
     mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 3, 3)
     u = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh, ("Lagrange", 1)), name="u")
     u.interpolate(lambda x: x[0] + 2 * x[1] + time)
-    io4dolfinx.write_mesh(path, mesh, backend=backend, mode=mode)
-    io4dolfinx.write_function(path, u, time=time, backend=backend)
+    io4dolfinx.write_mesh(path, mesh, backend=backend, mode=mode, on_input_mesh=on_input_mesh)
+    io4dolfinx.write_function(path, u, time=time, backend=backend, on_input_mesh=on_input_mesh)
     cells = np.arange(mesh.topology.index_map(2).size_local, dtype=np.int32)
     tags = dolfinx.mesh.meshtags(mesh, 2, cells, np.full_like(cells, 3))
-    io4dolfinx.write_meshtags(path, mesh, tags, meshtag_name="tags", backend=backend)
+    io4dolfinx.write_meshtags(
+        path, mesh, tags, meshtag_name="tags", backend=backend, on_input_mesh=on_input_mesh
+    )
     return mesh, u
 
 
@@ -102,13 +104,17 @@ def test_append_to_older_minor_version(shared_tmp_path, backend, monkeypatch):
     read_checkpoint(path, backend, time=1.0)
 
 
-def test_append_to_other_major_version(shared_tmp_path, backend, monkeypatch):
+@pytest.mark.parametrize("on_input_mesh", [False, True])
+def test_append_to_other_major_version(shared_tmp_path, backend, monkeypatch, on_input_mesh):
     path = filename(shared_tmp_path, backend)
     monkeypatch.setattr(format, "FORMAT_VERSION", (format.FORMAT_VERSION[0] + 1, 0))
-    mesh, u = write_checkpoint(path, backend)
+    mesh, u = write_checkpoint(path, backend, on_input_mesh=on_input_mesh)
     monkeypatch.undo()
+    append = {"backend": backend, "on_input_mesh": on_input_mesh}
     with pytest.raises(ValueError, match="cannot append"):
-        io4dolfinx.write_function(path, u, time=1.0, backend=backend)
+        io4dolfinx.write_function(path, u, time=1.0, **append)
+    with pytest.raises(ValueError, match="cannot append"):
+        io4dolfinx.write_mesh(path, mesh, mode=io4dolfinx.FileMode.append, time=1.0, **append)
 
 
 def test_h5py_write_function_in_write_mode(shared_tmp_path):
