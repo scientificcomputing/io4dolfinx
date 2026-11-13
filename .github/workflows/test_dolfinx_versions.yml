@@ -32,3 +32,55 @@ jobs:
     uses: ./.github/workflows/test_workflow.yml
     with:
       tag: ${{ matrix.tag }}
+
+  # The oldest supported DOLFINx, in its release image rather than test-env. MEDCoupling is
+  # not installed, so the tests that write MED reference files are skipped.
+  run-tests-v0-10:
+    needs: [create-datasets, create-legacy-datasets]
+    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    container: ghcr.io/fenics/dolfinx/dolfinx:v0.10.0-r1
+    env:
+      HDF5_MPI: "ON"
+      HDF5_DIR: /usr/local
+      CC: mpicc
+      OMPI_ALLOW_RUN_AS_ROOT: 1
+      OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
+      PRTE_MCA_rmaps_default_mapping_policy: :oversubscribe
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download legacy mpich data
+        uses: actions/download-artifact@v8
+        with:
+          name: legacy_mpich
+          path: ./legacy
+
+      - name: Download legacy checkpoint mpich data
+        uses: actions/download-artifact@v8
+        with:
+          name: legacy_checkpoint_mpich
+          path: ./legacy_checkpoint
+
+      - name: Update pip
+        run: python3 -m pip install --upgrade pip setuptools
+
+      - name: Install h5py with MPI support
+        run: |
+          python3 -m pip install "Cython>=3.0.11" "pkgconfig>=1.5.5"
+          python3 -m pip install h5py --no-binary=h5py --no-build-isolation
+          python3 -c "import h5py; assert h5py.get_config().mpi, 'h5py built without MPI'"
+
+      - name: Install package
+        run: |
+          python3 -m pip install pytest coverage ipyparallel packaging
+          python3 -m pip install ".[h5py,pyvista,xdmf,gmsh]"
+
+      - name: Show versions
+        run: python3 -c "import dolfinx, adios2, h5py; print(dolfinx.__version__, adios2.__version__, h5py.version.hdf5_version)"
+
+      - name: Run tests
+        run: coverage run --rcfile=.coveragerc -m pytest -xvs ./tests/
+
+      - name: Run tests in parallel
+        run: mpirun -n 4 coverage run --rcfile=.coveragerc -m mpi4py -m pytest -xvs ./tests/

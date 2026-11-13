@@ -29,6 +29,7 @@ xdmf = ["h5py>=3.10"]
 exodus = ["netcdf4"]
 med = ["h5py>=3.10"]
 gmsh = ["gmsh"]
+nastran = ["gmsh"]
 
 [dependency-groups]
 build = [

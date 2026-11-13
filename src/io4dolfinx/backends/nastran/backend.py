@@ -1,3 +1,19 @@
+"""
+Nastran interface to io4dolfinx.
+
+Reads the mesh and mesh tags of Nastran bulk data files (``.bdf``, ``.nas``) through the
+`Gmsh <https://gmsh.info>`_ Python API, reusing :mod:`dolfinx.io.gmsh` for the geometry,
+the topology and the node ordering. All file access happens on rank 0.
+
+- The cells are the elements of the highest topological dimension. Meshes with several
+  cell types, such as hexahedra, pyramids and tetrahedra, are read as mixed meshes.
+- Mesh tags are the property IDs (PID) of the elements, see :func:`read_meshtags_data`.
+- Node ``i`` is the node with the ``i``-th smallest GRID ID. The GRID IDs can be read as
+  point data and as vertex tags, both called ``"GRID"``, on meshes with one cell type.
+
+SPDX License identifier: MIT
+"""
+
 from pathlib import Path
 from typing import Any
 
@@ -5,133 +21,152 @@ from mpi4py import MPI
 
 import basix
 import dolfinx
-import gmsh
 import numpy as np
 import numpy.typing as npt
-from dolfinx.io.gmsh import (
-    _gmsh_to_cells,
-    cell_perm_array,
-    extract_geometry,
-    extract_topology_and_markers,
-)
+from dolfinx.io.gmsh import extract_geometry
 
-from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
+try:
+    import gmsh
+except ImportError:
+    raise ModuleNotFoundError("The nastran-backend requires gmsh")
+
+from ...structures import (
+    ArrayData,
+    FunctionData,
+    MeshData,
+    MeshTagsData,
+    ReadMeshData,
+    ReadMixedMeshData,
+)
 from ...utils import check_file_exists
 from .. import FileMode, ReadMode
+from ..gmsh.backend import _run_on_root
+from . import helpers
 
 read_mode = ReadMode.serial
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
-    args = arguments or {}
-    return args
+    """Get default backend arguments given a set of input arguments.
 
+    Args:
+        arguments: Input backend arguments
 
-def _promote_entities_to_physical_groups(model) -> None:
-    """Promote gmsh elementary entities to physical groups.
-
-    Gmsh reads PSOLID/PSHELL as elementary entities only.
-    extract_topology_and_markers only sees physical groups,
-    so we promote every entity, reusing the entity
-    tag as the physical group tag (preserving Nastran PIDs).
+    Returns:
+        The arguments, with defaults for:
+            - ``"dtype"``: Floating point type of the mesh coordinates, ``np.float64``
     """
-    for dim, tag in model.getEntities():
-        model.addPhysicalGroup(dim=dim, tags=[tag], tag=tag)
+    args: dict[str, Any] = {"dtype": np.float64}
+    args.update(arguments or {})
+    return args
 
 
 def read_mesh_data(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None = None,
     read_from_partition: bool = False,
     backend_args: dict[str, Any] | None = None,
-) -> ReadMeshData:
-    """Read mesh data from file.
+) -> ReadMeshData | ReadMixedMeshData:
+    """Read mesh data from a Nastran file.
+
+    The cells are the elements of the highest topological dimension. If they are of
+    several types, e.g. hexahedra, pyramids and tetrahedra, the mesh is read as a mixed
+    mesh. All data is read on rank 0.
 
     Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         time: Time stamp associated with the mesh to read
         read_from_partition: Whether to read partition information
-        backend_args: Arguments to backend
+        backend_args: Arguments to backend, see :func:`get_default_backend_args`
 
     Returns:
         Internal data structure for the mesh data read from file
     """
-
     if read_from_partition:
-        raise RuntimeError("Cannot read partition data with nastran")
+        raise NotImplementedError("The nastran backend cannot read partitioning data.")
     check_file_exists(filename)
+    backend_args = get_default_backend_args(backend_args)
 
-    if comm.rank == 0:
-        gmsh.initialize()
-        try:
-            gmsh.open(str(filename))
-            _promote_entities_to_physical_groups(gmsh.model)
-            topologies, _ = extract_topology_and_markers(gmsh.model)
-            if not topologies:
-                raise ValueError(f"No elements found in {filename}.")
-            x = extract_geometry(gmsh.model)
+    def read(
+        preexisting_views: list[int],
+    ) -> tuple[
+        tuple[npt.NDArray[np.float64], list[npt.NDArray[np.int64]]],
+        tuple[list[str], int, list[int]],
+    ]:
+        elements, _ = helpers.read_elements(filename)
+        blocks = elements[max(elements)]
+        degrees = {block.degree for block in blocks}
+        if len(degrees) > 1:
+            raise NotImplementedError(f"Cells of several degrees {degrees} in {filename}.")
+        x = extract_geometry(gmsh.model)
+        cells = [block.nodes for block in blocks]
+        cell_types = [block.cell_type for block in blocks]
+        return (x, cells), (cell_types, degrees.pop(), [c.shape[1] for c in cells])
 
-            elements = []
-            for gmsh_type in topologies:
-                _, dim, _, n_nodes, *_ = gmsh.model.mesh.getElementProperties(gmsh_type)
-                elements.append((dim, n_nodes, gmsh_type))
-
-            dims = [e[0] for e in elements]
-            if len(dims) != len(set(dims)):
-                raise ValueError(
-                    f"Multiple element types share a topological dimension in {filename}."
-                )
-            _, num_nodes, gmsh_type = max(elements, key=lambda e: e[0])
-            cells = topologies[gmsh_type]["topology"].astype(np.int64, copy=False)
-        finally:
-            gmsh.finalize()
-
-        cell_type, degree = _gmsh_to_cells[gmsh_type]
-        comm.bcast((cell_type, degree, num_nodes), root=0)
+    local, (cell_types, degree, num_nodes) = _run_on_root(comm, read)
+    if local is None:
+        x = np.zeros((0, 3), dtype=np.float64)
+        cells = [np.zeros((0, n), dtype=np.int64) for n in num_nodes]
     else:
-        cell_type, degree, num_nodes = comm.bcast(None, root=0)
-        cells = np.empty((0, num_nodes), dtype=np.int64)
-        x = np.empty((0, 3), dtype=np.float64)
-
-    perm = cell_perm_array(dolfinx.mesh.to_type(cell_type), num_nodes)
-
-    return ReadMeshData(
-        cells=cells[:, perm],
-        cell_type=cell_type,
-        x=x,
-        lvar=int(basix.LagrangeVariant.equispaced),
-        degree=degree,
-    )
+        x, cells = local
+    x = x.astype(backend_args["dtype"], copy=False)
+    lvar = int(basix.LagrangeVariant.equispaced)
+    if len(cell_types) == 1:
+        return ReadMeshData(cells=cells[0], cell_type=cell_types[0], x=x, lvar=lvar, degree=degree)
+    return ReadMixedMeshData(cells=cells, cell_types=cell_types, x=x, lvar=lvar, degree=degree)
 
 
 def read_point_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: float | str | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[np.ndarray, int]:
-    """Read data from the nodes of a mesh.
+    """Read the GRID IDs of the nodes of a mesh with one cell type.
+
+    Note:
+        The function holding the GRID IDs has the precision of the mesh. In single
+        precision, IDs above :math:`2^{24}` are not exact; read them as vertex tags with
+        :func:`read_meshtags_data` instead.
 
     Args:
         filename: Path to file
-        name: Name of point data
+        name: Name of point data, ``"GRID"``
         comm: Communicator to launch IO on.
-        time: The time stamp
+        time: Ignored, as a Nastran file holds no time series
         backend_args: The backend arguments
 
     Returns:
-       Data local to process (contiguous, no mpi comm) and local start range
+        Tuple containing:
+            - The GRID ID of each node, of shape ``(num_nodes, 1)``, on rank 0
+            - The global start of the data on this process, ``0``
+
+    Raises:
+        KeyError: If ``name`` is not ``"GRID"``.
+        NotImplementedError: If the mesh has several cell types.
     """
-    raise NotImplementedError("The nastran backend cannot read point data.")
+    check_file_exists(filename)
+    if name != helpers.GRID:
+        raise KeyError(f"No point data '{name}' in {filename}. Available: ['{helpers.GRID}']")
+
+    def read(preexisting_views: list[int]) -> tuple[npt.NDArray[np.int64], None]:
+        elements, grid_ids = helpers.read_elements(filename)
+        helpers.get_single_cell_type(elements, "Reading GRID IDs as point data", filename)
+        return grid_ids, None
+
+    grid_ids, _ = _run_on_root(comm, read)
+    if grid_ids is None:
+        grid_ids = np.zeros(0, dtype=np.int64)
+    return grid_ids.reshape(-1, 1).astype(np.float64), 0
 
 
 def read_cell_data(
     filename: Path | str,
     name: str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
@@ -153,7 +188,7 @@ def read_cell_data(
 
 def write_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     attributes: dict[str, np.ndarray],
     backend_args: dict[str, Any] | None,
@@ -172,7 +207,7 @@ def write_attributes(
 
 def read_attributes(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -192,7 +227,7 @@ def read_attributes(
 
 def read_timestamps(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     function_name: str,
     backend_args: dict[str, Any] | None,
 ) -> npt.NDArray[np.float64 | str]:  # type: ignore[type-var]
@@ -211,7 +246,7 @@ def read_timestamps(
 
 
 def read_function_names(
-    filename: Path | str, comm: MPI.Intracomm, backend_args: dict[str, Any] | None
+    filename: Path | str, comm: MPI.Comm, backend_args: dict[str, Any] | None
 ) -> list[str]:
     """Read all function names from a file.
 
@@ -224,12 +259,12 @@ def read_function_names(
         A list of function names.
     """
 
-    raise NotImplementedError("The nastran backend cannot write function_names.")
+    return [helpers.GRID]
 
 
 def write_mesh(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     mesh: MeshData,
     backend_args: dict[str, Any] | None,
     mode: FileMode,
@@ -251,7 +286,7 @@ def write_mesh(
 
 def write_meshtags(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     data: MeshTagsData,
     backend_args: dict[str, Any] | None,
 ):
@@ -266,93 +301,81 @@ def write_meshtags(
     raise NotImplementedError("The nastran backend cannot write meshtags.")
 
 
-_PROPERTY_TO_DIM = {
-    "PSOLID": 3,
-    "PSHELL": 2,
-}
-
-
 def read_meshtags_data(
     filename: Path | str,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None = None,
 ) -> MeshTagsData:
-    """Read mesh tags from file.
-
-    Nastran PIDs are used as integer tag values. The ``name`` argument
-    selects which property card's elements to return.
+    """Read mesh tags from a Nastran file.
 
     Args:
-        filename: Path to the Nastran file.
-        comm: MPI communicator.
-        name: Nastran property card. Supported values:
-            "PSOLID" - 3D solid elements.
-            "PSHELL" - 2D shell elements (often used for BCs).
+        filename: Path to the Nastran file
+        comm: MPI communicator
+        name: One of:
 
-        backend_args: Reserved for future use.
+            - ``"PSOLID"``: the 3D solid elements, tagged with their property ID (PID)
+            - ``"PSHELL"``: the 2D shell elements (often used for boundary conditions),
+              tagged with their PID
+            - ``"GRID"``: the vertices, tagged with their GRID ID. Only supported on
+              meshes with one cell type.
+
+        backend_args: Arguments to backend, unused
 
     Returns:
-        Internal data structure for the mesh tags read from file
+        Internal data structure for the mesh tags read from file, on rank 0
+
+    Raises:
+        NotImplementedError: If the tagged entities are of several types, or for ``"GRID"``
+            on a mesh with several cell types.
     """
     check_file_exists(filename)
-    backend_args = get_default_backend_args(backend_args)
+    if name != helpers.GRID and name not in helpers.PROPERTY_TO_DIM:
+        names = [*sorted(helpers.PROPERTY_TO_DIM), helpers.GRID]
+        raise ValueError(f"Unsupported meshtag name {name!r}. Expected one of: {names}.")
+    dim = 0 if name == helpers.GRID else helpers.PROPERTY_TO_DIM[name]
 
-    if name not in _PROPERTY_TO_DIM:
-        raise ValueError(
-            f"Unsupported meshtag name {name!r}. Expected one of: {sorted(_PROPERTY_TO_DIM)}."
-        )
-    target_dim = _PROPERTY_TO_DIM[name]
+    def read(
+        preexisting_views: list[int],
+    ) -> tuple[tuple[npt.NDArray[np.int64], npt.NDArray[np.int32]], int]:
+        elements, grid_ids = helpers.read_elements(filename)
+        if name == helpers.GRID:
+            # Tag each vertex with its GRID ID, e.g. for point measures (ufl.dP). Only
+            # vertex nodes are tagged: the edge, face and interior nodes of higher-order
+            # cells are not mesh vertices. Each vertex is given by its node index (one
+            # node per entity), which read_meshtags maps to the mesh vertex. Node i has
+            # the i-th smallest GRID ID, so grid_ids[i] is its tag value, which must fit
+            # in the int32 values of a MeshTags.
+            cells = helpers.get_single_cell_type(
+                elements, "Reading GRID IDs as vertex tags", filename
+            )
+            vertices = helpers.get_vertex_nodes(cells)
+            if len(grid_ids) > 0 and grid_ids[-1] > np.iinfo(np.int32).max:
+                raise ValueError(f"GRID IDs in {filename} do not fit in mesh tag values (int32).")
+            return (vertices.reshape(-1, 1), grid_ids[vertices].astype(np.int32)), 1
 
-    if comm.rank == 0:
-        gmsh.initialize()
-        try:
-            gmsh.open(str(filename))
-            _promote_entities_to_physical_groups(gmsh.model)
-            topologies, _ = extract_topology_and_markers(gmsh.model)
-            if not topologies:
-                raise ValueError(f"No elements found in {filename}.")
+        # Check that the file has elements of the dimension of the property card, all of
+        # one type, as a DOLFINx MeshTags holds entities of a single type
+        blocks = elements.get(dim, [])
+        if len(blocks) == 0:
+            raise ValueError(f"No {name} elements (dimension {dim}) found in {filename}.")
+        if len(blocks) > 1:
+            types = [block.cell_type for block in blocks]
+            raise NotImplementedError(
+                f"{name} elements of several types {types} in {filename}; mesh tags of "
+                "several entity types are not supported."
+            )
+        return (blocks[0].nodes, blocks[0].pids), blocks[0].nodes.shape[1]
 
-            elements = []
-            for gmsh_type in topologies:
-                _, dim, _, n_nodes, *_ = gmsh.model.mesh.getElementProperties(gmsh_type)
-                elements.append((dim, n_nodes, gmsh_type))
-
-            target_elements = [e for e in elements if e[0] == target_dim]
-            if not target_elements:
-                raise ValueError(
-                    f"No {name} elements (dimension {target_dim}) found in {filename}."
-                )
-            if len(target_elements) > 1:
-                raise RuntimeError(
-                    f"Multiple element types share dimension {target_dim} in {filename}."
-                )
-            _, num_nodes, gmsh_type = target_elements[0]
-            mesh_entities = topologies[gmsh_type]["topology"].astype(np.int64, copy=False)
-            tag_values = topologies[gmsh_type]["cell_data"].astype(np.int32, copy=False)
-        finally:
-            gmsh.finalize()
-
-        cell_type, _ = _gmsh_to_cells[gmsh_type]
-        comm.bcast((cell_type, num_nodes), root=0)
-    else:
-        cell_type, num_nodes = comm.bcast(None, root=0)
-        mesh_entities = np.empty((0, num_nodes), dtype=np.int64)
-        tag_values = np.empty(0, dtype=np.int32)
-
-    perm = cell_perm_array(dolfinx.mesh.to_type(cell_type), num_nodes)
-
-    return MeshTagsData(
-        name=name,
-        values=tag_values,
-        indices=mesh_entities[:, perm],
-        dim=target_dim,
-    )
+    local, num_nodes = _run_on_root(comm, read)
+    if local is None:
+        local = (np.zeros((0, num_nodes), dtype=np.int64), np.zeros(0, dtype=np.int32))
+    return MeshTagsData(name=name, values=local[1], indices=local[0], dim=dim)
 
 
 def read_dofmap(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     backend_args: dict[str, Any] | None,
 ) -> dolfinx.graph.AdjacencyList:
@@ -372,7 +395,7 @@ def read_dofmap(
 
 def read_dofs(
     filename: str | Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     name: str,
     time: float,
     backend_args: dict[str, Any] | None,
@@ -395,7 +418,7 @@ def read_dofs(
 
 
 def read_cell_perms(
-    comm: MPI.Intracomm, filename: Path | str, backend_args: dict[str, Any] | None
+    comm: MPI.Comm, filename: Path | str, backend_args: dict[str, Any] | None
 ) -> npt.NDArray[np.uint32]:
     """
     Read cell permutation from file with given communicator,
@@ -415,7 +438,7 @@ def read_cell_perms(
 
 def write_function(
     filename: Path,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     u: FunctionData,
     time: float,
     mode: FileMode,
@@ -436,7 +459,7 @@ def write_function(
 
 
 def read_legacy_mesh(
-    filename: Path | str, comm: MPI.Intracomm, group: str
+    filename: Path | str, comm: MPI.Comm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
     """Read in the mesh topology, geometry and (optionally) cell type from a
     legacy DOLFIN HDF5-file.
@@ -473,7 +496,7 @@ def snapshot_checkpoint(
 
 
 def read_hdf5_array(
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     filename: Path | str,
     group: str,
     backend_args: dict[str, Any] | None,
@@ -498,7 +521,7 @@ def read_hdf5_array(
 def write_data(
     filename: Path | str,
     array_data: ArrayData,
-    comm: MPI.Intracomm,
+    comm: MPI.Comm,
     time: str | float | None,
     mode: FileMode,
     backend_args: dict[str, Any] | None,
