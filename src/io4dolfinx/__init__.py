@@ -19,11 +19,12 @@ from .checkpointing import (
     write_attributes,
     write_cell_data,
     write_function,
+    write_function_on_input_mesh,
     write_mesh,
+    write_mesh_input_order,
     write_meshtags,
     write_point_data,
 )
-from .original_checkpoint import write_function_on_input_mesh, write_mesh_input_order
 from .readers import (
     read_cell_data,
     read_function_from_legacy_h5,
