@@ -1,12 +1,15 @@
 # # Checkpoint format
 #
-# The {ref}`H5PY<h5pybackend>` and ADIOS2 backends store checkpoints in a layout defined by
-# io4dolfinx, so that they can be read with a different number of processes, or by a later
-# version of io4dolfinx. This page describes the layout, and the guarantees that come with it.
+# The {ref}`H5PY<h5pybackend>` and ADIOS2 backends store checkpoints in a layout of their own,
+# rather than in a standard format such as XDMF or VTX. This lets them store functions in any
+# finite element space, not only Lagrange spaces, and gives N-to-M checkpointing: a checkpoint
+# written on N processes can be read on any number M of processes.
+# This page describes the layout, and the guarantees that come with it.
 #
 # ## Compatibility
 #
-# Each mesh, function and set of mesh tags in a checkpoint is stamped with the version of the
+# Each {py:class}`dolfinx.mesh.Mesh`, {py:class}`dolfinx.fem.Function` and
+# {py:class}`dolfinx.mesh.MeshTags` in a checkpoint is stamped with the version of the
 # checkpoint format it was written in, {py:data}`io4dolfinx.format.FORMAT_VERSION`, when it is
 # first written. The stamp is never changed, so a file that has been appended to by several
 # versions of io4dolfinx records the format of each object.
@@ -15,9 +18,9 @@
 #   io4dolfinx cannot read. A checkpoint with a newer major version is not read: io4dolfinx
 #   raises an error asking you to upgrade it.
 # - The **minor** version changes when something optional is added. A checkpoint with a newer
-#   minor version is read, ignoring what this version of io4dolfinx does not know.
+#   minor version is read.
 # - Appending to an object, e.g. adding a time step to a function, requires the same major
-#   version. The object keeps its stamp.
+#   version.
 # - Objects without a stamp were written before checkpoints were stamped, and are read as
 #   format 1.0.
 #
