@@ -44,6 +44,7 @@ from dolfinx import cpp as _cpp
 from .backends import FileMode, get_backend
 from .checkpointing import _with_mesh_name, write_mesh
 from .comm_helpers import exchange_to_owners, numpy_to_mpi
+from .format import stamp
 from .structures import MeshTagsData
 from .utils import check_file_exists, compute_local_range, index_owner
 
@@ -178,6 +179,7 @@ def write_submesh(
     )
 
     tag_data = MeshTagsData(
+        metadata=stamp(),
         values=post_code,
         num_entities_global=cell_imap.size_global,
         num_dofs_per_entity=entities_to_geometry.shape[1],

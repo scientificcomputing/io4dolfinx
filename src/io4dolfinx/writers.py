@@ -14,6 +14,7 @@ import fenicsx_compat
 import numpy as np
 
 from .backends import FileMode, get_backend
+from .format import stamp
 from .structures import FunctionData, MeshData
 
 
@@ -88,6 +89,7 @@ def prepare_meshdata_for_storage(mesh: dolfinx.mesh.Mesh, store_partition_info: 
         partition_global = None
 
     return MeshData(
+        metadata=stamp(),
         local_geometry=mesh.geometry.x[:num_xdofs_local, :gdim].copy(),
         local_geometry_pos=geometry_range,
         num_nodes_global=num_xdofs_global,

@@ -16,6 +16,7 @@ import fenicsx_compat
 import numpy as np
 
 from .comm_helpers import send_to_input_order
+from .format import stamp
 from .structures import FunctionData, MeshData
 from .utils import input_cell_index, unroll_dofmap
 
@@ -58,6 +59,7 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
     # NOTE: Local geometry type hint skip is only required on DOLFINX<0.10 where
     # proper `dolfinx.mesh.Geometry` wrapper doesn't exist
     return MeshData(
+        metadata=stamp(),
         local_geometry=geometry,  # type: ignore[arg-type]
         local_geometry_pos=local_node_range,
         num_nodes_global=num_nodes_global,
@@ -123,6 +125,7 @@ def create_function_data_on_original_mesh(
     dof_start, dof_end = (int(i) * dofmap.index_map_bs for i in dofmap.index_map.local_range)
     func_name = name if name is not None else u.name
     return FunctionData(
+        metadata=stamp(),
         cell_permutations=cell_permutation_info,
         local_cell_range=local_cell_range,
         num_cells_global=num_cells_global,

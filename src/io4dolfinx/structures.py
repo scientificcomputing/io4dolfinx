@@ -7,7 +7,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -45,6 +46,8 @@ class MeshData:
         None  #: Local insert position for partitioning information
     )
     partition_global: int | None = None  #: Global size of partitioning array
+    #: Metadata stored with the mesh when it is first written, see :mod:`io4dolfinx.format`
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -64,6 +67,8 @@ class FunctionData:
     dof_range: tuple[int, int]  #: Range of local function values
     num_dofs_global: int  #: Number of global function values
     name: str  #: Name of function
+    #: Metadata stored with the function when it is first written, see :mod:`io4dolfinx.format`
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -98,6 +103,8 @@ class MeshTagsData:
 
     # Optional info to help visualization
     cell_type: str | None = None  #: The cell type
+    #: Metadata stored with the mesh tags when they are written, see :mod:`io4dolfinx.format`
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

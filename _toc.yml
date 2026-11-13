@@ -28,6 +28,7 @@ parts:
     - file: "docs/writing_functions_checkpoint"
     - file: "docs/snapshot_checkpoint"
     - file: "docs/original_checkpoint"
+    - file: "docs/checkpoint_format"
     - file: "docs/vtkhdf_compression"
 
   - caption: Python API
