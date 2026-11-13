@@ -184,7 +184,8 @@ def write_meshtags(
         mesh: The mesh associated with the meshtags
         meshtags: The meshtags to write to file
         meshtag_name: Name of the meshtag. If None, the meshtag name is used.
-        backend_args: Option to IO backend.
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         backend: IO backend
         on_input_mesh: If True, the meshtags are written with the node ordering
             of the input mesh.

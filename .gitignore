@@ -132,11 +132,29 @@ _build/
 
 output/
 
-*.h5
 .coverage.*
 .coverage
-*.h5
-*.xdmf
+
+# Files read or written by the backends (tests, docs, demos)
+# ADIOS2
 *.bp/
-*.pvd
+# H5PY and XDMF (with its HDF5 data file)
+*.h5
+*.hdf5
+*.xdmf
+*.xmf
+# VTKHDF
+*.vtkhdf
+*.hdf
+# PyVista (VTK formats)
+*.vtk
 *.vtu
+*.pvtu
+*.pvd
+# Exodus
+*.e
+*.exo
+# MED
+*.med
+# Gmsh
+*.msh

@@ -1,4 +1,4 @@
-"""Lossless VTKHDF filters, append policies, and collective empty selections."""
+"""Lossless VTKHDF filters, append policies, and collective writes from empty ranks."""
 
 from dataclasses import replace
 
@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import pytest
 from dolfinx.fem import Function, functionspace
-from dolfinx.mesh import create_unit_square
+from dolfinx.mesh import create_unit_square, meshtags
 from vtkmodules.vtkIOHDF import vtkHDFReader
 
 import io4dolfinx
@@ -16,16 +16,34 @@ from io4dolfinx.backends.vtkhdf import backend
 from io4dolfinx.structures import ArrayData
 from io4dolfinx.writers import prepare_meshdata_for_storage
 
+# HDF5 can be built without zlib, in which case gzip is unavailable.
+requires_gzip = pytest.mark.skipif(
+    not h5py.h5z.filter_avail(h5py.h5z.FILTER_DEFLATE), reason="HDF5 built without gzip"
+)
+GZIP = {"compression": "gzip", "compression_opts": 4}
 
-@pytest.mark.parametrize("compression", [None, "gzip"])
-@pytest.mark.parametrize("shuffle", [False, True])
-def test_compressed_roundtrip(shared_tmp_path, compression, shuffle):
+INTEGER_DATASETS = ("Connectivity", "Offsets", "Types")
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"scaleoffset": False},
+        {"compression": None, "shuffle": False},
+        {"shuffle": True},
+        pytest.param(GZIP, marks=requires_gzip),
+        pytest.param({**GZIP, "shuffle": True}, marks=requires_gzip),
+        {"fletcher32": True},
+        {"scaleoffset": True, "shuffle": True},
+        pytest.param({**GZIP, "scaleoffset": True, "shuffle": True}, marks=requires_gzip),
+    ],
+)
+def test_compressed_roundtrip(shared_tmp_path, options):
     comm = MPI.COMM_WORLD
     filename = shared_tmp_path / "roundtrip.vtkhdf"
     mesh = create_unit_square(comm, 5, 4)
-    options = {"compression": compression, "shuffle": shuffle}
-    if compression:
-        options["compression_opts"] = 4
+    compression = options.get("compression")
     io4dolfinx.write_mesh(filename, mesh, backend="vtkhdf", backend_args=options)
     for time in (0.0, 1.0):
         # Omitting options on append must retain the existing mesh filters.
@@ -82,13 +100,18 @@ def test_compressed_roundtrip(shared_tmp_path, compression, shuffle):
         ):
             dataset = block[path]
             assert dataset.compression == compression
-            assert dataset.shuffle == shuffle
+            assert dataset.shuffle == options.get("shuffle", False)
+            assert dataset.fletcher32 == options.get("fletcher32", False)
+            # Scale-offset is on by default, unless fletcher32 is requested, and is
+            # applied to integers only, where it is lossless.
+            default = not options.get("fletcher32", False)
+            scaleoffset = options.get("scaleoffset", default) and path in INTEGER_DATASETS
+            assert (dataset.scaleoffset is not None) == scaleoffset
             assert dataset.chunks is not None
             if compression:
                 assert dataset.compression_opts == 4
         for path in ("NumberOfPoints", "NumberOfCells", "Steps/Values", "PointData/plain"):
-            assert block[path].compression is None
-            assert not block[path].shuffle
+            assert block[path].id.get_create_plist().get_nfilters() == 0
 
     for time in (0.0, 1.0):
         restored = io4dolfinx.read_mesh(filename, comm, time=time, backend="vtkhdf")
@@ -131,10 +154,20 @@ def test_compressed_roundtrip(shared_tmp_path, compression, shuffle):
                     assert np.isclose(values.GetComponent(i, 0), x + time)
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param({"compression": "gzip", "shuffle": True}, marks=requires_gzip),
+        {"fletcher32": True},
+        {"scaleoffset": True, "shuffle": True},
+        {},
+        {"scaleoffset": False},
+    ],
+)
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("association", ["Point", "Cell"])
-def test_compressed_empty_ranks(shared_tmp_path, dtype, association):
-    """Empty ranks participate, and filters preserve special floating-point values."""
+def test_compressed_empty_ranks(shared_tmp_path, dtype, association, options):
+    """Empty ranks join collective writes; filters preserve special floating-point values."""
     comm = MPI.COMM_WORLD
     filename = shared_tmp_path / "empty_ranks.vtkhdf"
     mesh = create_unit_square(MPI.COMM_SELF, 2, 2, dtype=dtype)
@@ -147,7 +180,6 @@ def test_compressed_empty_ranks(shared_tmp_path, dtype, association):
             local_geometry_pos=(data.num_nodes_global, data.num_nodes_global),
             local_topology_pos=(data.num_cells_global, data.num_cells_global),
         )
-    options = {"compression": "gzip", "shuffle": True}
     backend.write_mesh(filename, comm, data, options, io4dolfinx.FileMode.write, 0.0)
     count = data.num_nodes_global if association == "Point" else data.num_cells_global
     local_range = data.local_geometry_pos if association == "Point" else data.local_topology_pos
@@ -173,6 +205,8 @@ def test_compressed_empty_ranks(shared_tmp_path, dtype, association):
         {"shuffle": "yes"},
         {"chunks": (25000,)},
         {"scaleoffset": 2},
+        {"fletcher32": 1},
+        {"fletcher32": True, "scaleoffset": True},
     ],
 )
 def test_invalid_options_do_not_create_file(shared_tmp_path, options):
@@ -186,18 +220,23 @@ def test_invalid_options_do_not_create_file(shared_tmp_path, options):
 
 @pytest.mark.parametrize("target", ["mesh", "point", "cell"])
 @pytest.mark.parametrize(
-    "conflict",
+    "options, conflict",
     [
-        {"compression": None},
-        {"compression": "gzip", "compression_opts": 1},
-        {"shuffle": False},
+        pytest.param({**GZIP, "shuffle": True}, {"compression": None}, marks=requires_gzip),
+        pytest.param(
+            {**GZIP, "shuffle": True},
+            {"compression": "gzip", "compression_opts": 1},
+            marks=requires_gzip,
+        ),
+        pytest.param({**GZIP, "shuffle": True}, {"shuffle": False}, marks=requires_gzip),
+        ({"fletcher32": True}, {"fletcher32": False}),
+        ({"shuffle": True}, {"fletcher32": True}),
     ],
 )
-def test_conflicting_append_preserves_file(shared_tmp_path, target, conflict):
+def test_conflicting_append_preserves_file(shared_tmp_path, target, options, conflict):
     comm = MPI.COMM_WORLD
     filename = shared_tmp_path / "conflict.vtkhdf"
     mesh = create_unit_square(comm, 2, 2)
-    options = {"compression": "gzip", "compression_opts": 4, "shuffle": True}
     io4dolfinx.write_mesh(filename, mesh, backend="vtkhdf", backend_args=options)
     u = Function(functionspace(mesh, ("Lagrange", 1)), name="u")
     if target != "mesh":
@@ -222,6 +261,116 @@ def test_conflicting_append_preserves_file(shared_tmp_path, target, conflict):
     assert filename.read_bytes() == before
 
 
+@pytest.mark.parametrize("scaleoffset", [False, True])
+def test_scaleoffset_append(shared_tmp_path, scaleoffset):
+    """Scale-offset conflicts on the integer mesh arrays; float data never use it."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "scaleoffset.vtkhdf"
+    mesh = create_unit_square(comm, 2, 2)
+    options = {"scaleoffset": scaleoffset}
+    io4dolfinx.write_mesh(filename, mesh, backend="vtkhdf", backend_args=options)
+    u = Function(functionspace(mesh, ("Lagrange", 1)), name="u")
+    io4dolfinx.write_point_data(
+        filename, u, time=0.0, mode=io4dolfinx.FileMode.append, backend_args=options
+    )
+    # Float data are unaffected by the option, so either value appends.
+    io4dolfinx.write_point_data(
+        filename,
+        u,
+        time=1.0,
+        mode=io4dolfinx.FileMode.append,
+        backend_args={"scaleoffset": not scaleoffset},
+    )
+    before = filename.read_bytes()
+    with pytest.raises(ValueError, match="cannot append"):
+        io4dolfinx.write_mesh(
+            filename,
+            mesh,
+            time=1.0,
+            mode=io4dolfinx.FileMode.append,
+            backend="vtkhdf",
+            backend_args={"scaleoffset": not scaleoffset},
+        )
+    assert filename.read_bytes() == before
+
+
+def test_default_scaleoffset_only_for_new_datasets(shared_tmp_path):
+    """The default never conflicts with existing datasets, and applies to new ones."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "default.vtkhdf"
+    mesh = create_unit_square(comm, 2, 2)
+    # A file without scale-offset, as written before it became the default.
+    io4dolfinx.write_mesh(filename, mesh, backend="vtkhdf", backend_args={"scaleoffset": False})
+    io4dolfinx.write_mesh(
+        filename, mesh, time=1.0, mode=io4dolfinx.FileMode.append, backend="vtkhdf"
+    )
+    io4dolfinx.write_mesh(
+        filename,
+        mesh,
+        mode=io4dolfinx.FileMode.append,
+        backend="vtkhdf",
+        backend_args={"name": "other"},
+    )
+    with h5py.File(filename, "r") as hdf:
+        for path in INTEGER_DATASETS:
+            assert hdf[f"VTKHDF/mesh/{path}"].scaleoffset is None
+            assert hdf[f"VTKHDF/other/{path}"].scaleoffset is not None
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{}, {"shuffle": True}, pytest.param({**GZIP, "shuffle": True}, marks=requires_gzip)],
+)
+def test_compressed_meshtags(shared_tmp_path, options):
+    """Mesh tags use the storage options, and each offset has a single writer."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "meshtags.vtkhdf"
+    mesh = create_unit_square(comm, 5, 4)
+    io4dolfinx.write_mesh(filename, mesh, backend="vtkhdf", backend_args=options)
+    dim = mesh.topology.dim
+    cell_map = mesh.topology.index_map(dim)
+    cells = np.arange(cell_map.size_local, dtype=np.int32)
+    tags = meshtags(mesh, dim, cells, cells + cell_map.local_range[0])
+    io4dolfinx.write_meshtags(filename, mesh, tags, "tags", backend_args=options, backend="vtkhdf")
+
+    num_cells = cell_map.size_global
+    with h5py.File(filename, "r") as hdf:
+        block = hdf["VTKHDF/mesh_tags"]
+        np.testing.assert_array_equal(block["Offsets"][:], np.arange(num_cells + 1) * 3)
+        for path in ("CellData/tags", *INTEGER_DATASETS):
+            dataset = block[path]
+            assert dataset.compression == options.get("compression")
+            assert dataset.shuffle == options.get("shuffle", False)
+            # The tag values are integers too, so they get the default scale-offset.
+            assert dataset.scaleoffset is not None
+
+    restored_mesh = io4dolfinx.read_mesh(filename, comm, backend="vtkhdf")
+    restored = io4dolfinx.read_meshtags(filename, restored_mesh, "tags", backend="vtkhdf")
+    values = np.sort(np.hstack(comm.allgather(restored.values)))
+    np.testing.assert_array_equal(np.unique(values), np.arange(num_cells))
+
+    before = filename.read_bytes()
+    with pytest.raises(ValueError, match="cannot append"):
+        io4dolfinx.write_meshtags(
+            filename, mesh, tags, "tags", backend_args={"fletcher32": True}, backend="vtkhdf"
+        )
+    assert filename.read_bytes() == before
+
+
+def test_numpy_scalar_options(shared_tmp_path):
+    """numpy booleans and integers are accepted like their Python counterparts."""
+    comm = MPI.COMM_WORLD
+    filename = shared_tmp_path / "numpy_options.vtkhdf"
+    mesh = create_unit_square(comm, 2, 2)
+    options = {"shuffle": np.True_, "scaleoffset": np.False_}
+    if h5py.h5z.filter_avail(h5py.h5z.FILTER_DEFLATE):
+        options |= {"compression": "gzip", "compression_opts": np.int64(4)}
+    io4dolfinx.write_mesh(filename, mesh, backend="vtkhdf", backend_args=options)
+    with h5py.File(filename, "r") as hdf:
+        dataset = hdf["VTKHDF/mesh/Connectivity"]
+        assert dataset.shuffle and dataset.scaleoffset is None
+
+
 def test_rank_local_filter_failure(shared_tmp_path, monkeypatch):
     comm = MPI.COMM_WORLD
     if comm.rank == 0:
@@ -235,7 +384,17 @@ def test_rank_local_filter_failure(shared_tmp_path, monkeypatch):
     assert not filename.exists()
 
 
-def test_inconsistent_rank_options(shared_tmp_path):
+@pytest.mark.parametrize(
+    "rank_options",
+    [
+        pytest.param(
+            lambda rank: {"compression": "gzip", "compression_opts": rank % 10},
+            marks=requires_gzip,
+        ),
+        lambda rank: {"fletcher32": rank == 0},
+    ],
+)
+def test_inconsistent_rank_options(shared_tmp_path, rank_options):
     comm = MPI.COMM_WORLD
     if comm.size == 1:
         pytest.skip("Requires multiple MPI ranks")
@@ -243,9 +402,6 @@ def test_inconsistent_rank_options(shared_tmp_path):
     filename = shared_tmp_path / "inconsistent.vtkhdf"
     with pytest.raises(ValueError, match="identical"):
         io4dolfinx.write_mesh(
-            filename,
-            mesh,
-            backend="vtkhdf",
-            backend_args={"compression": "gzip", "compression_opts": comm.rank % 10},
+            filename, mesh, backend="vtkhdf", backend_args=rank_options(comm.rank)
         )
     assert not filename.exists()

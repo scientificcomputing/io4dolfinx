@@ -11,6 +11,8 @@ only_build_toc_files: true
 # See https://jupyterbook.org/content/execute.html
 execute:
   execute_notebooks: cache
+  # Maximum run time per cell in seconds (default 30), e.g. for the compression benchmark.
+  timeout: 600
 
 # Information about where the book exists on the web
 repository:

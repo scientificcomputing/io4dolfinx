@@ -2,7 +2,6 @@
 Module that can read the VTKHDF format using h5py.
 """
 
-from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,7 @@ from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsDat
 from io4dolfinx.utils import check_file_exists, compute_local_range
 
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode
+from ..h5py import storage as h5_storage
 from ..h5py.backend import convert_file_mode, h5pyfile
 from ..pyvista.backend import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
 
@@ -486,100 +486,6 @@ def read_function_names(
     return list(function_names)
 
 
-def _validate_storage_options(comm: MPI.Comm, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Extract explicit filter settings and check local HDF5 capabilities."""
-    options: dict[str, Any] = {
-        key: arguments[key]
-        for key in ("compression", "compression_opts", "shuffle")
-        if key in arguments
-    }
-    compression = options.get("compression")
-    if compression is not None and compression != "gzip":
-        raise ValueError("VTKHDF compression must be 'gzip' or None")
-    if "compression_opts" in options:
-        level = options["compression_opts"]
-        if compression != "gzip" or type(level) is not int or not 0 <= level <= 9:
-            raise ValueError("compression_opts requires gzip and an integer level from 0 to 9")
-    if "shuffle" in options and type(options["shuffle"]) is not bool:
-        raise ValueError("shuffle must be a boolean")
-    if "chunks" in arguments and arguments["chunks"] is not True:
-        raise ValueError("VTKHDF uses automatic chunking; only chunks=True is supported")
-    if any(key in arguments for key in ("scaleoffset", "fletcher32")):
-        raise ValueError("VTKHDF supports only gzip compression and optional shuffle")
-    if compression is not None or options.get("shuffle", False):
-        parallel_hdf5 = h5py.get_config().mpi
-        if (comm.size > 1 and not parallel_hdf5) or (
-            parallel_hdf5
-            and (h5py.version.hdf5_version_tuple < (1, 10, 2) or MPI.Get_version() < (3, 0))
-        ):
-            raise ValueError("Parallel VTKHDF compression requires MPI-enabled HDF5 >= 1.10.2")
-        filters = [h5py.h5z.FILTER_DEFLATE] if compression else []
-        if options.get("shuffle", False):
-            filters.append(h5py.h5z.FILTER_SHUFFLE)
-        for filter_id in filters:
-            if not h5py.h5z.filter_avail(filter_id) or not (
-                h5py.h5z.get_filter_info(filter_id) & h5py.h5z.FILTER_CONFIG_ENCODE_ENABLED
-            ):
-                raise ValueError(f"HDF5 filter {filter_id} is unavailable for writing")
-    return options
-
-
-def _storage_options(comm: MPI.Comm, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Agree on filter settings and validation errors before opening a file."""
-    options: dict[str, Any] = {}
-    error = None
-    try:
-        options = _validate_storage_options(comm, arguments)
-    except (TypeError, ValueError) as exc:
-        error = str(exc)
-
-    # One exchange handles both errors and settings; a single rank needs no exchange.
-    settings = comm.allgather((error, options)) if comm.size > 1 else [(error, options)]
-    for rank_error, _ in settings:
-        if rank_error is not None:
-            raise ValueError(rank_error)
-    if any(rank_options != options for _, rank_options in settings):
-        raise ValueError("VTKHDF compression options must be identical on every MPI rank")
-    return options
-
-
-def _check_storage_options(dataset: h5py.Dataset, options: dict[str, Any]) -> None:
-    """Reject explicit changes to the immutable filters of an existing dataset."""
-    for key, requested in options.items():
-        actual = getattr(dataset, key)
-        if actual != requested:
-            raise ValueError(
-                f"Dataset {dataset.name} already has {key}={actual!r}; "
-                f"cannot append with {key}={requested!r}"
-            )
-
-
-def _write_dataset(
-    dataset: h5py.Dataset, selection: slice | tuple[slice, ...], values: np.ndarray
-) -> None:
-    """Write a local slice, keeping empty ranks in filtered MPI writes."""
-    if not (dataset.compression or dataset.shuffle) or dataset.file.driver != "mpio":
-        dataset[selection] = values
-        return
-
-    if values.size:
-        with dataset.collective:
-            dataset[selection] = values
-        return
-
-    # h5py's high-level assignment skips empty selections entirely. HDF5 still
-    # requires an H5Dwrite from these ranks for collective I/O.
-    with (
-        closing(dataset.id.get_space()) as file_space,
-        closing(h5py.h5s.create_simple(values.shape)) as memory_space,
-        closing(h5py.h5p.create(h5py.h5p.DATASET_XFER)) as transfer,
-    ):
-        file_space.select_none()
-        memory_space.select_none()
-        transfer.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
-        dataset.id.write(memory_space, file_space, values, dxpl=transfer)
-
-
 def _create_dataset(
     root: h5py.File | h5py.Group,
     name: str,
@@ -589,8 +495,16 @@ def _create_dataset(
     maxshape: tuple[int | None, ...],
     mode: str,
     resize: bool = True,
-    storage_options: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> h5py.Dataset:
+    """Create a dataset, or open (and resize) an existing one in append mode.
+
+    Args:
+        filters: h5py filter arguments for a new dataset, from
+            :func:`io4dolfinx.backends.h5py.storage.filter_options`. Omitted for small
+            bookkeeping datasets, which every rank writes independently and which must
+            therefore stay unfiltered.
+    """
     if name not in root.keys():
         mode = "w"
     if mode == "w":
@@ -600,7 +514,7 @@ def _create_dataset(
             dtype=dtype,
             chunks=chunks,
             maxshape=maxshape,
-            **(storage_options or {}),
+            **(filters or {}),
         )
     elif mode == "a":
         dataset = root[name]
@@ -660,7 +574,7 @@ def write_mesh(
     h5_mode = convert_file_mode(mode)
     backend_args = get_default_backend_args(backend_args)
     name = backend_args["name"]
-    storage_options = _storage_options(comm, backend_args)
+    storage_options = h5_storage.storage_options(comm, backend_args)
 
     with h5pyfile(filename, h5_mode, comm=comm) as h5file:
         # Check all existing bulk arrays before changing attributes or resizing anything.
@@ -668,7 +582,7 @@ def write_mesh(
             block = h5file[f"/VTKHDF/{name}"]
             for key in ("Points", "Offsets", "Connectivity", "Types"):
                 if key in block:
-                    _check_storage_options(block[key], storage_options)
+                    h5_storage.check_storage_options(block[key], storage_options)
         hdf = _create_group(h5file, "/VTKHDF", h5_mode)
         hdf.attrs.create("Type", "MultiBlockDataSet")
         hdf.attrs["Version"] = _vtk_hdf_version
@@ -713,13 +627,15 @@ def write_mesh(
             chunks=True,
             maxshape=(None, 3),
             mode=h5_mode,
-            storage_options=storage_options,
+            filters=h5_storage.filter_options(storage_options, mesh.local_geometry.dtype),
         )
         insert_slice = _compute_append_slice(
             points, mesh.num_nodes_global, mesh.local_geometry_pos, h5_mode
         )
-        _write_dataset(
-            points, (insert_slice, slice(0, mesh.local_geometry.shape[1])), mesh.local_geometry
+        h5_storage.write_dataset(
+            points,
+            (insert_slice, slice(0, mesh.local_geometry.shape[1])),
+            mesh.local_geometry,
         )
 
         # NOTE: VTKHDF currently does not support reading time dependent topology in
@@ -758,7 +674,7 @@ def write_mesh(
             mode=h5_mode,
             maxshape=(None,),
             resize=False,  # Resize should really be True
-            storage_options=storage_options,
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )
         # Each offset has one writer. Only the last nonempty rank writes the final offset.
         first, last = mesh.local_topology_pos
@@ -772,7 +688,7 @@ def write_mesh(
             (first, last + int(include_end)),
             mode=h5_mode,
         )
-        _write_dataset(offsets, insert_slice, offset_data)
+        h5_storage.write_dataset(offsets, insert_slice, offset_data)
         del offset_data
 
         # Permute and store topology data
@@ -788,7 +704,7 @@ def write_mesh(
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
-            storage_options=storage_options,
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             topology,
@@ -796,7 +712,7 @@ def write_mesh(
             np.array(mesh.local_topology_pos) * num_dofs_per_cell,
             mode=h5_mode,
         )
-        _write_dataset(topology, insert_slice, topology_data)
+        h5_storage.write_dataset(topology, insert_slice, topology_data)
         del topology_data
 
         # Store celltypes
@@ -814,12 +730,12 @@ def write_mesh(
             chunks=True,
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
-            storage_options=storage_options,
+            filters=h5_storage.filter_options(storage_options, np.uint8),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             types, mesh.num_cells_global, mesh.local_topology_pos, h5_mode
         )
-        _write_dataset(types, insert_slice, cell_types)
+        h5_storage.write_dataset(types, insert_slice, cell_types)
         del cell_types
 
         steps = _create_group(mesh_group, "Steps", mode=h5_mode)
@@ -929,6 +845,7 @@ def write_meshtags(
     backend_args = get_default_backend_args(backend_args)
     name = backend_args["name"]
     h5_mode = "a"
+    storage_options = h5_storage.storage_options(comm, backend_args)
     with h5pyfile(filename, h5_mode, comm=comm) as h5file:
         hdf = h5file["VTKHDF"]
         file_type = _decode_bytes_if_needed(hdf.attrs["Type"])
@@ -941,6 +858,12 @@ def write_meshtags(
         block = parent_mesh_group.parent
 
         tag_path = f"/VTKHDF/{name}_{data.name}"
+        # Check all existing bulk arrays before changing anything.
+        if tag_path in h5file:
+            tag_group = h5file[tag_path]
+            for key in (f"CellData/{data.name}", "Offsets", "Connectivity", "Types"):
+                if key in tag_group:
+                    h5_storage.check_storage_options(tag_group[key], storage_options)
         if data.name not in block.keys():
             block[data.name] = h5py.SoftLink(tag_path)
 
@@ -958,6 +881,7 @@ def write_meshtags(
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
+            filters=h5_storage.filter_options(storage_options, data.values.dtype),
         )
         assert data.local_start is not None
         insert_slice = _compute_append_slice(
@@ -966,7 +890,7 @@ def write_meshtags(
             np.array([data.local_start, data.local_start + data.indices.shape[0]]),
             mode=h5_mode,
         )
-        dataset[insert_slice] = data.values
+        h5_storage.write_dataset(dataset, insert_slice, data.values)
 
         # NOTE: The following is more or less a copy from write_mesh,
         # except that we pull out the point storage and use a softlink
@@ -1012,17 +936,21 @@ def write_meshtags(
             mode=h5_mode,
             maxshape=(None,),
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
-        offset_data = np.arange(0, data.indices.size + 1, data.indices.shape[1])
+        # Each offset has one writer. Only the last nonempty rank writes the final offset.
         assert data.local_start is not None
-        offset_data += num_dofs_per_cell * data.local_start
+        first, last = data.local_start, data.local_start + data.indices.shape[0]
+        include_end = last == data.num_entities_global and last > first
+        offset_data = np.arange(first, last + int(include_end), dtype=np.int64)
+        offset_data *= num_dofs_per_cell
         insert_slice = _compute_append_slice(
             offsets,
             data.num_entities_global + 1,
-            (data.local_start, data.local_start + data.indices.shape[0] + 1),
+            (first, last + int(include_end)),
             mode=h5_mode,
         )
-        offsets[insert_slice] = offset_data
+        h5_storage.write_dataset(offsets, insert_slice, offset_data)
         del offset_data
 
         # Permute and store topology data
@@ -1040,6 +968,7 @@ def write_meshtags(
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.int64),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             topology,
@@ -1048,13 +977,14 @@ def write_meshtags(
             * num_dofs_per_cell,
             mode=h5_mode,
         )
-        topology[insert_slice] = topology_data
+        h5_storage.write_dataset(topology, insert_slice, topology_data)
         del topology_data
 
         # Store celltypes
         cell_types = np.full(
             data.indices.shape[0],
             fenicsx_compat.vtk_cell_type(dx_ct, num_dofs_per_cell),
+            dtype=np.uint8,
         )
         types = _create_dataset(
             mesh_group,
@@ -1065,6 +995,7 @@ def write_meshtags(
             chunks=True,
             mode=h5_mode,
             resize=False,  # Resize should really be True, see issue below
+            filters=h5_storage.filter_options(storage_options, np.uint8),
         )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
         insert_slice = _compute_append_slice(
             types,
@@ -1072,7 +1003,7 @@ def write_meshtags(
             (data.local_start, data.local_start + data.indices.shape[0]),
             h5_mode,
         )
-        types[insert_slice] = cell_types
+        h5_storage.write_dataset(types, insert_slice, cell_types)
         del cell_types
 
         steps = _create_group(mesh_group, "Steps", mode=h5_mode)
@@ -1321,7 +1252,7 @@ def write_data(
     backend_args = get_default_backend_args(backend_args)
     mesh_name = backend_args["name"]
     extension = array_data.type
-    storage_options = _storage_options(comm, backend_args)
+    storage_options = h5_storage.storage_options(comm, backend_args)
     with h5pyfile(filename, h5_mode, comm=comm) as h5file:
         hdf = h5file["VTKHDF"]
         file_type = _decode_bytes_if_needed(hdf.attrs["Type"])
@@ -1334,7 +1265,7 @@ def write_data(
 
         data_path = f"{extension}Data/{array_data.name}"
         if storage_options and data_path in block:
-            _check_storage_options(block[data_path], storage_options)
+            h5_storage.check_storage_options(block[data_path], storage_options)
 
         data_group = _create_group(block, f"{extension}Data", mode=h5_mode)
         dataset = _create_dataset(
@@ -1345,7 +1276,7 @@ def write_data(
             chunks=True,
             maxshape=(None, array_data.values.shape[1]),
             mode=h5_mode,
-            storage_options=storage_options,
+            filters=h5_storage.filter_options(storage_options, array_data.values.dtype),
         )
         insert_slice = _compute_append_slice(
             dataset,
@@ -1358,7 +1289,11 @@ def write_data(
             ),
             mode=h5_mode,
         )
-        _write_dataset(dataset, insert_slice, array_data.values)
+        h5_storage.write_dataset(
+            dataset,
+            insert_slice,
+            array_data.values,
+        )
 
         steps = _create_group(block, "Steps", mode=h5_mode)
         pdo = _create_group(steps, f"{extension}DataOffsets", mode=h5_mode)
