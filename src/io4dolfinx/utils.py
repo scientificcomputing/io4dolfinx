@@ -16,6 +16,7 @@ from pathlib import Path
 
 from mpi4py import MPI
 
+import basix
 import dolfinx
 import fenicsx_compat
 import numpy as np
@@ -34,6 +35,7 @@ __all__ = [
     "match_rows",
     "strip_suffix",
     "input_cell_index",
+    "create_mixed_mesh",
 ]
 
 #: Codimension of the entities named ``"cell"``, ``"facet"``, ``"ridge"`` and ``"peak"``,
@@ -302,3 +304,77 @@ def input_cell_index(mesh: dolfinx.mesh.Mesh) -> npt.NDArray[np.int64]:
             "The mesh has no input cell indices, so the data cannot be written in the input "
             "ordering. This is the case for a submesh."
         ) from e
+
+
+def create_mixed_mesh(
+    comm: MPI.Comm,
+    cells: Sequence[npt.NDArray[np.int64]],
+    cell_types: Sequence[str],
+    x: npt.NDArray[np.floating],
+    degree: int,
+    lvar: int,
+    ghost_mode: dolfinx.mesh.GhostMode = dolfinx.mesh.GhostMode.shared_facet,
+    max_facet_to_cell_links: int = 2,
+) -> dolfinx.mesh.Mesh:
+    """Create a mesh with several cell types (mixed topology).
+
+    DOLFINx has no public Python interface for this, so the C++ constructor is called as
+    in :func:`dolfinx.io.gmsh.model_to_mesh`: ``_create_mixed_mesh`` after DOLFINx 0.11,
+    and the overload of ``create_mesh`` taking a list of cell arrays in 0.11.
+
+    Args:
+        comm: MPI communicator to distribute the mesh over
+        cells: Global cell->node connectivity of each cell type, in DOLFINx node ordering,
+            each of shape ``(num_cells, num_nodes_per_cell)``
+        cell_types: Cell type of each entry in ``cells``
+        x: Mesh coordinates, of shape ``(num_nodes, gdim)``
+        degree: Degree of the Lagrange coordinate elements
+        lvar: Lagrange variant of the coordinate elements
+        ghost_mode: Ghost mode of the mesh
+        max_facet_to_cell_links: Maximum number of cells a facet can be connected to
+
+    Returns:
+        The distributed mesh. It has no UFL domain, as UFL does not support mixed meshes.
+
+    Raises:
+        NotImplementedError: If DOLFINx is older than 0.11.
+    """
+    if fenicsx_compat.before("0.11.0.dev0"):
+        raise NotImplementedError(
+            f"Reading a mesh with several cell types {list(cell_types)} requires DOLFINx "
+            f"0.11 or later, found {dolfinx.__version__}."
+        )
+    x = np.ascontiguousarray(x)
+    cmaps = [
+        dolfinx.fem.coordinate_element(
+            dolfinx.mesh.to_type(cell_type),
+            degree,
+            basix.LagrangeVariant(lvar),
+            dtype=x.dtype,
+        )._cpp_object
+        for cell_type in cell_types
+    ]
+    flat_cells = [np.ascontiguousarray(c, dtype=np.int64).reshape(-1) for c in cells]
+    if hasattr(dolfinx.cpp.mesh, "_create_mixed_mesh"):
+        cpp_mesh = dolfinx.cpp.mesh._create_mixed_mesh(
+            comm,
+            flat_cells,
+            cmaps,  # type: ignore[arg-type]
+            x,
+            dolfinx.cpp.graph.partitioner() if comm.size > 1 else None,
+            ghost_mode,
+            max_facet_to_cell_links,
+            1,
+            cell_weights=None,
+            reorder_fn=None,
+        )
+    else:
+        partitioner = (
+            fenicsx_compat.create_cell_partitioner(ghost_mode, max_facet_to_cell_links)
+            if comm.size > 1
+            else None
+        )
+        cpp_mesh = dolfinx.cpp.mesh.create_mesh(  # type: ignore[call-overload]
+            comm, flat_cells, cmaps, x, partitioner, max_facet_to_cell_links
+        )
+    return dolfinx.mesh.Mesh(cpp_mesh, None)

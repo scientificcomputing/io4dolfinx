@@ -14,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import AdjacencyList
 
-__all__ = ["MeshData", "FunctionData", "ReadMeshData", "MeshTagsData"]
+__all__ = ["MeshData", "FunctionData", "ReadMeshData", "ReadMixedMeshData", "MeshTagsData"]
 
 
 @dataclass
@@ -86,6 +86,19 @@ class ReadMeshData:
     #: Geometry uses the degree 2 serendipity element with nodes at vertices and edge
     #: midpoints (8-node quadrilateral, 20-node hexahedron) instead of Lagrange
     serendipity: bool = False
+
+
+@dataclass
+class ReadMixedMeshData:
+    """Container for a mesh with several cell types (mixed topology) read into DOLFINx"""
+
+    #: Global cell->node connectivity of each cell type, in DOLFINx node ordering, each
+    #: of shape ``(num_cells, num_nodes_per_cell)``
+    cells: list[npt.NDArray[np.int64]]
+    cell_types: list[str]  #: The cell type of each entry in ``cells``
+    x: npt.NDArray[np.floating]  #: The mesh coordinates
+    lvar: int  #: The Lagrange variant
+    degree: int  #: The degree of the underlying Lagrange elements
 
 
 @dataclass

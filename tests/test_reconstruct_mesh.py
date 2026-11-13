@@ -4,6 +4,7 @@ from mpi4py import MPI
 
 import basix.ufl
 import dolfinx
+import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 import pytest
@@ -39,7 +40,7 @@ def test_reconstruct(cell_type: dolfinx.mesh.CellType, degree: int, dtype: npt.D
     cells = np.arange(num_cells_local, dtype=np.int32)
     v.interpolate(u, cells, cells)
 
-    assert new_mesh.geometry.cmaps[0].degree == degree
+    assert fenicsx_compat.cmap(new_mesh).degree == degree
 
     f_ex = ufl.as_vector(f(ufl.SpatialCoordinate(new_mesh)))
 
