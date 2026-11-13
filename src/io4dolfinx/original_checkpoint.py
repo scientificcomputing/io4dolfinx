@@ -16,8 +16,9 @@ import dolfinx
 import fenicsx_compat
 import numpy as np
 
-from .backends import FileMode, get_backend
+from .backends import FileMode, get_backend, get_mesh_name
 from .comm_helpers import all_to_all, numpy_to_mpi
+from .format import check_appendable, object_metadata, stamp
 from .structures import FunctionData, MeshData
 from .utils import (
     compute_insert_position,
@@ -189,6 +190,7 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
     # NOTE: Local geometry type hint skip is only required on DOLFINX<0.10 where
     # proper `dolfinx.mesh.Geometry` wrapper doesn't exist
     return MeshData(
+        metadata=stamp(),
         local_geometry=geometry,  # type: ignore[arg-type]
         local_geometry_pos=local_node_range,
         num_nodes_global=num_nodes_global,
@@ -329,6 +331,7 @@ def create_function_data_on_original_mesh(
     func_name = name if name is not None else u.name
     cell_to_output_comm.Free()
     return FunctionData(
+        metadata=stamp(),
         cell_permutations=cell_permutation_info,
         local_cell_range=local_cell_range,
         num_cells_global=num_cells_global,
@@ -377,6 +380,17 @@ def write_function_on_input_mesh(
 
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
+    if mode == FileMode.append:
+        check_appendable(
+            object_metadata(backend_cls, fname, mesh.comm, "mesh", None, backend_args),
+            f"The mesh '{get_mesh_name(backend_args)}' in {fname}",
+        )
+        check_appendable(
+            object_metadata(
+                backend_cls, fname, mesh.comm, "function", function_data.name, backend_args
+            ),
+            f"Function '{function_data.name}' in {fname}",
+        )
     backend_cls.write_function(
         fname,
         mesh.comm,
@@ -417,6 +431,11 @@ def write_mesh_input_order(
 
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
+    if mode == FileMode.append:
+        check_appendable(
+            object_metadata(backend_cls, fname, mesh.comm, "mesh", None, backend_args),
+            f"The mesh '{get_mesh_name(backend_args)}' in {fname}",
+        )
     backend_cls.write_mesh(
         fname,
         mesh.comm,

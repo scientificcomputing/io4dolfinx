@@ -18,6 +18,7 @@ import numpy as np
 import numpy.typing as npt
 from dolfinx.graph import adjacencylist
 
+from ...format import METADATA_KEYS
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
@@ -112,6 +113,65 @@ def convert_file_mode(mode: FileMode) -> str:
             return "w"
         case _:
             raise NotImplementedError(f"File mode {mode} not implemented")
+
+
+def _metadata_group(kind: str, name: str | None, mesh_name: str) -> str:
+    """Path of the group whose attributes hold the metadata of an object.
+
+    Args:
+        kind: ``"mesh"``, ``"function"`` or ``"meshtags"``
+        name: Name of the function or mesh tags, unused for a mesh
+        mesh_name: Name of the mesh the object belongs to
+    """
+    match kind:
+        case "mesh":
+            return f"/{mesh_name}"
+        case "function":
+            return f"/{mesh_name}/functions/{name}"
+        case "meshtags":
+            return f"/{mesh_name}/tags/{name}"
+        case _:
+            raise ValueError(f"Unknown kind of object {kind!r}")
+
+
+def _write_metadata(group: h5py.Group, metadata: dict[str, Any]):
+    """Store the metadata of an object as attributes of its group."""
+    for key, value in metadata.items():
+        group.attrs[key] = value
+
+
+def read_metadata(
+    filename: Path | str,
+    comm: MPI.Comm,
+    kind: str,
+    name: str | None = None,
+    backend_args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read the metadata stored with an object, see :mod:`io4dolfinx.format`.
+
+    Args:
+        filename: Path to file
+        comm: MPI communicator
+        kind: ``"mesh"``, ``"function"`` or ``"meshtags"``
+        name: Name of the function or mesh tags, unused for a mesh
+        backend_args: Arguments to backend
+
+    Returns:
+        The metadata, empty if the object does not exist or has none
+    """
+    backend_args = get_default_backend_args(backend_args)
+    path = _metadata_group(kind, name, get_mesh_name(backend_args))
+    if not Path(filename).exists():
+        return {}
+    with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
+        if path not in h5file:
+            return {}
+        attrs = h5file[path].attrs
+        metadata = {key: attrs[key] for key in METADATA_KEYS if key in attrs}
+    return {
+        key: value.decode("utf-8") if isinstance(value, bytes | np.bytes_) else value
+        for key, value in metadata.items()
+    }
 
 
 def write_attributes(
@@ -224,6 +284,7 @@ def write_mesh(
                 write_topology = False
         else:
             mesh_directory = h5file.create_group(mesh_name)
+            _write_metadata(mesh_directory, mesh.metadata)
             mesh_directory.attrs["timestamps"] = np.array([time], dtype=np.float64)
             idx = 0
             write_topology = True
@@ -383,6 +444,7 @@ def write_meshtags(
         if data.name in tags.keys():
             raise KeyError(f"MeshTags with {data.name=} already exists in this file")
         tag = tags.create_group(data.name)
+        _write_metadata(tag, data.metadata)
 
         # Add topology
         topology = tag.create_dataset(
@@ -607,29 +669,27 @@ def write_function(
     backend_args = get_default_backend_args(backend_args)
     h5_mode = convert_file_mode(mode)
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
-        cell_permutations_exist = False
-        dofmap_exists = False
-        dofmap_offsets_exists = False
-        if h5_mode == "a":
-            if mesh_name not in h5file.keys():
-                mesh = h5file.create_group(mesh_name)
-            else:
-                mesh = h5file[mesh_name]
+        # In write mode the file is new, so every group is created
+        if mesh_name not in h5file.keys():
+            mesh = h5file.create_group(mesh_name)
+        else:
+            mesh = h5file[mesh_name]
 
-            cell_permutations_exist = "CellPermutations" in mesh.keys()
+        cell_permutations_exist = "CellPermutations" in mesh.keys()
 
-            if "functions" not in mesh.keys():
-                functions = mesh.create_group("functions")
-            else:
-                functions = mesh["functions"]
+        if "functions" not in mesh.keys():
+            functions = mesh.create_group("functions")
+        else:
+            functions = mesh["functions"]
 
-            if u.name not in functions.keys():
-                function = functions.create_group(u.name)
-            else:
-                function = functions[u.name]
+        if u.name not in functions.keys():
+            function = functions.create_group(u.name)
+            _write_metadata(function, u.metadata)
+        else:
+            function = functions[u.name]
 
-            dofmap_exists = "dofmap" in function.keys()
-            dofmap_offsets_exists = "dofmap_offsets" in function.keys()
+        dofmap_exists = "dofmap" in function.keys()
+        dofmap_offsets_exists = "dofmap_offsets" in function.keys()
 
         if not cell_permutations_exist:
             cell_perms = mesh.create_dataset(

@@ -20,12 +20,13 @@ import numpy as np
 import numpy.typing as npt
 import ufl
 
-from .backends import FileMode, ReadMode, get_backend
+from .backends import FileMode, ReadMode, get_backend, get_mesh_name
 from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
     send_dofs_and_recv_values,
 )
+from .format import check_appendable, check_readable, object_metadata, stamp
 from .readers import create_geometry_function_space
 from .structures import ArrayData, FunctionData, MeshTagsData
 from .utils import (
@@ -230,6 +231,7 @@ def write_meshtags(
 
     tag_ct = dolfinx.cpp.mesh.cell_entity_type(mesh.topology.cell_type, dim, 0).name
     tag_data = MeshTagsData(
+        metadata=stamp(),
         values=local_values,
         num_entities_global=global_num_tag_entities,
         num_dofs_per_entity=num_dofs_per_entity,
@@ -243,6 +245,10 @@ def write_meshtags(
     # Get backend and default arguments
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
+    check_appendable(
+        object_metadata(backend_cls, filename, mesh.comm, "mesh", None, backend_args),
+        f"The mesh '{get_mesh_name(backend_args)}' in {filename}",
+    )
     return backend_cls.write_meshtags(filename, mesh.comm, tag_data, backend_args=backend_args)
 
 
@@ -274,6 +280,10 @@ def read_meshtags(
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
+    check_readable(
+        object_metadata(backend_cls, filename, mesh.comm, "meshtags", meshtag_name, backend_args),
+        f"Mesh tags '{meshtag_name}' in {filename}",
+    )
     data = backend_cls.read_meshtags_data(filename, mesh.comm, meshtag_name, backend_args)
 
     indices = data.indices
@@ -335,6 +345,10 @@ def read_function(
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
+    check_readable(
+        object_metadata(backend_cls, filename, comm, "function", name, backend_args),
+        f"Function '{name}' in {filename}",
+    )
 
     # Compute index of input cells and get cell permutation
     num_owned_cells = mesh.topology.index_map(mesh.topology.dim).size_local
@@ -487,6 +501,10 @@ def read_mesh(
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
+    check_readable(
+        object_metadata(backend_cls, filename, comm, "mesh", None, backend_args),
+        f"The mesh '{get_mesh_name(backend_args)}' in {filename}",
+    )
 
     # Let each backend handle what should be default behavior when reading mesh
     # with or without time stamp.
@@ -590,6 +608,11 @@ def write_mesh(
     mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
     logger.debug(f"Write mesh using {backend} backend, with arguments {backend_args}")
     logger.debug(f"Mode {mode} and time {time}")
+    if mode == FileMode.append:
+        check_appendable(
+            object_metadata(get_backend(backend), filename, mesh.comm, "mesh", None, backend_args),
+            f"The mesh '{get_mesh_name(backend_args)}' in {filename}",
+        )
     _internal_mesh_writer(
         filename,
         mesh.comm,
@@ -672,6 +695,7 @@ def write_function(
 
     # Create internal data structure for function data to write to file
     function_data = FunctionData(
+        metadata=stamp(),
         cell_permutations=cell_perm[:num_cells_local].copy(),
         local_cell_range=local_cell_range,
         num_cells_global=num_cells_global,
@@ -686,6 +710,16 @@ def write_function(
     )
     # Write to file
     fname = Path(filename)
+    if mode == FileMode.append:
+        backend_cls = get_backend(backend)
+        check_appendable(
+            object_metadata(backend_cls, fname, comm, "mesh", None, backend_args),
+            f"The mesh '{get_mesh_name(backend_args)}' in {fname}",
+        )
+        check_appendable(
+            object_metadata(backend_cls, fname, comm, "function", function_data.name, backend_args),
+            f"Function '{function_data.name}' in {fname}",
+        )
     _internal_function_writer(
         fname, comm, function_data, time, backend_args=backend_args, backend=backend, mode=mode
     )
