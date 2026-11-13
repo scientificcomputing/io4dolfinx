@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import typing
+import warnings
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,6 +28,7 @@ from .comm_helpers import (
     send_dofs_and_recv_values,
     send_to_input_order,
 )
+from .original_checkpoint import create_function_data_on_original_mesh, create_original_mesh_data
 from .readers import create_geometry_function_space
 from .structures import ArrayData, FunctionData, MeshTagsData
 from .utils import (
@@ -190,7 +192,8 @@ def write_meshtags(
             see :ref:`vtkhdfbackend`.
         backend: IO backend
         on_input_mesh: If True, the meshtags are written with the node ordering
-            of the input mesh.
+            of the input mesh. Use the same value for every write to a file;
+            see :ref:`input-ordering`.
         mesh_name: Name of the mesh in the file to act on. Defaults to the
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
@@ -261,7 +264,8 @@ def read_meshtags(
 
     Args:
         filename: Path to meshtags file (with file-extension)
-        mesh: The mesh associated with the meshtags
+        mesh: The mesh associated with the meshtags. Its numbering must match the
+            one the meshtags were written in; see :ref:`input-ordering`.
         meshtag_name: The name of the meshtag to read
         engine: Adios2 Engine
         mesh_name: Name of the mesh in the file to act on. Defaults to the
@@ -313,7 +317,8 @@ def read_function(
 
     Args:
         filename: Path to checkpoint
-        u: Function to fill
+        u: Function to fill. Its mesh's numbering must match the one the function
+            was written in; see :ref:`input-ordering`.
         time: Time-stamp associated with checkpoint
         name: If not provided, `u.name` is used to search through the input file for the function
         mesh_name: Name of the mesh in the file to act on. Defaults to the
@@ -571,6 +576,7 @@ def write_mesh(
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
     mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """
     Write a mesh to file.
@@ -585,11 +591,27 @@ def write_mesh(
         mesh_name: Name of the mesh in the file to act on. Defaults to the
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
+        on_input_mesh: If True, the mesh is written with the node and cell ordering of
+            the input mesh, so the file does not depend on the number of processes.
+            Cannot be combined with ``store_partition_info``. Use the same value for
+            every write to a file; see :ref:`input-ordering`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing mesh to {filename}")
-    logger.debug(f"Preparing mesh data for storage storing partition info: {store_partition_info}")
-    mesh_data = prepare_meshdata_for_storage(mesh=mesh, store_partition_info=store_partition_info)
+    if on_input_mesh:
+        if store_partition_info:
+            raise ValueError(
+                "Cannot store partition info for a mesh written in the input ordering."
+            )
+        logger.debug("Preparing mesh data in the input ordering")
+        mesh_data = create_original_mesh_data(mesh)
+    else:
+        logger.debug(
+            f"Preparing mesh data for storage storing partition info: {store_partition_info}"
+        )
+        mesh_data = prepare_meshdata_for_storage(
+            mesh=mesh, store_partition_info=store_partition_info
+        )
     logger.debug(f"Write mesh using {backend} backend, with arguments {backend_args}")
     logger.debug(f"Mode {mode} and time {time}")
     _internal_mesh_writer(
@@ -612,6 +634,7 @@ def write_function(
     backend_args: dict[str, Any] | None = None,
     backend: str | None = None,
     mesh_name: str | None = None,
+    on_input_mesh: bool = False,
 ):
     """
     Write function checkpoint to file.
@@ -627,11 +650,26 @@ def write_function(
         mesh_name: Name of the mesh in the file to act on. Defaults to the
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
+        on_input_mesh: If True, the function is written against the input mesh, to be
+            read with a mesh written with ``on_input_mesh=True`` (or read from the
+            input mesh file). Use the same value for every write to a file;
+            see :ref:`input-ordering`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     n = u.name if name is None else name
     logger.debug(f"Writing function checkpoint to {filename} for function {n} at time {time}")
     logger.debug(f"Using {backend} backend with arguments {backend_args}")
+    if on_input_mesh:
+        _internal_function_writer(
+            Path(filename),
+            u.function_space.mesh.comm,
+            create_function_data_on_original_mesh(u, name),
+            time,
+            backend_args=backend_args,
+            backend=backend,
+            mode=mode,
+        )
+        return
     dofmap = u.function_space.dofmap
     values = u.x.array
     mesh = u.function_space.mesh
@@ -690,6 +728,91 @@ def write_function(
     fname = Path(filename)
     _internal_function_writer(
         fname, comm, function_data, time, backend_args=backend_args, backend=backend, mode=mode
+    )
+
+
+def write_function_on_input_mesh(
+    filename: Path | str,
+    u: dolfinx.fem.Function,
+    time: float = 0.0,
+    name: str | None = None,
+    mode: FileMode = FileMode.append,
+    backend_args: dict[str, Any] | None = None,
+    backend: str | None = None,
+):
+    """
+    Write function checkpoint (to be read with the input mesh).
+
+    Deprecated: use :func:`write_function` with ``on_input_mesh=True``.
+
+    Note:
+        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_function`.
+
+    Args:
+        filename: The filename to write to
+        u: The function to checkpoint
+        time: Time-stamp associated with function at current write step
+        mode: The mode to use (write or append)
+        name: Name of function. If None, the name of the function is used.
+        backend_args: Arguments to backend
+        backend: Choice of backend module
+    """
+    warnings.warn(
+        "write_function_on_input_mesh is deprecated and will be removed in a future release. "
+        + "Use write_function with on_input_mesh=True instead.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    write_function(
+        filename,
+        u,
+        time=time,
+        mode=mode,
+        name=name,
+        backend_args=backend_args,
+        backend=backend,
+        on_input_mesh=True,
+    )
+
+
+def write_mesh_input_order(
+    filename: Path | str,
+    mesh: dolfinx.mesh.Mesh,
+    time: float = 0.0,
+    mode: FileMode = FileMode.write,
+    backend: str | None = None,
+    backend_args: dict[str, Any] | None = None,
+):
+    """
+    Write mesh to checkpoint file in original input ordering.
+
+    Deprecated: use :func:`write_mesh` with ``on_input_mesh=True``.
+
+    Note:
+        Requires backend to implement :meth:`io4dolfinx.backends.IOBackend.write_mesh`.
+
+    Args:
+        filename: The filename to write to
+        mesh: Mesh to checkpoint
+        time: Time-stamp associated with function at current write step
+        mode: The mode to use (write or append)
+        backend_args: Arguments to backend
+        backend: Choice of backend module
+    """
+    warnings.warn(
+        "write_mesh_input_order is deprecated and will be removed in a future release. "
+        + "Use write_mesh with on_input_mesh=True instead.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    write_mesh(
+        Path(filename),
+        mesh,
+        mode=mode,
+        time=time,
+        backend_args=backend_args,
+        backend=backend,
+        on_input_mesh=True,
     )
 
 

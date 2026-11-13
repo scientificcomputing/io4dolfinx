@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from mpi4py import MPI
@@ -34,7 +35,7 @@ def captured(monkeypatch):
 )
 def test_data_on_input_mesh(captured, cell_type):
     """Point and cell data written with ``on_input_mesh`` follow the nodes and cells of
-    :func:`io4dolfinx.write_mesh_input_order`."""
+    :func:`io4dolfinx.write_mesh` with ``on_input_mesh=True``."""
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, 4, 3, 5, cell_type=cell_type)
     V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1, (3,)))
     u = dolfinx.fem.Function(V)
@@ -73,8 +74,8 @@ def test_submesh_has_no_input_order(captured, writer):
 @pytest.mark.parametrize(
     "write",
     [
-        lambda u: io4dolfinx.write_mesh_input_order("unused", u.function_space.mesh),
-        lambda u: io4dolfinx.write_function_on_input_mesh("unused", u),
+        lambda u: io4dolfinx.write_mesh(Path("unused"), u.function_space.mesh, on_input_mesh=True),
+        lambda u: io4dolfinx.write_function("unused", u, on_input_mesh=True),
         lambda u: io4dolfinx.write_cell_data(
             "unused", u, 0.0, io4dolfinx.FileMode.write, None, "any", on_input_mesh=True
         ),

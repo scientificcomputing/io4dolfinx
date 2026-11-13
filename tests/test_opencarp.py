@@ -88,12 +88,9 @@ def write_files(
     sheet: dolfinx.fem.Function | None = None,
 ):
     """Write openCARP files as described in the backend documentation."""
-    if on_input_mesh:
-        io4dolfinx.write_mesh_input_order(
-            filename, mesh, backend="opencarp", backend_args=backend_args
-        )
-    else:
-        io4dolfinx.write_mesh(filename, mesh, backend="opencarp", backend_args=backend_args)
+    io4dolfinx.write_mesh(
+        filename, mesh, backend="opencarp", backend_args=backend_args, on_input_mesh=on_input_mesh
+    )
     for tags in (cell_tags, facet_tags):
         if tags is not None:
             io4dolfinx.write_meshtags(
@@ -341,16 +338,20 @@ def test_errors(shared_tmp_path):
     mesh, _, _, fiber, _ = create_problem(comm)
 
     with pytest.raises(ValueError, match="scale"):
-        io4dolfinx.write_mesh_input_order(filename, mesh, backend="opencarp")
+        io4dolfinx.write_mesh(filename, mesh, backend="opencarp", on_input_mesh=True)
 
     interval_mesh = dolfinx.mesh.create_unit_interval(comm, 4)
     with pytest.raises(NotImplementedError, match="interval"):
-        io4dolfinx.write_mesh_input_order(
-            filename, interval_mesh, backend="opencarp", backend_args={"scale": 1.0}
+        io4dolfinx.write_mesh(
+            filename,
+            interval_mesh,
+            backend="opencarp",
+            backend_args={"scale": 1.0},
+            on_input_mesh=True,
         )
 
-    io4dolfinx.write_mesh_input_order(
-        filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+    io4dolfinx.write_mesh(
+        filename, mesh, backend="opencarp", backend_args={"scale": 1.0}, on_input_mesh=True
     )
     Q = dolfinx.fem.functionspace(
         mesh, basix.ufl.quadrature_element(mesh.basix_cell(), value_shape=(3,), degree=2)
@@ -463,8 +464,8 @@ def test_marker_name_clash(shared_tmp_path):
     comm = MPI.COMM_WORLD
     filename = shared_tmp_path / "mesh"
     mesh, _, facet_tags, _, _ = create_problem(comm)
-    io4dolfinx.write_mesh_input_order(
-        filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+    io4dolfinx.write_mesh(
+        filename, mesh, backend="opencarp", backend_args={"scale": 1.0}, on_input_mesh=True
     )
     # Value 1 is named "2", the same name as the unnamed value 2
     with pytest.raises(ValueError, match="not unique"):
@@ -552,12 +553,16 @@ def test_flat_2d_mesh_with_3d_coordinates(shared_tmp_path):
         mesh = dolfinx.mesh.create_mesh(comm, cells=cells, x=x, e=domain)
         if not ok:
             with pytest.raises(NotImplementedError, match="constant z"):
-                io4dolfinx.write_mesh_input_order(
-                    filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+                io4dolfinx.write_mesh(
+                    filename,
+                    mesh,
+                    backend="opencarp",
+                    backend_args={"scale": 1.0},
+                    on_input_mesh=True,
                 )
             continue
-        io4dolfinx.write_mesh_input_order(
-            filename, mesh, backend="opencarp", backend_args={"scale": 1.0}
+        io4dolfinx.write_mesh(
+            filename, mesh, backend="opencarp", backend_args={"scale": 1.0}, on_input_mesh=True
         )
         in_mesh = io4dolfinx.read_mesh(
             filename.with_suffix(".elem"), comm, backend="opencarp", backend_args={"scale": 1.0}

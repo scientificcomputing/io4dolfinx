@@ -1,8 +1,8 @@
 # # Checkpoint on input mesh
 # As we have discussed earlier, one can choose to store function data in a way that
-# is N-to-M compatible by using {py:func}`io4dolfinx.write_checkpoint`.
-# This stores the distributed mesh in it's current (partitioned) ordering, and does
-# use the original input data ordering for the cells and connectivity.
+# is N-to-M compatible by using {py:func}`io4dolfinx.write_function`.
+# This stores the distributed mesh in its current (partitioned) ordering, and does
+# not use the original input data ordering for the cells and connectivity.
 # This means that you cannot use your original mesh (from `.xdmf` files) or mesh tags
 # together with the checkpoint. The checkpoint has to store the mesh and associated
 # mesh-tags.
@@ -10,8 +10,34 @@
 # An optional way of store an N-to-M checkpoint is to store the function data in the same
 # ordering as the mesh. The write operation will be more expensive, as it requires data
 # communication to ensure contiguous data being written to the checkpoint.
-# The method is exposed as {py:func}`io4dolfinx.write_function_on_input_mesh`.
-# Below we will demonstrate this method.
+# This is done with {py:func}`io4dolfinx.write_function` with `on_input_mesh=True`,
+# and the mesh can be written in the same ordering with {py:func}`io4dolfinx.write_mesh`
+# with `on_input_mesh=True`. (`write_function_on_input_mesh` and `write_mesh_input_order`
+# do the same, but are deprecated.)
+#
+# (input-ordering)=
+# ## Choosing an ordering
+#
+# All functions that write to a checkpoint ({py:func}`io4dolfinx.write_mesh`,
+# {py:func}`io4dolfinx.write_function`, {py:func}`io4dolfinx.write_meshtags`,
+# {py:func}`io4dolfinx.write_point_data` and {py:func}`io4dolfinx.write_cell_data`)
+# take an `on_input_mesh` flag, which decides the numbering of nodes and cells
+# the data is stored in:
+#
+# - `on_input_mesh=False` (default): the numbering of the distributed mesh being
+#   written. Read the data onto a mesh read from the same file with
+#   {py:func}`io4dolfinx.read_mesh`.
+# - `on_input_mesh=True`: the numbering of the input mesh, such as the mesh file the
+#   simulation started from. Read the data onto that input mesh (on any number of
+#   processes), or onto a mesh read from the same file.
+#
+# ```{warning}
+# Use the same value of `on_input_mesh` for every write to a file, and read the data
+# onto a matching mesh. This is not checked: data read onto a mesh with a different
+# numbering, such as the original mesh after a default write, is wrong without an error.
+# ```
+#
+# Below we will demonstrate writing on the input mesh.
 
 # +
 import logging
@@ -72,12 +98,13 @@ def write_function(
     u = dolfinx.fem.Function(V)
     u.interpolate(f)
 
-    io4dolfinx.write_function_on_input_mesh(
+    io4dolfinx.write_function(
         function_filename.with_suffix(".bp"),
         u,
         mode=io4dolfinx.FileMode.write,
         time=0.0,
         name="Output",
+        on_input_mesh=True,
     )
     print(
         f"{mesh.comm.rank + 1}/{mesh.comm.size} Function written to ",

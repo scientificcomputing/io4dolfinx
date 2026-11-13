@@ -168,8 +168,8 @@ def write_function_original(
 
     filename = (path / f"mesh_{file_hash}").with_suffix(suffix)
     if write_mesh:
-        io4dolfinx.write_mesh_input_order(filename, mesh, backend=backend)
-    io4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0, backend=backend)
+        io4dolfinx.write_mesh(filename, mesh, backend=backend, on_input_mesh=True)
+    io4dolfinx.write_function(filename, uh, time=0.0, backend=backend, on_input_mesh=True)
     for tag in tags.values():
         io4dolfinx.write_meshtags(filename, mesh, tag, backend=backend, on_input_mesh=True)
     return filename
@@ -285,8 +285,8 @@ def write_function_vector(
     filename = dir / f"mesh_{file_hash}.bp"
 
     if write_mesh:
-        io4dolfinx.write_mesh_input_order(filename, mesh, backend=backend)
-    io4dolfinx.write_function_on_input_mesh(filename, uh, time=0.0, backend=backend)
+        io4dolfinx.write_mesh(filename, mesh, backend=backend, on_input_mesh=True)
+    io4dolfinx.write_function(filename, uh, time=0.0, backend=backend, on_input_mesh=True)
     return filename
 
 
