@@ -517,7 +517,7 @@ def test_lon_rows_checked(shared_tmp_path):
     mesh = io4dolfinx.read_mesh(
         filename.with_suffix(".elem"), comm, backend="opencarp", backend_args={"scale": 1000.0}
     )
-    with pytest.raises(ValueError, match="directions"):
+    with pytest.raises(ValueError, match="rows after its header"):
         io4dolfinx.read_cell_data(filename.with_suffix(".elem"), "fiber", mesh, backend="opencarp")
 
 

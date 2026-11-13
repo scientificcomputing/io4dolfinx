@@ -4,6 +4,8 @@ Helpers for sending and receiving values for checkpointing
 
 from __future__ import annotations
 
+from typing import Callable, TypeVar
+
 from mpi4py import MPI
 
 import numpy as np
@@ -25,7 +27,13 @@ __all__ = [
     "send_to_input_order",
     "numpy_to_mpi",
     "all_to_all",
+    "run_on_root",
+    "run_on_all",
+    "gather_rows",
+    "gather_concatenate",
 ]
+
+T = TypeVar("T")
 
 numpy_to_mpi = {
     np.float64: MPI.DOUBLE,
@@ -34,6 +42,7 @@ numpy_to_mpi = {
     np.complex128: MPI.DOUBLE_COMPLEX,
     np.int64: MPI.INT64_T,
     np.int32: MPI.INT32_T,
+    np.uint32: MPI.UINT32_T,
 }
 
 
@@ -418,3 +427,60 @@ def send_to_input_order(
     data = np.empty_like(recv_values)
     data[recv_indices - local_range[0]] = recv_values
     return data, (int(local_range[0]), int(local_range[1]))
+
+
+def run_on_root(comm: MPI.Comm, fn: Callable[[], T]) -> T | None:
+    """Run a function on rank 0 and raise any error it raises on all ranks.
+
+    Returns:
+        The result of ``fn`` on rank 0, ``None`` on the other ranks
+    """
+    result, error = None, None
+    if comm.rank == 0:
+        try:
+            result = fn()
+        except Exception as e:
+            error = e
+    error = comm.bcast(error, root=0)
+    if error is not None:
+        raise error
+    return result
+
+
+def run_on_all(comm: MPI.Comm, fn: Callable[[], T]) -> T:
+    """Run a function on all ranks and raise an error raised on any rank on all ranks,
+    so that no rank is left waiting in a later collective call."""
+    result, error = None, None
+    try:
+        result = fn()
+    except Exception as e:
+        error = e
+    errors = [e for e in comm.allgather(error) if e is not None]
+    if errors:
+        raise errors[0]
+    return result  # type: ignore[return-value]
+
+
+def gather_rows(
+    comm: MPI.Comm, local: npt.NDArray, local_range: tuple[int, int] | list[int], num_global: int
+) -> npt.NDArray | None:
+    """Gather rows distributed in contiguous chunks to rank 0.
+
+    Returns:
+        All ``num_global`` rows on rank 0, ``None`` on the other ranks
+    """
+    chunks = comm.gather((int(local_range[0]), np.asarray(local)), root=0)
+    if comm.rank != 0:
+        return None
+    assert chunks is not None
+    first = chunks[0][1]
+    rows = np.empty((num_global, *first.shape[1:]), dtype=first.dtype)
+    for start, chunk in chunks:
+        rows[start : start + len(chunk)] = chunk
+    return rows
+
+
+def gather_concatenate(comm: MPI.Comm, local: npt.NDArray) -> npt.NDArray | None:
+    """Concatenate an array over all ranks on rank 0, in rank order."""
+    chunks = comm.gather(local, root=0)
+    return None if chunks is None else np.concatenate(chunks)
