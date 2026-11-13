@@ -4,30 +4,30 @@
 # rather than in a standard format such as XDMF or VTX. This lets them store functions in any
 # finite element space, not only Lagrange spaces, and gives N-to-M checkpointing: a checkpoint
 # written on N processes can be read on any number M of processes.
-# This page describes the layout, and the guarantees that come with it.
+# This page describes the layout and the guarantees that come with it.
 #
 # ## Compatibility
 #
-# Each {py:class}`dolfinx.mesh.Mesh`, {py:class}`dolfinx.fem.Function` and
-# {py:class}`dolfinx.mesh.MeshTags` in a checkpoint is stamped with the version of the
-# checkpoint format it was written in, {py:data}`io4dolfinx.format.FORMAT_VERSION`, when it is
-# first written. The stamp is never changed, so a file that has been appended to by several
-# versions of io4dolfinx records the format of each object.
+# When a {py:class}`dolfinx.mesh.Mesh`, {py:class}`dolfinx.fem.Function` or
+# {py:class}`dolfinx.mesh.MeshTags` is first written to a checkpoint, it is stamped with the
+# checkpoint format version of the installed io4dolfinx,
+# {py:data}`io4dolfinx.format.FORMAT_VERSION`. The stamp is never changed, so a file that has
+# been appended to by several versions of io4dolfinx records the format of each object.
 #
 # - The **major** version changes when the layout changes in a way that older versions of
 #   io4dolfinx cannot read. A checkpoint with a newer major version is not read: io4dolfinx
-#   raises an error asking you to upgrade it.
-# - The **minor** version changes when something optional is added. A checkpoint with a newer
-#   minor version is read.
-# - Appending to an object, e.g. adding a time step to a function, requires the same major
-#   version.
+#   raises an error asking you to upgrade io4dolfinx.
+# - The **minor** version changes when optional data is added, which older versions of
+#   io4dolfinx ignore. A checkpoint with a newer minor version is read.
+# - Appending to an object, e.g. adding a time step to a function, requires the object to have
+#   the same major version as the installed io4dolfinx. Its minor version may be older.
 # - Objects without a stamp were written before checkpoints were stamped, and are read as
 #   format 1.0.
 #
 # ## Inspecting a checkpoint
 #
-# We write a mesh at two time steps, a function at two time steps and a set of cell tags with
-# both backends.
+# With each backend, we write a mesh at two time steps (the mesh moves between them), a
+# function at two time steps, and a set of cell tags.
 
 # +
 from pathlib import Path
@@ -62,8 +62,9 @@ for backend, filename in files.items():
     io4dolfinx.write_meshtags(filename, mesh, regions, meshtag_name="regions", backend=backend)
 # -
 
-# {py:func}`io4dolfinx.format.object_metadata` gives the stamp of an object: the format
-# version, and the versions of io4dolfinx and DOLFINx that wrote it.
+# {py:func}`io4dolfinx.format.object_metadata` gives the stamp of an object, which both
+# backends store as attributes: the format version (`io4dolfinx_format`), and the versions of
+# io4dolfinx (`io4dolfinx_version`) and DOLFINx (`dolfinx_version`) that wrote it.
 
 for backend, filename in files.items():
     for kind, name in [("mesh", None), ("function", "u"), ("meshtags", "regions")]:
@@ -74,9 +75,9 @@ for backend, filename in files.items():
 #
 # ### H5PY
 #
-# Each mesh is a group, named after the mesh (`mesh` unless a `mesh_name` is given), holding
-# its functions and mesh tags. Below, every group ends with `/`, datasets show their shape and
-# type, and the attributes of a group are listed in brackets.
+# Each mesh is a group named after the mesh (`mesh` unless a `mesh_name` is given), which
+# holds its functions and mesh tags. In the listing below, groups end with `/`, datasets show
+# their shape and type, and the attributes of a group are listed in brackets.
 
 
 # +
@@ -97,29 +98,30 @@ with h5py.File(files["h5py"], "r") as h5file:
 # -
 
 # - `<mesh>/`: the attributes `CellType`, `Degree` and `LagrangeVariant` describe the
-#   coordinate element, `timestamps` the time of each geometry, and the stamp the format.
+#   coordinate element, and `timestamps` holds the time of each geometry.
 #   - `<i>/Points`: the node coordinates at time step `i`, with one row per node.
-#   - `Topology`: the nodes of each cell, as rows into `Points`. It is the same at every time
-#     step.
-#   - `CellPermutations`: the permutation of each cell, used to read function data.
+#   - `Topology`: the nodes of each cell, as row indices into `Points`. It is the same at
+#     every time step.
+#   - `CellPermutations`: the DOLFINx permutation information of each cell, needed to read
+#     the degrees of freedom of functions.
 #   - `PartitioningData` and `PartitioningOffset`, with the attribute `PartitionProcesses`:
-#     the process of each cell, written with `store_partition_info=True` to read the mesh
-#     with the same partitioning.
-#   - `functions/<name>/`: a function, with its `timestamps` and stamp.
-#     - `dofmap` and `dofmap_offsets`: the degrees of freedom of each cell, as an adjacency
-#       list into the arrays.
+#     the processes that hold each cell, including as a ghost. They are written with
+#     `store_partition_info=True`, to read the mesh with the same partitioning.
+#   - `functions/<name>/`: a function, with its `timestamps`.
+#     - `dofmap`: the global degree of freedom indices of each cell, one cell after another,
+#       with the start of each cell in `dofmap_offsets`.
 #     - `<i>/array`: the degree of freedom values at time step `i`.
 #   - `tags/<name>/`: a set of mesh tags, with the dimension `dim` and `CellType` of the
-#     tagged entities, and the stamp.
-#     - `Topology`: the nodes of each tagged entity, as rows into `Points`.
+#     tagged entities.
+#     - `Topology`: the nodes of each tagged entity, as row indices into `Points`.
 #     - `Values`: the value of each tagged entity.
 #
 # ### ADIOS2
 #
-# ADIOS2 stores flat lists of variables and attributes. A variable holds one value per
-# step, so time-dependent data are a variable with a step per time stamp, together with a
-# variable holding the times. The names of the default mesh have no prefix, while the names of
-# a mesh with another `mesh_name` start with `<mesh_name>/`.
+# ADIOS2 stores a flat list of variables and attributes. A variable holds an array at each
+# step, so time-dependent data are stored as one variable with a step per time stamp, and the
+# times in a separate variable. The names that belong to the default mesh have no prefix; for a
+# mesh with another `mesh_name`, they start with `<mesh_name>/`.
 
 with adios2.FileReader(str(files["adios2"])) as adios_file:
     print("Variables:")
@@ -130,23 +132,20 @@ with adios2.FileReader(str(files["adios2"])) as adios_file:
     for name, info in sorted(adios_file.available_attributes().items()):
         print(f"  {name}: {info['Type']} = {info['Value']}")
 
-# - Mesh: `Points` (one step per time stamp, with the times in `MeshTime`), `Topology` and
-#   `CellPermutations`, with the attributes `CellType`, `Degree`, `LagrangeVariant` and the
-#   stamp. With `store_partition_info=True`, the partitioning is stored as well, in
-#   `PartitioningData` and `PartitioningOffset` with the attribute `PartitionProcesses`.
-# - Function `<name>`: `<name>_dofmap` and `<name>_XDofmap` (the degrees of freedom of each
-#   cell, as an adjacency list), and `<name>_values` (one step per time stamp, with the times
-#   in `<name>_time`), with the stamp in the attributes `<name>_io4dolfinx_format` etc.
-# - Mesh tags `<name>`: `<name>_topology` (the nodes of each tagged entity) and `<name>_values`,
-#   with the dimension `<name>_dim` and the stamp in the attributes `<name>_io4dolfinx_format`
-#   etc.
+# - Mesh: the same data as for H5PY, with the times of `Points` in `MeshTime`.
+# - Function `<name>`: `<name>_dofmap` and `<name>_XDofmap` (the start of each cell in
+#   `<name>_dofmap`), and the values in `<name>_values`, with the times in `<name>_time`.
+# - Mesh tags `<name>`: `<name>_topology`, `<name>_values` and the dimension `<name>_dim`.
+#
+# The attributes of a function or set of mesh tags, including its stamp, start with
+# `<name>_`.
 #
 # ## Checkpoints from adios4dolfinx
 #
 # Checkpoints written with adios4dolfinx 0.7 and older, before a file could hold several
-# functions and time steps, use an earlier layout: the dofmap and values of their single
-# function are stored as `Dofmap`, `XDofmap` and `Values`. Read them with the ADIOS2 backend
-# and `"legacy": True` in the backend arguments:
+# functions and time steps, use an earlier layout. Their single function is stored as
+# `Dofmap`, `XDofmap` and `Values`, without time steps, and the mesh has no `MeshTime`. Read
+# them with the ADIOS2 backend and `"legacy": True` in the backend arguments:
 #
 # ```python
 # backend_args = {"engine": "BP4", "legacy": True}
