@@ -191,7 +191,8 @@ def write_meshtags(
             see :ref:`vtkhdfbackend`.
         backend: IO backend
         on_input_mesh: If True, the meshtags are written with the node ordering
-            of the input mesh.
+            of the input mesh. Use the same value for every write to a file;
+            see :ref:`input-ordering`.
         mesh_name: Name of the mesh in the file to act on. Defaults to the
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
@@ -262,7 +263,8 @@ def read_meshtags(
 
     Args:
         filename: Path to meshtags file (with file-extension)
-        mesh: The mesh associated with the meshtags
+        mesh: The mesh associated with the meshtags. Its numbering must match the
+            one the meshtags were written in; see :ref:`input-ordering`.
         meshtag_name: The name of the meshtag to read
         engine: Adios2 Engine
         mesh_name: Name of the mesh in the file to act on. Defaults to the
@@ -314,7 +316,8 @@ def read_function(
 
     Args:
         filename: Path to checkpoint
-        u: Function to fill
+        u: Function to fill. Its mesh's numbering must match the one the function
+            was written in; see :ref:`input-ordering`.
         time: Time-stamp associated with checkpoint
         name: If not provided, `u.name` is used to search through the input file for the function
         mesh_name: Name of the mesh in the file to act on. Defaults to the
@@ -589,7 +592,8 @@ def write_mesh(
             call sites are unaffected.
         on_input_mesh: If True, the mesh is written with the node and cell ordering of
             the input mesh, so the file does not depend on the number of processes.
-            Cannot be combined with ``store_partition_info``.
+            Cannot be combined with ``store_partition_info``. Use the same value for
+            every write to a file; see :ref:`input-ordering`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing mesh to {filename}")
@@ -647,7 +651,8 @@ def write_function(
             call sites are unaffected.
         on_input_mesh: If True, the function is written against the input mesh, to be
             read with a mesh written with ``on_input_mesh=True`` (or read from the
-            input mesh file).
+            input mesh file). Use the same value for every write to a file;
+            see :ref:`input-ordering`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     n = u.name if name is None else name
@@ -863,6 +868,7 @@ def write_point_data(
             Defaults to the mesh written without an explicit name.
         on_input_mesh: If True, the node values are written in the node ordering of the
             input mesh, matching a mesh written with :func:`write_mesh` with ``on_input_mesh=True``.
+            Use the same value for every write to a file; see :ref:`input-ordering`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
@@ -923,6 +929,7 @@ def write_cell_data(
             Defaults to the mesh written without an explicit name.
         on_input_mesh: If True, the cell values are written in the cell ordering of the
             input mesh, matching a mesh written with :func:`write_mesh` with ``on_input_mesh=True``.
+            Use the same value for every write to a file; see :ref:`input-ordering`.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")

@@ -63,7 +63,8 @@ You must read the mesh first (or have a compatible mesh ready, see [Checkpoint o
 ````
 
 ```python
-u_new = dolfinx.fem.Function(V)
+V_new = dolfinx.fem.functionspace(mesh_new, ("Lagrange", 1))
+u_new = dolfinx.fem.Function(V_new)
 io4dolfinx.read_function(filename, u_new, time=0.5, name="my_solution")
 ```
 
@@ -87,9 +88,10 @@ Write tags
 io4dolfinx.write_meshtags(filename, mesh, subdomains, meshtag_name="subdomains")
 ```
 
-Read tags
+Read tags onto the mesh read from file, as the tags are stored in its numbering
+(see [Choosing an ordering](./original_checkpoint.py) for reading onto the original mesh)
 ```python
-tags = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="subdomains")
+tags = io4dolfinx.read_meshtags(filename, mesh_new, meshtag_name="subdomains")
 ```
 
 ## Advanced Checkpointing Strategies
