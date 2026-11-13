@@ -27,6 +27,7 @@
 import logging
 import shutil
 from pathlib import Path
+from typing import Any
 
 from mpi4py import MPI
 
@@ -54,7 +55,7 @@ u.interpolate(velocity)
 q = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh, ("DG", 0)), name="q")
 q.interpolate(lambda x: x[0] - x[1])
 
-options = {"shuffle": True}
+options: dict[str, Any] = {"shuffle": True}
 if gzip_available:
     options |= {"compression": "gzip", "compression_opts": 4}
 filename = Path("compressed.vtkhdf")
@@ -179,7 +180,7 @@ def benchmark(directory: Path, sizes: list[int], modes: dict, repeats: int):
     return results
 
 
-modes = {
+modes: dict[str, dict[str, Any]] = {
     "no filters": {"scaleoffset": False},
     "scaleoffset (default)": {},
     "fletcher32": {"fletcher32": True},
