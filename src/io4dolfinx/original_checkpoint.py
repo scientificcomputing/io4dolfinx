@@ -19,9 +19,7 @@ import numpy as np
 from .backends import FileMode, get_backend
 from .comm_helpers import send_to_input_order
 from .structures import FunctionData, MeshData
-from .utils import (
-    unroll_dofmap,
-)
+from .utils import input_cell_index, unroll_dofmap
 
 __all__ = ["write_function_on_input_mesh", "write_mesh_input_order"]
 logger = logging.getLogger(__name__)
@@ -37,7 +35,7 @@ def create_original_mesh_data(mesh: dolfinx.mesh.Mesh) -> MeshData:
     # owning its original cell index
     num_owned_cells = mesh.topology.index_map(mesh.topology.dim).size_local
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
-    original_cell_index = mesh.topology.original_cell_index[:num_owned_cells]
+    original_cell_index = input_cell_index(mesh)[:num_owned_cells]
     original_node_index = mesh.geometry.input_global_indices
     local_geometry_dofmap = fenicsx_compat.dofmap(mesh)[:num_owned_cells, :]
     global_geometry_dofmap = original_node_index[local_geometry_dofmap]
@@ -90,7 +88,7 @@ def create_function_data_on_original_mesh(
     assert isinstance(mesh.comm, MPI.Intracomm)
     num_owned_cells = mesh.topology.index_map(mesh.topology.dim).size_local
     num_cells_global = mesh.topology.index_map(mesh.topology.dim).size_global
-    original_cell_index = mesh.topology.original_cell_index[:num_owned_cells]
+    original_cell_index = input_cell_index(mesh)[:num_owned_cells]
 
     # Send the permutation info and the dofs, as global dof indices, of each owned cell
     # to the process owning its original cell index. The dof values themselves stay in

@@ -33,6 +33,7 @@ __all__ = [
     "codim_names",
     "match_rows",
     "strip_suffix",
+    "input_cell_index",
 ]
 
 #: Codimension of the entities named ``"cell"``, ``"facet"``, ``"ridge"`` and ``"peak"``,
@@ -285,3 +286,19 @@ def strip_suffix(filename: Path | str, suffixes: Sequence[str]) -> Path:
     """
     path = Path(filename)
     return path.with_suffix("") if path.suffix in suffixes else path
+
+
+def input_cell_index(mesh: dolfinx.mesh.Mesh) -> npt.NDArray[np.int64]:
+    """The index of each local cell in the input mesh, for writing data in the input ordering.
+
+    Raises:
+        ValueError: If the mesh has no input cell indices, as for a submesh. DOLFINx raises a
+            ``RuntimeError`` or a ``ValueError``, depending on its version.
+    """
+    try:
+        return mesh.topology.original_cell_index
+    except (RuntimeError, ValueError) as e:
+        raise ValueError(
+            "The mesh has no input cell indices, so the data cannot be written in the input "
+            "ordering. This is the case for a submesh."
+        ) from e

@@ -34,6 +34,7 @@ from .utils import (
     compute_dofmap_pos,
     compute_local_range,
     index_owner,
+    input_cell_index,
     unroll_dofmap,
     unroll_insert_position,
 )
@@ -823,7 +824,7 @@ def write_cell_data(
         mesh = V.mesh
         tdim = mesh.topology.dim
         num_owned_cells = mesh.topology.index_map(tdim).size_local
-        input_cells = mesh.topology.original_cell_index[:num_owned_cells]
+        input_cells = input_cell_index(mesh)[:num_owned_cells]
         cell_values = values[V.dofmap.list[:num_owned_cells, 0]]
         assert isinstance(comm, MPI.Intracomm)
         (data,), local_range = send_to_input_order(comm, input_cells, [cell_values], data_shape[0])
