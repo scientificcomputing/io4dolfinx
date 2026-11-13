@@ -57,11 +57,23 @@ jobs:
       # This action sets the current path to the root of your github repo
       - uses: actions/checkout@v7
 
-      - name: Update pip and extra deps
+      - name: Update pip
+        run: python3 -m pip install --upgrade pip setuptools
+
+      # Without HDF5_MPI, h5py builds against the image's parallel HDF5 in
+      # serial mode, so the multi-rank ipyparallel examples cannot use it.
+      - name: Install h5py with MPI support
+        env:
+          HDF5_MPI: "ON"
+          HDF5_DIR: /usr/local
+          CC: mpicc
         run: |
-           python3 -m pip install  --upgrade pip setuptools
-           python3 -m pip install --no-binary=h5py h5py
-           python3 -m pip install . --group docs
+          python3 -m pip install "Cython>=3.0.11" "pkgconfig>=1.5.5"
+          python3 -m pip install h5py --no-binary=h5py --no-build-isolation
+          python3 -c "import h5py; assert h5py.get_config().mpi, 'h5py built without MPI'"
+
+      - name: Install docs dependencies
+        run: python3 -m pip install . --group docs
 
       - name: Install dependencies
         run: python3 -m pip install -e . --no-build-isolation

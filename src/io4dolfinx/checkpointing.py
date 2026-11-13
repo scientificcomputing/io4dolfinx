@@ -187,7 +187,8 @@ def write_meshtags(
         mesh: The mesh associated with the meshtags
         meshtags: The meshtags to write to file
         meshtag_name: Name of the meshtag. If None, the meshtag name is used.
-        backend_args: Option to IO backend.
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         backend: IO backend
         on_input_mesh: If True, the meshtags are written with the node ordering
             of the input mesh.
@@ -581,6 +582,8 @@ def write_mesh(
         mesh: The mesh to write to file
 
         store_partition_info: Store mesh partitioning (including ghosting) to file
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         mesh_name: Name of the mesh in the file to act on. Defaults to the
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
@@ -853,7 +856,8 @@ def write_point_data(
         u: The function to store
         time: Time stamp
         mode: Append or write
-        backend_args: The backend arguments
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         backend: Which backend to use.
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
@@ -913,7 +917,8 @@ def write_cell_data(
         point_data: Data to write to file
         time: Time stamp
         mode: Append or write
-        backend_args: The backend arguments
+        backend_args: Backend-specific options. For VTKHDF compression,
+            see :ref:`vtkhdfbackend`.
         mesh_name: Name of the mesh in the file to write the data against.
             Defaults to the mesh written without an explicit name.
         on_input_mesh: If True, the cell values are written in the cell ordering of the
