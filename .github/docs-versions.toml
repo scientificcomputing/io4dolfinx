@@ -1,0 +1,23 @@
+# Versions of the documentation published on the web page, read by .github/scripts/docs_site.py.
+#
+# "main" is built against DOLFINx nightly. As io4dolfinx also supports the latest DOLFINx release,
+# it is the documentation in general, and the root of the web page leads to it. Each minor release
+# from `oldest` onwards is added to the version dropdown (e.g. v1.5), built from its newest
+# `vX.Y.Z[.postN]` tag. Each tag is built once, and its HTML is kept in the `docs-archive` release.
+
+# Oldest minor release to publish
+oldest = "1.1"
+
+# DOLFINx image to build a release in, unless listed in `images`: a new release is built against
+# the DOLFINx release that is stable when it is tagged
+image = "ghcr.io/fenics/dolfinx/dolfinx:stable"
+nightly_image = "ghcr.io/fenics/dolfinx/dolfinx:nightly"
+
+# DOLFINx image of each published minor release, the one that was stable when it was tagged, so
+# that its documentation builds the same way if it has to be built again
+[images]
+"1.1" = "ghcr.io/fenics/dolfinx/dolfinx:v0.10.0-r1"
+"1.2" = "ghcr.io/fenics/dolfinx/dolfinx:v0.10.0-r1"
+"1.3" = "ghcr.io/fenics/dolfinx/dolfinx:v0.11.0"
+"1.4" = "ghcr.io/fenics/dolfinx/dolfinx:v0.11.0"
+"1.5" = "ghcr.io/fenics/dolfinx/dolfinx:v0.11.0"
