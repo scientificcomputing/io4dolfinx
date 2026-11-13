@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "io4dolfinx"
-version = "1.5.0"
+version = "1.5.1"
 description = "Checkpointing functionality for DOLFINx meshes/functions with ADIOS2"
 authors = [
     { name = "Jørgen S. Dokken", email = "dokken@simula.no" },
@@ -23,11 +23,11 @@ requires-python = ">=3.12"
 dependencies = ["fenics-dolfinx>=0.10.0", "fenicsx-compat>=0.3.0"]
 
 [project.optional-dependencies]
-h5py = ["h5py"]
+h5py = ["h5py>=3.10"]
 pyvista = ["pyvista"]
-xdmf = ["h5py"]
+xdmf = ["h5py>=3.10"]
 exodus = ["netcdf4"]
-med = ["h5py"]
+med = ["h5py>=3.10"]
 gmsh = ["gmsh"]
 
 [dependency-groups]
@@ -64,6 +64,7 @@ docs = [
     "ipywidgets",
     "jupytext",
     "ipykernel",
+    "pandas",
     "sphinx-codeautolink",
     "io4dolfinx[h5py]",
     "io4dolfinx[pyvista]",
@@ -134,7 +135,7 @@ tag = true
 sign_tags = false
 tag_name = "v{new_version}"
 tag_message = "Bump version: {current_version} → {new_version}"
-current_version = "1.5.0"
+current_version = "1.5.1"
 
 [[tool.bumpversion.files]]
 filename = "pyproject.toml"
