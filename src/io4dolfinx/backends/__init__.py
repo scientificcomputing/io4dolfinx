@@ -529,6 +529,10 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .nastran import backend as NASTRANInterface
 
         return NASTRANInterface
+    elif backend == "openfoam":
+        from .openfoam import backend as OpenFOAMInterface
+
+        return OpenFOAMInterface
     else:
         return import_module(backend)
 
@@ -544,6 +548,7 @@ BUILTIN_BACKENDS = (
     "gmsh",
     "opencarp",
     "nastran",
+    "openfoam",
 )
 
 
