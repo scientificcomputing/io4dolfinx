@@ -87,8 +87,9 @@ def test_hexahedral_mesh_and_tags(shared_tmp_path, grid_ids):
     np.testing.assert_array_equal(cell_tags.values, np.where(midpoints[:, 0] < 1, 1, 2))
 
     facet_tags = io4dolfinx.read_meshtags(path, mesh, "PSHELL", backend="nastran")
-    num_tagged = mesh.comm.allreduce(len(facet_tags.find(5)), op=MPI.SUM)
-    assert num_tagged == 1
+    # Mesh tags include ghost facets, so only owned facets are counted
+    owned = facet_tags.find(5) < mesh.topology.index_map(2).size_local
+    assert mesh.comm.allreduce(np.count_nonzero(owned), op=MPI.SUM) == 1
     midpoints = dolfinx.mesh.compute_midpoints(mesh, 2, facet_tags.find(5))
     assert np.allclose(midpoints[:, 0], 0)
 
