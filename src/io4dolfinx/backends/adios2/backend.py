@@ -10,9 +10,9 @@ import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 
-from ...format import METADATA_KEYS
+from ...format import METADATA_KEYS, stamp
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from ...utils import check_file_exists, compute_local_range
+from ...utils import check_file_exists
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
 from .helpers import (
     ADIOSFile,
@@ -20,6 +20,7 @@ from .helpers import (
     check_variable_exists,
     read_adjacency_list,
     read_array,
+    read_local_rows,
 )
 
 adios2 = fenicsx_compat.resolve_adios_scope(adios2)
@@ -460,12 +461,9 @@ def read_mesh_data(
             step = _seek_step(adios_file, f"{prefix}Topology")
         except KeyError as e:
             raise KeyError(f"Mesh topology not found at {prefix}Topology in {filename}") from e
-        topology = adios_file.io.InquireVariable(f"{prefix}Topology")
-        shape = topology.Shape()
-        local_range = compute_local_range(comm, shape[0])
-        topology.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
-        mesh_topology = np.empty((local_range[1] - local_range[0], shape[1]), dtype=np.int64)
-        adios_file.file.Get(topology, mesh_topology, adios2.Mode.Deferred)
+        mesh_topology, _, _ = read_local_rows(
+            adios_file, comm, f"{prefix}Topology", mode=adios2.Mode.Deferred
+        )
 
         # Check validity of partitioning information
         if read_from_partition:
@@ -518,20 +516,9 @@ def read_mesh_data(
         # Get mesh geometry
         if f"{prefix}Points" not in adios_file.io.AvailableVariables().keys():
             raise KeyError(f"Mesh coordinates not found at {prefix}Points in {filename}")
-        geometry = adios_file.io.InquireVariable(f"{prefix}Points")
-        x_shape = geometry.Shape()
-        geometry_range = compute_local_range(comm, x_shape[0])
-        geometry.SetSelection(
-            [
-                [geometry_range[0], 0],
-                [geometry_range[1] - geometry_range[0], x_shape[1]],
-            ]
+        mesh_geometry, _, _ = read_local_rows(
+            adios_file, comm, f"{prefix}Points", mode=adios2.Mode.Deferred
         )
-        mesh_geometry = np.empty(
-            (geometry_range[1] - geometry_range[0], x_shape[1]),
-            dtype=adios_to_numpy_dtype[geometry.Type()],
-        )
-        adios_file.file.Get(geometry, mesh_geometry, adios2.Mode.Deferred)
         adios_file.file.PerformGets()
         adios_file.file.EndStep()
 
@@ -548,7 +535,7 @@ def read_mesh_data(
         partition_graph = None
 
     return ReadMeshData(
-        cells=mesh_topology,
+        cells=mesh_topology.astype(np.int64, copy=False),
         cell_type=cell_type,
         x=mesh_geometry,
         degree=degree,
@@ -670,34 +657,18 @@ def read_meshtags_data(
             if topology_name not in adios_file.io.AvailableVariables().keys():
                 raise KeyError(f"{topology_name} not found in {filename}")
 
-            topology = adios_file.io.InquireVariable(topology_name)
-            top_shape = topology.Shape()
-            topology_range = compute_local_range(comm, top_shape[0])
-
-            topology.SetSelection(
-                [
-                    [topology_range[0], 0],
-                    [topology_range[1] - topology_range[0], top_shape[1]],
-                ]
+            mesh_entities, _, num_entities = read_local_rows(
+                adios_file, comm, topology_name, mode=adios2.Mode.Deferred
             )
-            mesh_entities = np.empty(
-                (topology_range[1] - topology_range[0], top_shape[1]), dtype=np.int64
-            )
-            adios_file.file.Get(topology, mesh_entities, adios2.Mode.Deferred)
 
             # Get mesh tags values
             values_name = f"{prefix}{name}_values"
             if values_name not in adios_file.io.AvailableVariables().keys():
                 raise KeyError(f"{values_name} not found")
-
-            values = adios_file.io.InquireVariable(values_name)
-            val_shape = values.Shape()
-            assert val_shape[0] == top_shape[0]
-            values.SetSelection([[topology_range[0]], [topology_range[1] - topology_range[0]]])
-            tag_values = np.empty(
-                (topology_range[1] - topology_range[0]), dtype=values.Type().strip("_t")
+            tag_values, _, num_values = read_local_rows(
+                adios_file, comm, values_name, mode=adios2.Mode.Deferred
             )
-            adios_file.file.Get(values, tag_values, adios2.Mode.Deferred)
+            assert num_values == num_entities
 
             adios_file.file.PerformGets()
             adios_file.file.EndStep()
@@ -712,39 +683,20 @@ def read_meshtags_data(
             dim = dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(cell_type.DataString()[0]))
 
             # Get mesh tags entites
-            if (top_key := f"/{name}/topology") in adios_file.io.AvailableVariables():
-                topology = adios_file.io.InquireVariable(top_key)
-            else:
+            if (top_key := f"/{name}/topology") not in adios_file.io.AvailableVariables():
                 raise ValueError(f"Topology not found for meshtags {name} in {filename}.")
 
-            top_shape = topology.Shape()
-            topology_range = compute_local_range(comm, top_shape[0])
-
-            topology.SetSelection(
-                [
-                    [topology_range[0], 0],
-                    [topology_range[1] - topology_range[0], top_shape[1]],
-                ]
+            mesh_entities, _, num_entities = read_local_rows(
+                adios_file, comm, top_key, mode=adios2.Mode.Deferred
             )
-            mesh_entities = np.empty(
-                (topology_range[1] - topology_range[0], top_shape[1]), dtype=np.int64
-            )
-            adios_file.file.Get(topology, mesh_entities, adios2.Mode.Deferred)
 
             # Get mesh tags values
-            if (val_key := f"/{name}/values") in adios_file.io.AvailableVariables():
-                values = adios_file.io.InquireVariable(val_key)
-            else:
+            if (val_key := f"/{name}/values") not in adios_file.io.AvailableVariables():
                 raise ValueError(f"Values not found for meshtags {name} in {filename}.")
-
-            val_shape = values.Shape()
-            assert val_shape[0] == top_shape[0]
-
-            values.SetSelection([[topology_range[0]], [topology_range[1] - topology_range[0]]])
-            tag_values = np.empty(
-                (topology_range[1] - topology_range[0]), dtype=values.Type().strip("_t")
+            tag_values, _, num_values = read_local_rows(
+                adios_file, comm, val_key, mode=adios2.Mode.Deferred
             )
-            adios_file.file.Get(values, tag_values, adios2.Mode.Deferred)
+            assert num_values == num_entities
 
             adios_file.file.PerformGets()
             adios_file.file.EndStep()
@@ -753,7 +705,10 @@ def read_meshtags_data(
         # submesh post codes are global cell indices, which need int64.
         values_dtype = np.dtype(backend_args.get("values_dtype", np.int32))
         return MeshTagsData(
-            name=name, values=tag_values.astype(values_dtype), indices=mesh_entities, dim=dim
+            name=name,
+            values=tag_values.astype(values_dtype),
+            indices=mesh_entities.astype(np.int64, copy=False),
+            dim=dim,
         )
 
 
@@ -1024,6 +979,86 @@ def write_function(
         adios_file.file.EndStep()
 
 
+def read_format0_checkpoint(
+    filename: Path, comm: MPI.Comm, engine: str
+) -> tuple[MeshData, list[dict[str, Any]]]:
+    """The mesh and the data of each function of a checkpoint written by adios4dolfinx 0.7
+    or older (format 0), as stored.
+
+    Args:
+        filename: The checkpoint.
+        comm: The communicator to read with.
+        engine: The ADIOS2 engine the checkpoint was written with.
+
+    Returns:
+        The mesh, and for each function in the order of the file the arguments of its
+        :class:`io4dolfinx.structures.FunctionData` except the name.
+    """
+    adios = adios2.ADIOS(comm)
+    mesh: MeshData | None = None
+    cell_permutations = None
+    functions: list[dict[str, Any]] = []
+    with ADIOSFile(
+        adios=adios, filename=filename, engine=engine, mode=adios2.Mode.Read, io_name="Format0"
+    ) as adios_file:
+        for _ in range(adios_file.file.Steps()):
+            adios_file.file.BeginStep()
+            variables = adios_file.io.AvailableVariables()
+            if "MeshTime" in variables:
+                raise ValueError(
+                    f"{filename} is not an adios4dolfinx checkpoint of format 0: its mesh has "
+                    "time stamps, so it can be read directly."
+                )
+            if "Topology" in variables:
+                topology, cell_range, num_cells = read_local_rows(adios_file, comm, "Topology")
+                points, node_range, num_nodes = read_local_rows(adios_file, comm, "Points")
+                cell_permutations, _, _ = read_local_rows(adios_file, comm, "CellPermutations")
+                attributes = adios_file.io
+                mesh = MeshData(
+                    metadata=stamp(),
+                    local_geometry=points,
+                    local_geometry_pos=node_range,
+                    num_nodes_global=num_nodes,
+                    local_topology=topology,
+                    local_topology_pos=cell_range,
+                    num_cells_global=num_cells,
+                    cell_type=attributes.InquireAttribute("CellType").DataString()[0],
+                    degree=int(attributes.InquireAttribute("Degree").Data()[0]),
+                    lagrange_variant=int(attributes.InquireAttribute("LagrangeVariant").Data()[0]),
+                    store_partition=False,
+                )
+            if "Values" in variables:
+                values, dof_range, num_dofs = read_local_rows(adios_file, comm, "Values")
+                offsets, function_cells, num_function_cells = read_local_rows(
+                    adios_file, comm, "XDofmap", overlap=1
+                )
+                dofmap_var = adios_file.io.InquireVariable("Dofmap")
+                dofmap_range = (int(offsets[0]), int(offsets[-1]))
+                dofmap_var.SetSelection([[dofmap_range[0]], [dofmap_range[1] - dofmap_range[0]]])
+                dofmap = np.empty(dofmap_range[1] - dofmap_range[0], dtype=np.int64)
+                adios_file.file.Get(dofmap_var, dofmap, adios2.Mode.Sync)
+                functions.append(
+                    dict(
+                        local_cell_range=function_cells,
+                        num_cells_global=num_function_cells,
+                        dofmap_array=dofmap,
+                        dofmap_offsets=offsets.astype(np.int64),
+                        dofmap_range=dofmap_range,
+                        global_dofs_in_dofmap=int(dofmap_var.Shape()[0]),
+                        values=values,
+                        dof_range=dof_range,
+                        num_dofs_global=num_dofs,
+                    )
+                )
+            adios_file.file.EndStep()
+    if mesh is None or cell_permutations is None:
+        raise ValueError(f"No mesh found in {filename}")
+    for function in functions:
+        # Cells are divided over the processes in the same way as for the mesh
+        function["cell_permutations"] = cell_permutations
+    return mesh, functions
+
+
 def read_legacy_mesh(
     filename: Path | str, comm: MPI.Comm, group: str
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.floating], str | None]:
@@ -1053,16 +1088,7 @@ def read_legacy_mesh(
         # Get mesh topology (distributed)
         if f"{group}/topology" not in adios_file.io.AvailableVariables().keys():
             raise KeyError(f"Mesh topology not found at '{group}/topology'")
-        topology = adios_file.io.InquireVariable(f"{group}/topology")
-        shape = topology.Shape()
-        local_range = compute_local_range(comm, shape[0])
-        topology.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
-
-        mesh_topology = np.empty(
-            (local_range[1] - local_range[0], shape[1]),
-            dtype=topology.Type().strip("_t"),
-        )
-        adios_file.file.Get(topology, mesh_topology, adios2.Mode.Sync)
+        mesh_topology, _, _ = read_local_rows(adios_file, comm, f"{group}/topology")
 
         # Get mesh cell type
         cell_type = None
@@ -1080,15 +1106,7 @@ def read_legacy_mesh(
                 f"Mesh coordinates not found at '{group}/coordinates' or '{group}/geometry'"
             )
 
-        geometry = adios_file.io.InquireVariable(geometry_key)
-        shape = geometry.Shape()
-        local_range = compute_local_range(comm, shape[0])
-        geometry.SetSelection([[local_range[0], 0], [local_range[1] - local_range[0], shape[1]]])
-        mesh_geometry = np.empty(
-            (local_range[1] - local_range[0], shape[1]),
-            dtype=adios_to_numpy_dtype[geometry.Type()],
-        )
-        adios_file.file.Get(geometry, mesh_geometry, adios2.Mode.Sync)
+        mesh_geometry, _, _ = read_local_rows(adios_file, comm, geometry_key)
 
     return mesh_topology, mesh_geometry, cell_type
 
