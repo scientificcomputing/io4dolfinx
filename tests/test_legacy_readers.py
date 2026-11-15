@@ -210,7 +210,7 @@ def test_read_legacy_function_from_checkpoint(backend):
 
 def test_io4dolfinx_legacy():
     comm = MPI.COMM_WORLD
-    path = (pathlib.Path("legacy_checkpoint") / "io4dolfinx_checkpoint.bp").absolute()
+    path = (pathlib.Path("legacy_checkpoint") / "adios4dolfinx_checkpoint.bp").absolute()
     if not path.exists():
         pytest.skip(f"{path} does not exist")
 
