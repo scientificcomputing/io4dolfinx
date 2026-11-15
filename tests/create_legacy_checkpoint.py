@@ -32,6 +32,10 @@ def f(x):
     return values
 
 
+def g(x):
+    return x[0] + 2 * x[1]
+
+
 def write_checkpoint(filename, mesh, el, f):
     V = dolfinx.fem.FunctionSpace(mesh, el)
     uh = dolfinx.fem.Function(V, dtype=np.float64)
@@ -55,6 +59,19 @@ def verify_checkpoint(filename, el, f):
     np.testing.assert_allclose(u_ex.x.array, uh.x.array, atol=1e-15)
 
 
+def write_two_functions(filename, mesh):
+    """A checkpoint with two functions, each in a step of its own, for the converter."""
+    V = dolfinx.fem.FunctionSpace(mesh, ("N1curl", 3))
+    u = dolfinx.fem.Function(V, dtype=np.float64)
+    u.interpolate(f)
+    Q = dolfinx.fem.FunctionSpace(mesh, ("Lagrange", 2))
+    v = dolfinx.fem.Function(Q, dtype=np.float64)
+    v.interpolate(g)
+    adios4dolfinx.write_mesh(mesh, filename)
+    adios4dolfinx.write_function(u, filename)
+    adios4dolfinx.write_function(v, filename)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--output-dir", type=str, default="legacy_checkpoint", dest="dir")
@@ -69,3 +86,5 @@ if __name__ == "__main__":
     write_checkpoint(filename, mesh, el, f)
     MPI.COMM_WORLD.Barrier()
     verify_checkpoint(filename, el, f)
+
+    write_two_functions(path / "adios4dolfinx_two_functions.bp", mesh)

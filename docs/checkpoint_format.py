@@ -152,3 +152,18 @@ with adios2.FileReader(str(files["adios2"])) as adios_file:
 # mesh = io4dolfinx.read_mesh(filename, comm, backend="adios2", backend_args=backend_args)
 # io4dolfinx.read_function(filename, u, backend="adios2", backend_args=backend_args)
 # ```
+#
+# or convert them once to the current format with {py:func}`io4dolfinx.convert`, which
+# copies the stored data without creating a mesh. The file stores no function names, so
+# each function, in the order it was written, gets a name from `names`:
+#
+# ```python
+# io4dolfinx.convert("old.bp", "new.h5", names=["u"])
+# ```
+#
+# The backend is chosen from the suffix of the new file (`.bp` for ADIOS2, `.h5` for h5py)
+# unless given. The same conversion runs from the command line, also under MPI:
+#
+# ```bash
+# io4dolfinx-convert old.bp new.h5 --names u
+# ```
