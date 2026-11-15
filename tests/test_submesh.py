@@ -374,7 +374,7 @@ def test_interface_submesh_assembly(tmp_path, backend):
 
     # A parent field with a jump of exactly 1 across the interface.
     k = dolfinx.fem.Function(dolfinx.fem.functionspace(parent, ("DG", 0)))
-    midpoints = parent.geometry.x[parent.geometry.dofmaps[0]].mean(axis=1)
+    midpoints = parent.geometry.x[fenicsx_compat.dofmap(parent)].mean(axis=1)
     k.x.array[: len(midpoints)] = np.where(midpoints[:, 0] < 0.5, 1.0, 2.0)
     k.x.scatter_forward()
 
@@ -704,8 +704,7 @@ def _curved_mesh(comm, dim, degree):
             [4, 4],
             ghost_mode=dolfinx.mesh.GhostMode.shared_facet,
         )
-    cmap = dolfinx.fem.coordinate_element(base.topology.cell_type, degree, int(variant))
-    mesh = dolfinx.fem.interpolate_geometry(base, cmap)
+    mesh = fenicsx_compat.reconstruct_mesh(base, degree, variant=variant)
 
     # Elliptical grid mapping: sends the box onto the ball, smoothly.
     x = mesh.geometry.x
@@ -941,8 +940,7 @@ def test_lagrange_variant_survives_mesh_roundtrip(tmp_path, store, degree):
         comm, [np.array([-1.0, -1.0]), np.array([1.0, 1.0])], [4, 4]
     )
     variant = basix.LagrangeVariant.gll_isaac if degree > 2 else basix.LagrangeVariant.unset
-    cmap = dolfinx.fem.coordinate_element(base.topology.cell_type, degree, int(variant))
-    mesh = dolfinx.fem.interpolate_geometry(base, cmap)
+    mesh = fenicsx_compat.reconstruct_mesh(base, degree, variant=variant)
     cmap = fenicsx_compat.cmap(mesh)
     written = (cmap.degree, cmap.variant)
 
