@@ -579,13 +579,18 @@ def test_mixed_mesh(shared_tmp_path):
     write_case(shared_tmp_path / "mixed", points, cells, patch_of, fields={0: {"T": f(c)}})
     path = shared_tmp_path / "mixed" / "case.foam"
     comm = MPI.COMM_WORLD
-    mesh = io4dolfinx.read_mesh(path, comm, backend="openfoam")
-    assert mesh.topology.entity_types[3] == [CellType.hexahedron, CellType.prism]
-    assert [comm.allreduce(im.size_local) for im in mesh.topology.index_maps(3)] == [1, 1]
+    # Data and tags are refused on any DOLFINx; the mesh itself needs DOLFINx 0.11
     with pytest.raises(NotImplementedError, match="several cell types"):
         openfoam.read_cell_data(path, "T", comm, 0, None)
     with pytest.raises(NotImplementedError, match="several cell types"):
         openfoam.read_meshtags_data(path, comm, "facet")
+    if fenicsx_compat.before("0.11.0.dev0"):
+        with pytest.raises(NotImplementedError, match="requires DOLFINx 0.11"):
+            io4dolfinx.read_mesh(path, comm, backend="openfoam")
+        return
+    mesh = io4dolfinx.read_mesh(path, comm, backend="openfoam")
+    assert mesh.topology.entity_types[3] == [CellType.hexahedron, CellType.prism]
+    assert [comm.allreduce(im.size_local) for im in mesh.topology.index_maps(3)] == [1, 1]
 
 
 def test_polyhedron(shared_tmp_path):

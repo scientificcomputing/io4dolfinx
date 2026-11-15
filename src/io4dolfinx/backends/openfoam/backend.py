@@ -27,7 +27,7 @@ Copyright: Jørgen S. Dokken and Simula Research Laboratory
 """
 
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any
 
 from mpi4py import MPI
 
@@ -41,7 +41,7 @@ try:
 except ImportError:
     raise ModuleNotFoundError("The openfoam-backend requires pyvista")
 
-from ...comm_helpers import run_on_root
+from ...comm_helpers import run_on_root_and_share
 from ...structures import (
     ArrayData,
     FunctionData,
@@ -55,23 +55,6 @@ from .. import FileMode, ReadMode
 from . import helpers
 
 read_mode = ReadMode.serial
-
-Local = TypeVar("Local")
-Shared = TypeVar("Shared")
-
-
-def _on_root(
-    comm: MPI.Comm, func: Callable[[], tuple[Local, Shared]]
-) -> tuple[Local | None, Shared]:
-    """Run ``func`` on rank 0, raising its errors on all ranks.
-
-    Returns:
-        The first output of ``func`` on rank 0 (``None`` elsewhere), and its second
-        output on all ranks
-    """
-    result = run_on_root(comm, func)
-    local, shared = result if result is not None else (None, None)
-    return local, comm.bcast(shared, root=0)
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -129,7 +112,7 @@ def read_mesh_data(
         blocks = [case.cells[t] for t in types]
         return (case.points, blocks), (types, [b.shape[1] for b in blocks], case.points.shape[1])
 
-    local, (cell_types, num_nodes, gdim) = _on_root(comm, read)
+    local, (cell_types, num_nodes, gdim) = run_on_root_and_share(comm, read)
     if local is None:
         x = np.zeros((0, gdim))
         cells = [np.zeros((0, n), dtype=np.int64) for n in num_nodes]
@@ -179,7 +162,7 @@ def read_point_data(
         values = case.point_data[name]
         return values, values.shape[1]
 
-    values, num_components = _on_root(comm, read)
+    values, num_components = run_on_root_and_share(comm, read)
     if values is None:
         values = np.zeros((0, num_components))
     return values.astype(backend_args["dtype"]), 0
@@ -217,7 +200,7 @@ def read_cell_data(
         values = case.cell_data[name]
         return (cells, values), (cells.shape[1], values.shape[1])
 
-    local, (num_nodes, num_components) = _on_root(comm, read)
+    local, (num_nodes, num_components) = run_on_root_and_share(comm, read)
     if local is None:
         local = (np.zeros((0, num_nodes), dtype=np.int64), np.zeros((0, num_components)))
     cells, values = local
@@ -257,7 +240,7 @@ def read_timestamps(
         ]
         return None, times
 
-    _, times = _on_root(comm, read)
+    _, times = run_on_root_and_share(comm, read)
     return np.array(times, dtype=np.float64)
 
 
@@ -281,7 +264,7 @@ def read_function_names(
         names = list(reader.cell_array_names) + list(reader.point_array_names)
         return None, list(dict.fromkeys(names))
 
-    return _on_root(comm, read)[1]
+    return run_on_root_and_share(comm, read)[1]
 
 
 def _tag_sets(case: helpers.Case, dim: int) -> list[tuple[str, Any]]:
@@ -411,7 +394,7 @@ def read_meshtags_data(
             indices = np.array(entities, dtype=np.int64).reshape(-1, num_nodes)
         return (indices, np.array(values, dtype=np.int32)), (dim, int(indices.shape[1]))
 
-    local, (dim, num_nodes) = _on_root(comm, read)
+    local, (dim, num_nodes) = run_on_root_and_share(comm, read)
     if local is None:
         local = (np.zeros((0, num_nodes), dtype=np.int64), np.zeros(0, dtype=np.int32))
     return MeshTagsData(name=name, values=local[1], indices=local[0], dim=dim)
@@ -446,7 +429,7 @@ def read_ids(
         ids["regions"] = {r: i + 1 for i, r in enumerate(case.regions)}
         return None, ids
 
-    return _on_root(comm, read)[1]
+    return run_on_root_and_share(comm, read)[1]
 
 
 def write_attributes(

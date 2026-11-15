@@ -26,6 +26,7 @@ try:
 except ImportError:
     raise ModuleNotFoundError("The openfoam-backend requires pyvista")
 
+from ...utils import as_rows
 from ..vtk_cell_types import _first_order_vtk
 
 __all__ = [
@@ -176,12 +177,6 @@ class Case:
     def point_zones(self) -> dict[str, npt.NDArray[np.int64]]:
         """The points of each ``pointZone`` of each region, as merged point indices."""
         return self._get_zones("point", lambda i, labels: self.node_maps[i][labels])
-
-
-def _as_rows(values: npt.ArrayLike) -> np.ndarray:
-    """Field values as an array of shape ``(num_values, num_components)``."""
-    values = np.asarray(values)
-    return values.reshape(len(values), -1)
 
 
 def _time_value(reader: pyvista.POpenFOAMReader, time: float | str | None) -> float | None:
@@ -355,15 +350,15 @@ def read_case(
     cell_data: dict[str, np.ndarray] = {}
     for name in cell_fields:
         check_regions(name, "cell", [name in grids[r].cell_data for r in regions])
-        cell_data[name] = np.vstack([_as_rows(grids[r].cell_data[name]) for r in regions])
+        cell_data[name] = np.vstack([as_rows(grids[r].cell_data[name]) for r in regions])
     point_data: dict[str, np.ndarray] = {}
     for name in point_fields:
         check_regions(name, "point", [name in grids[r].point_data for r in regions])
         # A point shared by regions takes the value of the last of them
-        first = _as_rows(grids[regions[0]].point_data[name])
+        first = as_rows(grids[regions[0]].point_data[name])
         values = np.zeros((len(points), first.shape[1]), dtype=first.dtype)
         for r, node_map in zip(regions, node_maps):
-            values[node_map] = _as_rows(grids[r].point_data[name])
+            values[node_map] = as_rows(grids[r].point_data[name])
         point_data[name] = values
 
     return Case(
