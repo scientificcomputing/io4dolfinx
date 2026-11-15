@@ -4,7 +4,7 @@ from enum import Enum
 
 from mpi4py import MPI
 
-import basix
+import basix.ufl
 import dolfinx
 import dolfinx.io.utils
 import fenicsx_compat
@@ -117,59 +117,25 @@ def download_file_if_not_exists(
     return status
 
 
-def _fixture_mesh(cell_type: dolfinx.mesh.CellType, degree: int = 1) -> dolfinx.mesh.Mesh:
-    """Serial mesh of the unit square/cube, with geometry of the given degree."""
-    if dolfinx.mesh.cell_dim(cell_type) == 2:
-        mesh = dolfinx.mesh.create_unit_square(MPI.COMM_SELF, 4, 4, cell_type)
-    else:
-        mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_SELF, 2, 2, 2, cell_type)
-    if degree > 1:
-        if hasattr(dolfinx.fem, "interpolate_geometry"):
-            cmap = dolfinx.fem.coordinate_element(cell_type, degree, dtype=mesh.geometry.x.dtype)
-            mesh = dolfinx.fem.interpolate_geometry(mesh, cmap)
-        else:
-            mesh = fenicsx_compat.reconstruct_mesh(mesh, degree)
-    return mesh
-
-
-def _to_med(nodes, x, med_type):
-    """MED connectivity of entities given by their DOLFINx geometry nodes.
-
-    Nodes are found by position, so ``x`` must be undeformed."""
-    vertices, centroids = _med_layouts[med_type]
-    med_vertices = nodes[:, vertices]
-    columns = [med_vertices]
-    rows = np.arange(nodes.shape[0])
-    for centroid in centroids:
-        target = x[med_vertices[:, centroid]].mean(axis=1)
-        distance = np.linalg.norm(x[nodes] - target[:, None, :], axis=2)
-        closest = distance.argmin(axis=1)
-        assert np.allclose(distance[rows, closest], 0.0)
-        columns.append(nodes[rows, closest][:, None])
-    return np.hstack(columns)
-
-
-def _deform(x):
-    """Quadratic map, represented exactly by quadratic Lagrange and serendipity geometry."""
-    y = x.copy()
-    for i in range(x.shape[1]):
-        y[:, i] += 0.1 * x[:, (i + 1) % x.shape[1]] ** 2
-    return y
-
-
-def _med_blocks(mesh, cell_family, facet_markers=(), serendipity=False, deform=None):
+def _med_blocks(mesh, cell_family, node_order, facet_markers=()):
     """Coordinates and MED blocks ``{type: (0-based nodes, family)}`` of a serial mesh.
 
-    ``cell_family`` maps cell midpoints to families and ``facet_markers`` is a sequence of
-    ``(boundary marker, family)``. Serendipity drops the face and interior nodes of a
-    quadratic mesh. ``deform`` maps the coordinates after the connectivity is built."""
+    ``cell_family`` maps cell midpoints to families, ``node_order`` is the fixture of that
+    name and ``facet_markers`` is a sequence of ``(boundary marker, family)``. Nodes are
+    matched on the reference cell, so the mesh may be curved."""
     tdim = mesh.topology.dim
     x = mesh.geometry.x[:, : mesh.geometry.dim].copy()
-    degree = fenicsx_compat.cmap(mesh).degree
+    cmap = fenicsx_compat.cmap(mesh)
     cell_type = dolfinx.mesh.to_string(mesh.topology.cell_type)
+    serendipity = cmap.dim < basix.ufl.element("Lagrange", cell_type, cmap.degree).dim
+
+    def med(entity_type: str, nodes):
+        med_type = _dolfinx_to_med[(entity_type, cmap.degree, serendipity)]
+        return med_type, nodes[:, node_order(entity_type, cmap.degree, *_med_layouts[med_type])]
+
     dofmap = fenicsx_compat.dofmap(mesh)
-    med_type = _dolfinx_to_med[(cell_type, degree, serendipity)]
-    blocks = {med_type: (_to_med(dofmap, x, med_type), cell_family(x[dofmap].mean(axis=1)))}
+    med_type, cells = med(cell_type, dofmap)
+    blocks = {med_type: (cells, cell_family(x[dofmap].mean(axis=1)))}
     if len(facet_markers) > 0:
         mesh.topology.create_connectivity(tdim - 1, tdim)
         facets, families = [], []
@@ -179,16 +145,9 @@ def _med_blocks(mesh, cell_family, facet_markers=(), serendipity=False, deform=N
             families.append(np.full(len(entities), family, dtype=np.int32))
         nodes = dolfinx.mesh.entities_to_geometry(mesh, tdim - 1, np.hstack(facets))
         facet_type = dolfinx.cpp.mesh.cell_entity_type(mesh.topology.cell_type, tdim - 1, 0)
-        med_type = _dolfinx_to_med[(dolfinx.mesh.to_string(facet_type), degree, serendipity)]
-        blocks[med_type] = (_to_med(nodes, x, med_type), np.hstack(families))
-
-    # Drop nodes no entity uses
-    used = np.unique(np.hstack([nodes.ravel() for nodes, _ in blocks.values()]))
-    new_index = np.full(x.shape[0], -1, dtype=np.int64)
-    new_index[used] = np.arange(len(used))
-    blocks = {key: (new_index[nodes], family) for key, (nodes, family) in blocks.items()}
-    x = x[used]
-    return (x if deform is None else deform(x)), blocks
+        med_type, facet_nodes = med(dolfinx.mesh.to_string(facet_type), nodes)
+        blocks[med_type] = (facet_nodes, np.hstack(families))
+    return x, blocks
 
 
 def _write_med(
@@ -268,13 +227,6 @@ def _on_root(comm, function, *args, **kwargs):
     comm.Barrier()
 
 
-def _integrate(mesh, measure, tag=None, meshtags=None):
-    m = ufl.Measure(measure, domain=mesh, subdomain_data=meshtags)
-    m = m if tag is None else m(tag)
-    value = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * m))
-    return mesh.comm.allreduce(value, op=MPI.SUM)
-
-
 def _left_right(midpoints):
     return np.where(midpoints[:, 0] < 0.5, -2, -3).astype(np.int32)
 
@@ -301,11 +253,11 @@ def tmp_dir(tmp_path):
         dolfinx.mesh.CellType.hexahedron,
     ],
 )
-def test_read_mesh_and_meshtags(tmp_dir, cell_type):
+def test_read_mesh_and_meshtags(tmp_dir, cell_type, unit_mesh, integral, node_order):
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "mesh.med"
-    ref = _fixture_mesh(cell_type)
-    x, blocks = _med_blocks(ref, _left_right, _facet_markers)
+    ref = unit_mesh(cell_type)
+    x, blocks = _med_blocks(ref, _left_right, node_order, _facet_markers)
     _on_root(comm, _write_med, filename, x, blocks, _families)
 
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med")
@@ -313,82 +265,82 @@ def test_read_mesh_and_meshtags(tmp_dir, cell_type):
     assert mesh.topology.cell_type == cell_type
     assert mesh.topology.index_map(tdim).size_global == ref.topology.index_map(tdim).size_global
     assert mesh.geometry.index_map().size_global == x.shape[0]
-    assert np.isclose(_integrate(mesh, "dx"), 1.0)
+    assert np.isclose(integral(mesh, 1, "dx"), 1.0)
 
     ct = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="cell", backend="med")
-    assert np.isclose(_integrate(mesh, "dx", 2, ct), 0.5)
-    assert np.isclose(_integrate(mesh, "dx", 3, ct), 0.5)
+    assert np.isclose(integral(mesh, 1, "dx", ct, 2), 0.5)
+    assert np.isclose(integral(mesh, 1, "dx", ct, 3), 0.5)
 
     ft = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="facet", backend="med")
     assert ft.dim == tdim - 1
-    assert np.isclose(_integrate(mesh, "ds", 4, ft), 1.0)
-    assert np.isclose(_integrate(mesh, "ds", 5, ft), 1.0)
+    assert np.isclose(integral(mesh, 1, "ds", ft, 4), 1.0)
+    assert np.isclose(integral(mesh, 1, "ds", ft, 5), 1.0)
     num_untagged = comm.allreduce(np.count_nonzero(ft.values == 0), op=MPI.SUM)
     assert num_untagged == 0
 
     left = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="left", backend="med")
     assert left.dim == tdim
-    assert np.isclose(_integrate(mesh, "dx", 1, left), 0.5)
+    assert np.isclose(integral(mesh, 1, "dx", left, 1), 0.5)
     outlet = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="outlet", backend="med")
     assert outlet.dim == tdim - 1
-    assert np.isclose(_integrate(mesh, "ds", 1, outlet), 1.0)
+    assert np.isclose(integral(mesh, 1, "ds", outlet, 1), 1.0)
 
     groups = read_groups(filename, comm)
     assert groups == {"left": [2], "right": [3], "inlet": [4], "outlet": [5]}
 
 
-def test_prism(tmp_dir):
+def test_prism(tmp_dir, unit_mesh, integral, node_order):
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "prism.med"
-    x, blocks = _med_blocks(_fixture_mesh(dolfinx.mesh.CellType.prism), _left_right)
+    x, blocks = _med_blocks(unit_mesh(dolfinx.mesh.CellType.prism), _left_right, node_order)
     _on_root(comm, _write_med, filename, x, blocks, _families)
 
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med")
     assert mesh.topology.cell_type == dolfinx.mesh.CellType.prism
-    assert np.isclose(_integrate(mesh, "dx"), 1.0)
+    assert np.isclose(integral(mesh, 1, "dx"), 1.0)
     ct = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="right", backend="med")
-    assert np.isclose(_integrate(mesh, "dx", 1, ct), 0.5)
+    assert np.isclose(integral(mesh, 1, "dx", ct, 1), 0.5)
 
 
 @pytest.mark.parametrize("numbering", ["reversed", "none"])
-def test_node_numbering_ignored(tmp_dir, numbering):
+def test_node_numbering_ignored(tmp_dir, numbering, unit_mesh, integral, node_order):
     """``NOE/NUM`` is optional user numbering, connectivity refers to node positions."""
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "numbering.med"
-    x, blocks = _med_blocks(_fixture_mesh(dolfinx.mesh.CellType.quadrilateral), _left_right)
+    x, blocks = _med_blocks(unit_mesh(dolfinx.mesh.CellType.quadrilateral), _left_right, node_order)
     node_num = np.arange(x.shape[0], 0, -1) if numbering == "reversed" else None
     _on_root(comm, _write_med, filename, x, blocks, _families, node_num=node_num)
 
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med")
-    assert np.isclose(_integrate(mesh, "dx"), 1.0)
+    assert np.isclose(integral(mesh, 1, "dx"), 1.0)
     x_mesh = ufl.SpatialCoordinate(mesh)
     first_moment = dolfinx.fem.assemble_scalar(dolfinx.fem.form(x_mesh[0] * ufl.dx))
     assert np.isclose(comm.allreduce(first_moment, op=MPI.SUM), 0.5)
 
 
-def test_overlapping_groups(tmp_dir):
+def test_overlapping_groups(tmp_dir, unit_mesh, integral, node_order):
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "overlap.med"
 
     def family(midpoints):
         return np.select([midpoints[:, 0] < 0.25, midpoints[:, 0] < 0.75], [-2, -3], -4)
 
-    x, blocks = _med_blocks(_fixture_mesh(dolfinx.mesh.CellType.triangle), family)
+    x, blocks = _med_blocks(unit_mesh(dolfinx.mesh.CellType.triangle), family, node_order)
     families = {-2: ["A"], -3: ["A", "B"], -4: ["B"]}
     _on_root(comm, _write_med, filename, x, blocks, families)
 
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med")
     for name in ("A", "B"):
         tags = io4dolfinx.read_meshtags(filename, mesh, meshtag_name=name, backend="med")
-        assert np.isclose(_integrate(mesh, "dx", 1, tags), 0.75)
+        assert np.isclose(integral(mesh, 1, "dx", tags, 1), 0.75)
     assert read_groups(filename, comm) == {"A": [2, 3], "B": [3, 4]}
 
 
-def test_multiple_meshes(tmp_dir):
+def test_multiple_meshes(tmp_dir, unit_mesh, integral, node_order):
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "two_meshes.med"
-    square = _med_blocks(_fixture_mesh(dolfinx.mesh.CellType.triangle), _left_right)
-    cube = _med_blocks(_fixture_mesh(dolfinx.mesh.CellType.hexahedron), _left_right)
+    square = _med_blocks(unit_mesh(dolfinx.mesh.CellType.triangle), _left_right, node_order)
+    cube = _med_blocks(unit_mesh(dolfinx.mesh.CellType.hexahedron), _left_right, node_order)
 
     def write():
         _write_med(filename, square[0], square[1], _families, mesh_name="square")
@@ -403,10 +355,10 @@ def test_multiple_meshes(tmp_dir):
     ct = io4dolfinx.read_meshtags(
         filename, mesh, meshtag_name="left", backend="med", mesh_name="cube"
     )
-    assert np.isclose(_integrate(mesh, "dx", 1, ct), 0.5)
+    assert np.isclose(integral(mesh, 1, "dx", ct, 1), 0.5)
 
 
-def test_unsupported(tmp_dir):
+def test_unsupported(tmp_dir, unit_mesh, node_order):
     comm = MPI.COMM_WORLD
 
     # Mixed cell types of the highest dimension
@@ -422,7 +374,7 @@ def test_unsupported(tmp_dir):
 
     # Unknown group, and a group of nodes only
     groups = tmp_dir / "groups.med"
-    x, blocks = _med_blocks(_fixture_mesh(dolfinx.mesh.CellType.triangle), _left_right)
+    x, blocks = _med_blocks(unit_mesh(dolfinx.mesh.CellType.triangle), _left_right, node_order)
     _on_root(comm, _write_med, groups, x, blocks, _families, node_families={2: ["corner"]})
     mesh = io4dolfinx.read_mesh(groups, comm, backend="med")
     with pytest.raises(KeyError, match="inlet"):
@@ -444,39 +396,25 @@ def test_unsupported(tmp_dir):
         io4dolfinx.read_mesh(polygon, comm, backend="med")
 
 
-def _moments(mesh, facet_tags=None):
-    """Volume, a second moment and the length/area of facets tagged 4 and 5."""
-    x = ufl.SpatialCoordinate(mesh)
-    second = dolfinx.fem.assemble_scalar(dolfinx.fem.form(x[0] * x[1] * ufl.dx))
-    values = [_integrate(mesh, "dx"), mesh.comm.allreduce(second, op=MPI.SUM)]
-    if facet_tags is not None:
-        values += [_integrate(mesh, "ds", tag, facet_tags) for tag in (4, 5)]
-    return np.array(values)
-
-
 @pytest.mark.parametrize(
     "cell_type, serendipity",
     [
         (dolfinx.mesh.CellType.triangle, False),
         (dolfinx.mesh.CellType.quadrilateral, False),
-        pytest.param(dolfinx.mesh.CellType.quadrilateral, True, marks=requires_serendipity),
+        (dolfinx.mesh.CellType.quadrilateral, True),
         (dolfinx.mesh.CellType.tetrahedron, False),
         pytest.param(dolfinx.mesh.CellType.prism, False, marks=requires_quadratic_prism),
         (dolfinx.mesh.CellType.hexahedron, False),
-        pytest.param(dolfinx.mesh.CellType.hexahedron, True, marks=requires_serendipity),
+        (dolfinx.mesh.CellType.hexahedron, True),
     ],
 )
-def test_higher_order(tmp_dir, cell_type, serendipity):
+def test_higher_order(tmp_dir, cell_type, serendipity, unit_mesh, curve, node_order, integrals):
     """Curved quadratic geometry is read back exactly, so a wrong node order shows."""
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "curved.med"
-    ref = _fixture_mesh(cell_type, degree=2)
+    ref = unit_mesh(cell_type, 2, serendipity)
     markers = _facet_markers if cell_type != dolfinx.mesh.CellType.prism else ()
-    x, blocks = _med_blocks(ref, _left_right, markers, serendipity=serendipity, deform=_deform)
-    _on_root(comm, _write_med, filename, x, blocks, _families)
-
-    # Reference: the quadratic Lagrange mesh, deformed in place. Both layouts represent
-    # the quadratic deformation exactly.
+    _, blocks = _med_blocks(ref, _left_right, node_order, markers)
     ref_tags = None
     if len(markers) > 0:
         tdim = ref.topology.dim
@@ -486,9 +424,9 @@ def test_higher_order(tmp_dir, cell_type, serendipity):
         ref_tags = dolfinx.mesh.meshtags(
             ref, tdim - 1, np.hstack(facets)[order], np.hstack(values)[order]
         )
-    gdim = ref.geometry.dim
-    ref.geometry.x[:, :gdim] = _deform(ref.geometry.x[:, :gdim])
-    expected = _moments(ref, ref_tags)
+    curve(ref)
+    _on_root(comm, _write_med, filename, ref.geometry.x[:, : ref.geometry.dim], blocks, _families)
+    expected = integrals(ref, facet_tags=ref_tags)
 
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med")
     assert mesh.topology.cell_type == cell_type
@@ -496,7 +434,9 @@ def test_higher_order(tmp_dir, cell_type, serendipity):
     ft = None
     if len(markers) > 0:
         ft = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="facet", backend="med")
-    assert np.allclose(_moments(mesh, ft), expected)
+    found = integrals(mesh, facet_tags=ft)
+    for name, value in expected.items():
+        assert np.isclose(found[name], value), name
 
 
 @pytest.mark.parametrize(
@@ -504,15 +444,15 @@ def test_higher_order(tmp_dir, cell_type, serendipity):
     [
         (dolfinx.mesh.CellType.triangle, 1, False),
         (dolfinx.mesh.CellType.tetrahedron, 2, False),
-        pytest.param(dolfinx.mesh.CellType.hexahedron, 2, True, marks=requires_serendipity),
+        (dolfinx.mesh.CellType.hexahedron, 2, True),
     ],
 )
-def test_no_facet_block(tmp_dir, cell_type, degree, serendipity):
+def test_no_facet_block(tmp_dir, cell_type, degree, serendipity, unit_mesh, node_order):
     """Facet tags of a file without facets are empty."""
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "no_facets.med"
-    ref = _fixture_mesh(cell_type, degree=degree)
-    x, blocks = _med_blocks(ref, _left_right, serendipity=serendipity)
+    ref = unit_mesh(cell_type, degree, serendipity)
+    x, blocks = _med_blocks(ref, _left_right, node_order)
     _on_root(comm, _write_med, filename, x, blocks, _families)
 
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med")
@@ -545,12 +485,12 @@ def test_unsupported_layouts(tmp_dir, med_type):
         io4dolfinx.read_mesh(filename, comm, backend="med")
 
 
-def test_time_dependent(tmp_dir):
+def test_time_dependent(tmp_dir, unit_mesh, integral, node_order):
     """Later steps store new coordinates and link the connectivity to the first step."""
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "time_dependent.med"
     x, blocks = _med_blocks(
-        _fixture_mesh(dolfinx.mesh.CellType.triangle), _left_right, _facet_markers
+        unit_mesh(dolfinx.mesh.CellType.triangle), _left_right, node_order, _facet_markers
     )
     times = (0.0, 0.5, 1.0)
     later_steps = []
@@ -566,13 +506,13 @@ def test_time_dependent(tmp_dir):
         ct = io4dolfinx.read_meshtags(filename, mesh, "cell", backend="med", backend_args=args)
         ft = io4dolfinx.read_meshtags(filename, mesh, "facet", backend="med", backend_args=args)
         left = io4dolfinx.read_meshtags(filename, mesh, "left", backend="med", backend_args=args)
-        assert np.isclose(_integrate(mesh, "dx"), 1 + t)
-        assert np.isclose(_integrate(mesh, "dx", 2, ct), (1 + t) / 2)
-        assert np.isclose(_integrate(mesh, "dx", 1, left), (1 + t) / 2)
-        assert np.isclose(_integrate(mesh, "ds", 5, ft), 1.0)
+        assert np.isclose(integral(mesh, 1, "dx"), 1 + t)
+        assert np.isclose(integral(mesh, 1, "dx", ct, 2), (1 + t) / 2)
+        assert np.isclose(integral(mesh, 1, "dx", left, 1), (1 + t) / 2)
+        assert np.isclose(integral(mesh, 1, "ds", ft, 5), 1.0)
 
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med", time=None)
-    assert np.isclose(_integrate(mesh, "dx"), 1.0)
+    assert np.isclose(integral(mesh, 1, "dx"), 1.0)
     with pytest.raises(KeyError, match=r"Available times: \[0.0, 0.5, 1.0\]"):
         io4dolfinx.read_mesh(filename, comm, backend="med", time=0.3)
 
@@ -647,7 +587,7 @@ def _write_medcoupling(mc, filename, variant):
 
 
 @pytest.mark.parametrize("variant", ["static", "time_dependent", "stamped", "coords_only"])
-def test_medcoupling_reference(tmp_dir, variant):
+def test_medcoupling_reference(tmp_dir, variant, integral):
     """Files written by MEDCoupling, Salome's MED library."""
     mc = pytest.importorskip("medcoupling")
     comm = MPI.COMM_WORLD
@@ -670,11 +610,11 @@ def test_medcoupling_reference(tmp_dir, variant):
         ft = io4dolfinx.read_meshtags(filename, mesh, "facet", backend="med", backend_args=args)
         left = io4dolfinx.read_meshtags(filename, mesh, "left", backend="med", backend_args=args)
         inlet = io4dolfinx.read_meshtags(filename, mesh, "inlet", backend="med", backend_args=args)
-        assert np.isclose(_integrate(mesh, "dx"), 1 + t)
-        assert np.isclose(_integrate(mesh, "dx", 2, ct), (1 + t) / 2)
-        assert np.isclose(_integrate(mesh, "dx", 1, left), (1 + t) / 2)
-        assert np.isclose(_integrate(mesh, "ds", 6, ft), 1.0)
-        assert np.isclose(_integrate(mesh, "ds", 1, inlet), 1.0)
+        assert np.isclose(integral(mesh, 1, "dx"), 1 + t)
+        assert np.isclose(integral(mesh, 1, "dx", ct, 2), (1 + t) / 2)
+        assert np.isclose(integral(mesh, 1, "dx", left, 1), (1 + t) / 2)
+        assert np.isclose(integral(mesh, 1, "ds", ft, 6), 1.0)
+        assert np.isclose(integral(mesh, 1, "ds", inlet, 1), 1.0)
 
 
 # MED type -> (linear MEDCoupling type, conversion type in convertLinearCellsToQuadratic)
@@ -750,7 +690,7 @@ def test_med_permutations_match_medcoupling(med_type):
     _check_med_node_positions(mc, med_type, x)
 
 
-def test_salome_file(tmp_dir):
+def test_salome_file(tmp_dir, integral):
     """Salome exported mesh from the FESTIM workshop: two 100x100 squares."""
     comm = MPI.COMM_WORLD
     filename = tmp_dir / "Mesh_1.med"
@@ -762,7 +702,7 @@ def test_salome_file(tmp_dir):
     mesh = io4dolfinx.read_mesh(filename, comm, backend="med")
     assert mesh.topology.index_map(2).size_global == 603
     assert mesh.geometry.index_map().size_global == 347
-    assert np.isclose(_integrate(mesh, "dx"), 20000.0)
+    assert np.isclose(integral(mesh, 1, "dx"), 20000.0)
 
     groups = read_groups(filename, comm)
     assert groups == {
@@ -774,10 +714,10 @@ def test_salome_file(tmp_dir):
 
     ct = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="cell", backend="med")
     ft = io4dolfinx.read_meshtags(filename, mesh, meshtag_name="facet", backend="med")
-    assert np.isclose(_integrate(mesh, "dx", 6, ct), 10000.0)
-    assert np.isclose(_integrate(mesh, "dx", 7, ct), 10000.0)
-    assert np.isclose(_integrate(mesh, "ds", 8, ft), 100.0)
-    assert np.isclose(_integrate(mesh, "ds", 9, ft), 100.0)
+    assert np.isclose(integral(mesh, 1, "dx", ct, 6), 10000.0)
+    assert np.isclose(integral(mesh, 1, "dx", ct, 7), 10000.0)
+    assert np.isclose(integral(mesh, 1, "ds", ft, 8), 100.0)
+    assert np.isclose(integral(mesh, 1, "ds", ft, 9), 100.0)
     num_owned = mesh.topology.index_map(1).size_local
     assert comm.allreduce(np.count_nonzero(ft.indices < num_owned), op=MPI.SUM) == 30
 
@@ -788,4 +728,4 @@ def test_salome_file(tmp_dir):
         ("right_boundary", "ds", 100.0),
     ]:
         tags = io4dolfinx.read_meshtags(filename, mesh, meshtag_name=name, backend="med")
-        assert np.isclose(_integrate(mesh, measure, 1, tags), expected)
+        assert np.isclose(integral(mesh, 1, measure, tags, 1), expected)

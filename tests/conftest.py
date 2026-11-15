@@ -302,19 +302,35 @@ def _serendipity_mesh(mesh: dolfinx.mesh.Mesh) -> dolfinx.mesh.Mesh:
 
 
 def _unit_mesh(
-    cell_type: str, degree: int = 1, serendipity: bool = False, n: int | None = None
+    cell_type: str | dolfinx.mesh.CellType,
+    degree: int = 1,
+    serendipity: bool = False,
+    n: int | Sequence[int] | None = None,
 ) -> dolfinx.mesh.Mesh:
-    """A mesh of the unit interval, square or cube on one process, with `n` cells in each
-    direction, and Lagrange or (degree 2) serendipity geometry of the given degree."""
+    """A mesh of the unit interval, square or cube on one process.
+
+    Args:
+        cell_type: The cell type.
+        degree: Degree of the geometry.
+        serendipity: Use degree-2 serendipity geometry instead of Lagrange.
+        n: Number of cells in each direction, or per direction. Defaults to 4 (2 for cubes),
+            so that x = 1/2 is on cell boundaries.
+
+    Returns:
+        The mesh.
+    """
     comm = MPI.COMM_SELF
-    ct = dolfinx.mesh.to_type(cell_type)
+    ct = dolfinx.mesh.to_type(cell_type) if isinstance(cell_type, str) else cell_type
     tdim = dolfinx.mesh.cell_dim(ct)
+    if n is None:
+        n = 2 if tdim == 3 else 4
+    counts = [n] * tdim if isinstance(n, int) else list(n)
     if tdim == 1:
-        mesh = dolfinx.mesh.create_unit_interval(comm, n or 4)
+        mesh = dolfinx.mesh.create_unit_interval(comm, counts[0])
     elif tdim == 2:
-        mesh = dolfinx.mesh.create_unit_square(comm, n or 3, n or 3, cell_type=ct)
+        mesh = dolfinx.mesh.create_unit_square(comm, counts[0], counts[1], cell_type=ct)
     else:
-        mesh = dolfinx.mesh.create_unit_cube(comm, n or 2, n or 2, n or 2, cell_type=ct)
+        mesh = dolfinx.mesh.create_unit_cube(comm, counts[0], counts[1], counts[2], cell_type=ct)
     if serendipity:
         assert degree == 2, "Only degree-2 serendipity geometry exists"
         return _serendipity_mesh(mesh)
@@ -414,6 +430,37 @@ def facet_cells():
     return _facet_cells
 
 
+def _integral(
+    mesh: dolfinx.mesh.Mesh,
+    expr: ufl.core.expr.Expr | float,
+    measure: str,
+    tags: dolfinx.mesh.MeshTags | None = None,
+    tag: int | None = None,
+    dtype: npt.DTypeLike = dolfinx.default_real_type,
+) -> float:
+    """The integral of an expression over a mesh, summed over all processes.
+
+    Args:
+        mesh: The mesh.
+        expr: The expression to integrate.
+        measure: Name of the measure, e.g. ``"dx"``, ``"ds"``, ``"dS"`` or ``"dP"``.
+        tags: Mesh tags of the measure.
+        tag: Value in ``tags`` to integrate over, all entities if ``None``.
+        dtype: Scalar type of the form.
+
+    Returns:
+        The integral.
+    """
+    m = ufl.Measure(measure, domain=mesh, subdomain_data=tags)
+    form = dolfinx.fem.form(expr * (m(tag) if tag is not None else m), dtype=dtype)
+    return mesh.comm.allreduce(dolfinx.fem.assemble_scalar(form), op=MPI.SUM)
+
+
+@pytest.fixture(scope="session")
+def integral():
+    return _integral
+
+
 def _tag_values(tags: dolfinx.mesh.MeshTags, comm: MPI.Comm) -> list[int]:
     return sorted(set().union(*comm.allgather(set(np.unique(tags.values).tolist()))))
 
@@ -428,22 +475,17 @@ def _integrals(
     boundary, and of the weighted fields, summed over all processes."""
     x = ufl.SpatialCoordinate(mesh)
     weight = 1 + ufl.inner(x, x)
-    dx = ufl.Measure("dx", domain=mesh, subdomain_data=cell_tags)
-    forms = {"volume": 1 * dx, "moment": weight * dx}
+    values = {"volume": _integral(mesh, 1, "dx"), "moment": _integral(mesh, weight, "dx")}
     if cell_tags is not None:
         for value in _tag_values(cell_tags, mesh.comm):
-            forms[f"cells {value}"] = weight * dx(value)
+            values[f"cells {value}"] = _integral(mesh, weight, "dx", cell_tags, value)
     if facet_tags is not None:
-        ds = ufl.Measure("ds", domain=mesh, subdomain_data=facet_tags)
-        forms["boundary"] = weight * ds
+        values["boundary"] = _integral(mesh, weight, "ds")
         for value in _tag_values(facet_tags, mesh.comm):
-            forms[f"facets {value}"] = weight * ds(value)
+            values[f"facets {value}"] = _integral(mesh, weight, "ds", facet_tags, value)
     for name, u in (fields or {}).items():
-        forms[name] = u * weight * dx
-    return {
-        name: mesh.comm.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form(form)), op=MPI.SUM)
-        for name, form in forms.items()
-    }
+        values[name] = _integral(mesh, u * weight, "dx")
+    return values
 
 
 @pytest.fixture(scope="session")
