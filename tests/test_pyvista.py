@@ -76,3 +76,86 @@ def test_single_precision_data_on_double_precision_mesh(tmp_path):
     label = io4dolfinx.read_cell_data(filename, "label", mesh, backend="pyvista")
     assert label.x.array.dtype == np.float64
     assert set(np.unique(label.x.array)) <= {0.0, 1.0, 2.0}
+
+
+def f(x):
+    return x[..., 0] + 2 * x[..., 1] + 3 * x[..., 2]
+
+
+def structured_grid(kind: str):
+    """The box [0, 2]x[0, 1]x[0, 1], or the rectangle [0, 2]x[0, 1] for ``"image2D"``, as a
+    pyvista grid of the given kind, with the point data p and cell data c of ``f``."""
+    if kind == "image":
+        grid = pyvista.ImageData(dimensions=(5, 3, 3), spacing=(0.5, 0.5, 0.5))
+    elif kind == "image2D":
+        grid = pyvista.ImageData(dimensions=(5, 3, 1), spacing=(0.5, 0.5, 1))
+    elif kind == "rectilinear":
+        grid = pyvista.RectilinearGrid([0, 0.3, 1, 2], [0, 0.6, 1], [0, 0.5, 1])
+    elif kind == "structured":
+        x, y, z = np.meshgrid([0, 0.3, 1, 2], [0, 0.6, 1], [0, 0.5, 1], indexing="ij")
+        grid = pyvista.StructuredGrid(x, y, z)
+    else:
+        raise ValueError(kind)
+    grid.point_data["p"] = f(np.asarray(grid.points))
+    grid.cell_data["c"] = f(np.asarray(grid.cell_centers().points))
+    return grid
+
+
+@pytest.mark.parametrize(
+    "kind, suffix", [("image", ".vti"), ("rectilinear", ".vtr"), ("structured", ".vts")]
+)
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_structured_grids(tmp_path, kind, suffix, dtype):
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / f"grid{suffix}"
+    if comm.rank == 0:
+        structured_grid(kind).save(filename)
+    comm.barrier()
+
+    args = {"dtype": dtype}
+    mesh = io4dolfinx.read_mesh(filename, comm, backend="pyvista", backend_args=args)
+    assert mesh.topology.cell_type == dolfinx.mesh.CellType.hexahedron
+    assert mesh.geometry.x.dtype == dtype
+
+    def integral(expr, measure):
+        form = dolfinx.fem.form(expr * measure(domain=mesh), dtype=dtype)
+        return comm.allreduce(dolfinx.fem.assemble_scalar(form), op=MPI.SUM)
+
+    assert np.isclose(integral(1, ufl.dx), 2)
+    assert np.isclose(integral(1, ufl.ds), 10)
+    # f is linear: P1 interpolation and cell averages integrate it exactly
+    p = io4dolfinx.read_point_data(filename, "p", mesh, backend="pyvista", backend_args=args)
+    assert np.isclose(integral(p, ufl.dx), 7)
+    c = io4dolfinx.read_cell_data(filename, "c", mesh, backend="pyvista", backend_args=args)
+    assert np.isclose(integral(c, ufl.dx), 7)
+
+
+@pytest.mark.parametrize("gdim", [2, 3])
+def test_two_dimensional_image(tmp_path, gdim):
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / "image.vti"
+    if comm.rank == 0:
+        structured_grid("image2D").save(filename)
+    comm.barrier()
+
+    mesh = io4dolfinx.read_mesh(filename, comm, backend="pyvista", backend_args={"gdim": gdim})
+    assert mesh.topology.cell_type == dolfinx.mesh.CellType.quadrilateral
+    assert mesh.geometry.dim == gdim
+    area = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * ufl.dx(domain=mesh)))
+    assert np.isclose(comm.allreduce(area, op=MPI.SUM), 2)
+    p = io4dolfinx.read_point_data(filename, "p", mesh, backend="pyvista")
+    integral = dolfinx.fem.assemble_scalar(dolfinx.fem.form(p * ufl.dx))
+    assert np.isclose(comm.allreduce(integral, op=MPI.SUM), 4)
+
+
+def test_gdim_must_drop_zero_coordinates(tmp_path):
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / "image.vti"
+    if comm.rank == 0:
+        structured_grid("image").save(filename)
+    comm.barrier()
+    with pytest.raises(ValueError, match="gdim=2"):
+        io4dolfinx.read_mesh(filename, comm, backend="pyvista", backend_args={"gdim": 2})
