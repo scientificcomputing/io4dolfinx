@@ -18,7 +18,6 @@ import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
 import pytest
-import ufl
 from dolfinx.mesh import CellType
 
 import io4dolfinx
@@ -320,34 +319,8 @@ def centres(
     )
 
 
-def integral(
-    mesh: dolfinx.mesh.Mesh,
-    expr: ufl.core.expr.Expr | float,
-    measure: str,
-    tags: dolfinx.mesh.MeshTags | None = None,
-    tag: int | None = None,
-    dtype: npt.DTypeLike = dolfinx.default_real_type,
-) -> float:
-    """The integral of an expression over a mesh, summed over all processes.
-
-    Args:
-        mesh: The mesh
-        expr: The expression to integrate
-        measure: Name of the measure, e.g. ``"dx"``, ``"ds"``, ``"dS"`` or ``"dP"``
-        tags: Mesh tags of the measure
-        tag: Value in ``tags`` to integrate over, all entities if ``None``
-        dtype: Scalar type of the form
-
-    Returns:
-        The integral
-    """
-    m = ufl.Measure(measure, domain=mesh, subdomain_data=tags)
-    form = dolfinx.fem.form(expr * (m(tag) if tag is not None else m), dtype=dtype)
-    return mesh.comm.allreduce(dolfinx.fem.assemble_scalar(form), op=MPI.SUM)
-
-
-def write_cube(path: Path, cell_type: CellType, n: int = 4) -> Path:
-    """Write the unit cube from DOLFINx as an OpenFOAM case.
+def write_cube(path: Path, mesh: dolfinx.mesh.Mesh) -> Path:
+    """Write a first-order mesh of the unit cube as an OpenFOAM case.
 
     The case has a patch per side, the cell zones ``"lower"`` (z < 1/2) and ``"upper"``,
     the face zone ``"middle"`` (x = 1/2), the point zone ``"corners"``, the cell fields
@@ -355,13 +328,11 @@ def write_cube(path: Path, cell_type: CellType, n: int = 4) -> Path:
 
     Args:
         path: The case directory
-        cell_type: The cell type of the mesh
-        n: Number of cells along each side
+        mesh: The mesh, on one process
 
     Returns:
         The ``.foam`` file of the case
     """
-    mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_SELF, n, n, n, cell_type=cell_type)
     points, cells = cells_as_faces(mesh)
     c = centres(points, cells)
     U = np.column_stack([c[:, 0], -c[:, 1], 2 * c[:, 2]])
@@ -381,8 +352,8 @@ def write_cube(path: Path, cell_type: CellType, n: int = 4) -> Path:
 
 @pytest.mark.parametrize("cell_type", [CellType.tetrahedron, CellType.hexahedron, CellType.prism])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_read(shared_tmp_path, cell_type, dtype):
-    path = write_cube(shared_tmp_path / "cube", cell_type)
+def test_read(shared_tmp_path, cell_type, dtype, unit_mesh, integral):
+    path = write_cube(shared_tmp_path / "cube", unit_mesh(cell_type, n=4))
     comm = MPI.COMM_WORLD
     args = {"dtype": dtype}
     mesh = io4dolfinx.read_mesh(path, comm, backend="openfoam", backend_args=args)
@@ -439,10 +410,10 @@ def test_read(shared_tmp_path, cell_type, dtype):
     assert np.isclose(integrate(1, "ds", xmin, ids["facet"]["xmin"]), 1, rtol=tol)
 
 
-def test_ids(shared_tmp_path):
+def test_ids(shared_tmp_path, unit_mesh):
     """Ids are numbered from 1 for each dimension, in the order of the files: for facets
     the patches, then the face zones."""
-    path = write_cube(shared_tmp_path / "cube", CellType.hexahedron, n=2)
+    path = write_cube(shared_tmp_path / "cube", unit_mesh(CellType.hexahedron))
     ids = openfoam.read_ids(path, MPI.COMM_WORLD)
     assert list(ids) == ["cell", "facet", "peak", "regions"]
     assert ids["cell"] == {"lower": 1, "upper": 2}
@@ -452,9 +423,9 @@ def test_ids(shared_tmp_path):
     assert ids["regions"] == {"": 1}
 
 
-def test_errors(shared_tmp_path):
+def test_errors(shared_tmp_path, unit_mesh):
     """Cell fields are only read as cell data, and point fields as point data."""
-    path = write_cube(shared_tmp_path / "cube", CellType.hexahedron, n=2)
+    path = write_cube(shared_tmp_path / "cube", unit_mesh(CellType.hexahedron))
     comm = MPI.COMM_WORLD
     with pytest.raises(ValueError, match="cell-centred"):
         openfoam.read_point_data(path, "T", comm, 1, None)
@@ -470,10 +441,10 @@ def test_errors(shared_tmp_path):
         openfoam.read_meshtags_data(path, comm, "inlet")
 
 
-def test_overlapping_zones(shared_tmp_path):
+def test_overlapping_zones(shared_tmp_path, unit_mesh):
     """Sets of a dimension that share entities cannot be combined into one mesh tag, but
     can be read one at a time."""
-    mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_SELF, 2, 1, 1, cell_type=CellType.hexahedron)
+    mesh = unit_mesh(CellType.hexahedron, n=(2, 1, 1))
     points, cells = cells_as_faces(mesh)
     write_case(
         shared_tmp_path / "c",
@@ -496,9 +467,9 @@ def test_overlapping_zones(shared_tmp_path):
 
 @pytest.mark.parametrize("label_bits", [32, 64])
 @pytest.mark.parametrize("compress", [False, True])
-def test_binary_and_compressed_files(shared_tmp_path, label_bits, compress):
+def test_binary_and_compressed_files(shared_tmp_path, label_bits, compress, unit_mesh):
     """Binary (32- and 64-bit labels) and gzipped faces and zones are read as ASCII."""
-    mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_SELF, 2, 2, 2, cell_type=CellType.hexahedron)
+    mesh = unit_mesh(CellType.hexahedron)
     points, cells = cells_as_faces(mesh)
     zones = {
         "cell_zones": {"half": [0, 2, 4, 6], "other": [1, 3, 5, 7]},
@@ -525,11 +496,11 @@ def test_binary_and_compressed_files(shared_tmp_path, label_bits, compress):
         assert comm.allreduce(len(a.values), op=MPI.SUM) > 0
 
 
-def test_baffle(shared_tmp_path):
+def test_baffle(shared_tmp_path, unit_mesh, integral):
     """Two cells side by side, with separate but coincident points on the face between
     them and a patch on each side. The patches are told apart by their labels, which
     coordinates could not do."""
-    mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_SELF, 2, 1, 1, cell_type=CellType.hexahedron)
+    mesh = unit_mesh(CellType.hexahedron, n=(2, 1, 1))
     points, cells = cells_as_faces(mesh)
     c = centres(points, cells)
     # Give the cell on the right its own copies of the points at x = 1/2
@@ -558,10 +529,10 @@ def test_baffle(shared_tmp_path):
         assert np.isclose(integral(mesh, cell_x, "ds", tags, ids[name]), side)
 
 
-def test_mixed_mesh(shared_tmp_path):
+def test_mixed_mesh(shared_tmp_path, unit_mesh):
     """A hexahedron and a prism sharing a face are read as a mixed mesh, without data or
     tags."""
-    mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_SELF, 1, 1, 1, cell_type=CellType.hexahedron)
+    mesh = unit_mesh(CellType.hexahedron, n=1)
     points, cells = cells_as_faces(mesh)
     # A prism on the face x = 1 of the cube
     face = [i for i in range(len(points)) if np.isclose(points[i, 0], 1)]
@@ -672,7 +643,7 @@ def write_regions(root: Path, shift: float = 0.0) -> Path:
     return case / "case.foam"
 
 
-def test_regions(shared_tmp_path):
+def test_regions(shared_tmp_path, integral):
     """Regions are merged into one conforming mesh; the facets between them are tagged
     once."""
     path = write_regions(shared_tmp_path)
@@ -701,8 +672,7 @@ def test_regions(shared_tmp_path):
         openfoam.read_cell_data(path, "U", comm, 0, None)
 
     solid = io4dolfinx.read_mesh(path, comm, backend="openfoam", backend_args={"region": "solid"})
-    volume = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 * ufl.dx(domain=solid)))
-    assert np.isclose(comm.allreduce(volume, op=MPI.SUM), 2)
+    assert np.isclose(integral(solid, 1, "dx"), 2)
 
 
 def test_regions_must_match(shared_tmp_path):

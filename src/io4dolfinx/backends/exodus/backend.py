@@ -11,6 +11,7 @@ Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Remi Delaporte-Mathurin,
            and Simula Research Laboratory
 """
 
+import re
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -51,24 +52,123 @@ _side_set_to_vertex_map = {
 }
 
 
-_exodus_to_string = {
-    "EDGE2": ("interval", 1),
-    "TRI3": ("triangle", 1),
-    "QUAD": ("quadrilateral", 1),
-    "QUAD4": ("quadrilateral", 1),
-    "TETRA": ("tetrahedron", 1),
-    "HEX": ("hexahedron", 1),
-    "HEX8": ("hexahedron", 1),
-    "BEAM2": ("interval", 1),
-    "HEX27": ("hexahedron", 2),
+# Exodus element names without their node count, e.g. "TETRA" for "TETRA10", and the DOLFINx
+# cell they describe. Names are case-insensitive. BAR, BEAM, EDGE and TRUSS are the same line
+# element; the name only tells analysis codes which physics to apply (e.g. a truss carries axial
+# load only, a beam also bends).
+_exodus_cell_types = {
+    "BAR": "interval",
+    "BEAM": "interval",
+    "EDGE": "interval",
+    "TRUSS": "interval",
+    "TRI": "triangle",
+    "TRIANGLE": "triangle",
+    "QUAD": "quadrilateral",
+    "TET": "tetrahedron",
+    "TETRA": "tetrahedron",
+    "HEX": "hexahedron",
+    "HEXAHEDRON": "hexahedron",
+    "WEDGE": "prism",
 }
+
+# Degree of the supported elements, by cell and number of nodes
+_degrees = {
+    ("interval", 2): 1,
+    ("interval", 3): 2,
+    ("triangle", 3): 1,
+    ("triangle", 6): 2,
+    ("quadrilateral", 4): 1,
+    ("quadrilateral", 8): 2,
+    ("quadrilateral", 9): 2,
+    ("tetrahedron", 4): 1,
+    ("tetrahedron", 10): 2,
+    ("hexahedron", 8): 1,
+    ("hexahedron", 20): 2,
+    ("hexahedron", 27): 2,
+    ("prism", 6): 1,
+}
+
+# Elements with serendipity geometry, with nodes at the vertices and edge midpoints only
+_serendipity = {("quadrilateral", 8), ("hexahedron", 20)}
+
+# The DOLFINx node of each HEX27 node, from Fig 4.14 of
+# https://sandialabs.github.io/seacas-docs/exodusII-new.pdf. Its face and edge nodes are not
+# numbered as in VTK. HEX20 has the first 20 nodes of HEX27.
+_hex27_exodus_to_dolfinx = np.array(
+    [
+        0,
+        1,
+        5,
+        4,
+        2,
+        3,
+        7,
+        6,
+        8,
+        12,
+        16,
+        10,
+        9,
+        11,
+        18,
+        17,
+        13,
+        15,
+        19,
+        14,
+        26,
+        21,
+        24,
+        22,
+        23,
+        20,
+        25,
+    ]
+)
 
 read_mode = ReadMode.serial
 
 
 def _get_cell_type(connectivity: netCDF4.Variable) -> tuple[dolfinx.mesh.CellType, int]:
-    cell_type, degree = _exodus_to_string[connectivity.elem_type]
+    name = re.sub(r"\d+$", "", connectivity.elem_type.upper())
+    num_nodes = connectivity.shape[1]
+    cell_type = _exodus_cell_types.get(name)
+    degree = _degrees.get((cell_type, num_nodes)) if cell_type is not None else None
+    if cell_type is None or degree is None:
+        raise NotImplementedError(
+            f"Exodus element {connectivity.elem_type} with {num_nodes} nodes is not supported."
+        )
     return dolfinx.mesh.to_type(cell_type), degree
+
+
+def _dolfinx_node_order(cell_type: dolfinx.mesh.CellType, num_nodes: int) -> npt.NDArray[np.int32]:
+    """The position in an Exodus element of each node of the DOLFINx cell."""
+    if cell_type == dolfinx.mesh.CellType.hexahedron and num_nodes in (20, 27):
+        return np.argsort(_hex27_exodus_to_dolfinx[:num_nodes]).astype(np.int32)
+    # The other elements number their nodes as VTK does
+    return np.asarray(dolfinx.cpp.io.perm_vtk(cell_type, num_nodes), dtype=np.int32)
+
+
+def _side_nodes(
+    cell_type: dolfinx.mesh.CellType, num_nodes: int
+) -> dict[int, npt.NDArray[np.int32]]:
+    """The positions in a DOLFINx cell of the nodes on each Exodus side (0-based), vertices
+    first, as :func:`dolfinx.io.distribute_entity_data` expects."""
+    name = dolfinx.mesh.to_string(cell_type)
+    if name not in _side_set_to_vertex_map:
+        raise NotImplementedError(f"Side sets on {name} cells are not supported.")
+    family = basix.ElementFamily.serendipity if (name, num_nodes) in _serendipity else "Lagrange"
+    element = basix.ufl.element(family, name, _degrees[(name, num_nodes)])
+    tdim = dolfinx.mesh.cell_dim(cell_type)
+    facets = [set(f) for f in basix.topology(getattr(basix.CellType, name))[tdim - 1]]
+    # The DOLFINx vertex at each Exodus vertex
+    vertex = np.argsort(_dolfinx_node_order(cell_type, num_nodes))
+    nodes = {}
+    for side, exodus_vertices in _side_set_to_vertex_map[name].items():
+        facet = facets.index(set(vertex[exodus_vertices].tolist()))
+        # Closure dofs are sorted, so vertices come first
+        nodes[side] = np.asarray(element.entity_closure_dofs[tdim - 1][facet], dtype=np.int32)
+    return nodes
 
 
 def _compute_tdim(connectivity: netCDF4.Variable) -> int:
@@ -307,47 +407,7 @@ def read_mesh_data(
             else:
                 raise ValueError(f"No blocks found in {filename}")
 
-            if degree == 1:
-                perm = np.array(dolfinx.cpp.io.perm_vtk(cell_type, cells.shape[1]), dtype=np.int32)
-            elif cell_type == dolfinx.mesh.CellType.hexahedron and degree == 2:
-                # Ordering from Fig 4.14 of: https://sandialabs.github.io/seacas-docs/exodusII-new.pdf
-                dolfinx_to_exodus = np.array(
-                    [
-                        0,
-                        1,
-                        5,
-                        4,
-                        2,
-                        3,
-                        7,
-                        6,
-                        8,
-                        12,
-                        16,
-                        10,
-                        9,
-                        11,
-                        18,
-                        17,
-                        13,
-                        15,
-                        19,
-                        14,
-                        26,
-                        21,
-                        24,
-                        22,
-                        23,
-                        20,
-                        25,
-                    ]
-                )
-                perm = np.argsort(dolfinx_to_exodus).astype(np.uint16)
-            else:
-                raise NotImplementedError(
-                    "Reading Exodus2 mesh with {cell_type} of order {degree} is not supported."
-                )
-
+            perm = _dolfinx_node_order(cell_type, cells.shape[1])
             cells = cells[:, perm]
             cell_type, gdim, xtype, degree, num_dofs_per_cell = comm.bcast(
                 (cell_type, gdim, np.dtype(coordinates.dtype).name, degree, cells.shape[1]), root=0
@@ -366,6 +426,7 @@ def read_mesh_data(
         lvar=int(basix.LagrangeVariant.equispaced),
         degree=degree,
         partition_graph=None,
+        serendipity=(dolfinx.mesh.to_string(cell_type), num_dofs_per_cell) in _serendipity,
     )
 
 
@@ -445,7 +506,6 @@ def read_meshtags_data(
                 for cell in cell_types:
                     assert cell_types[0] == cell, "Mixed cell types not supported"
                 cell_type, degree = cell_types[0]
-                local_facet_index = _side_set_to_vertex_map[dolfinx.mesh.to_string(cell_type)]
                 if "num_side_sets" not in infile.dimensions:
                     facet_type = dolfinx.cpp.mesh.cell_entity_type(cell_type, tdim - 1, 0)
                     num_dofs_per_cell = basix.ufl.element(
@@ -455,7 +515,6 @@ def read_meshtags_data(
                     entity_values = np.zeros(0, dtype=np.int64)
                 else:
                     # Extract facet values
-                    local_facet_index = _side_set_to_vertex_map[dolfinx.mesh.to_string(cell_type)]
                     num_facet_sets = infile.dimensions["num_side_sets"].size
                     values = infile.variables["ss_prop1"]
                     # Extract all cell blocks to get correct look-up
@@ -463,6 +522,10 @@ def read_meshtags_data(
                     for entity_block in entity_blocks:
                         connectivity_arrays.append(entity_block[:] - 1)
                     connectivity_array = np.vstack(connectivity_arrays)
+                    connectivity_array = connectivity_array[
+                        :, _dolfinx_node_order(cell_type, connectivity_array.shape[1])
+                    ]
+                    side_nodes = _side_nodes(cell_type, connectivity_array.shape[1])
 
                     # Loop through all side sets to extract the correct connectivity
                     facet_indices = []
@@ -473,7 +536,7 @@ def read_meshtags_data(
                         local_facets = infile.variables[f"side_ss{i + 1}"]
                         for element, index in zip(elements, local_facets):
                             facet_indices.append(
-                                connectivity_array[element - 1, local_facet_index[index - 1]]
+                                connectivity_array[element - 1, side_nodes[index - 1]]
                             )
                             facet_values.append(value.data.tolist())
                         marked_entities = np.vstack(facet_indices)
