@@ -1,40 +1,24 @@
 """
-Module that uses pyvista to import grids.
+Module that uses pyvista to import grids (requires pyvista, through its helpers).
 """
 
-from typing import Any
-
-import numpy as np
-import numpy.typing as npt
-
-try:
-    import pyvista
-except ImportError:
-    raise ModuleNotFoundError("The PyVista-backend requires pyvista")
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from mpi4py import MPI
 
 import basix
 import dolfinx
-import fenicsx_compat
+import numpy as np
+import numpy.typing as npt
 
+from io4dolfinx.comm_helpers import run_on_root_and_share
 from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from io4dolfinx.utils import check_file_exists
 
 from .. import FileMode, ReadMode
-from ..vtk_cell_types import _arbitrary_lagrange_vtk, _cell_degree, _first_order_vtk
-
-# Cell types can be found at
-# https://vtk.org/doc/nightly/html/vtkCellType_8h_source.html
-_quadratric_vtk = {
-    21: "interval",
-    22: "triangle",
-    23: "quadrilateral",
-    24: "tetrahedron",
-    25: "hexahedron",
-}
-
+from . import helpers
 
 read_mode = ReadMode.serial
 
@@ -46,10 +30,23 @@ def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]
         arguments: Input backend arguments
 
     Returns:
-        Updated backend arguments
+        The arguments, with defaults for:
+            - ``"gdim"``: Geometric dimension of the mesh, ``3``. VTK points have three
+              coordinates; with a smaller ``gdim`` the others are dropped, and must be zero.
+            - ``"dtype"``: Floating point type of the mesh coordinates, ``None`` for the type
+              in the file
     """
-    args = arguments or {}
+    args: dict[str, Any] = {"gdim": 3, "dtype": None}
+    args.update(arguments or {})
     return args
+
+
+def _data(grid: helpers.Grid, values: dict[str, np.ndarray], name: str, kind: str) -> np.ndarray:
+    """Point or cell data of a grid, with integer data cast to the type of the points."""
+    if name not in values:
+        raise KeyError(f"No {kind} data '{name}'. Available: {list(values)}")
+    data = values[name]
+    return data.astype(grid.mesh.x.dtype) if np.issubdtype(data.dtype, np.integer) else data
 
 
 def read_mesh_data(
@@ -61,12 +58,15 @@ def read_mesh_data(
 ) -> ReadMeshData:
     """Read mesh data from file.
 
+    Unstructured grids, and structured, rectilinear and image grids, are read. All data is
+    read on rank 0.
+
     Args:
         filename: Path to file to read from
         comm: MPI communicator used in storage
         time: Time stamp associated with the mesh to read
         read_from_partition: Whether to read partition information
-        backend_args: Arguments to backend
+        backend_args: Arguments to backend, see :func:`get_default_backend_args`
 
     Returns:
         Internal data structure for the mesh data read from file
@@ -75,56 +75,27 @@ def read_mesh_data(
     check_file_exists(filename)
     if read_from_partition:
         raise RuntimeError("Cannot read partition data with Pyvista")
-    cells: npt.NDArray[np.int64]
-    geom: npt.NDArray[np.float64 | np.float32]
-    if comm.rank == 0:
-        in_data = pyvista.read(filename)
-        if isinstance(in_data, pyvista.UnstructuredGrid):
-            grid = in_data
-        elif isinstance(in_data, pyvista.core.composite.MultiBlock):
-            # To handle multiblock like pvd
-            fenicsx_compat.pyvista_allow_snake_case(pyvista)
-            number_of_blocks = in_data.number_of_blocks
-            assert number_of_blocks == 1
-            b0 = in_data.get_block(0)
-            assert isinstance(b0, pyvista.UnstructuredGrid)
-            grid = b0
-        else:
-            raise RuntimeError(f"Unknown data type {type(in_data)}")
-        geom = grid.points
-        num_cells_global = grid.number_of_cells
-        cells = grid.cells.reshape(num_cells_global, -1).astype(np.int64)
-        nodes_per_cell_type = cells[:, 0]
-        assert np.allclose(nodes_per_cell_type, nodes_per_cell_type[0]), "Single celltype support"
-        cells = cells[:, 1:].astype(np.int64)
-        cell_types = grid.celltypes
-        assert len(np.unique(cell_types)) == 1
-        if (cell_type := cell_types[0]) in _first_order_vtk.keys():
-            cell_type = _first_order_vtk[cell_type]
-            order = 1
-        elif cell_type in _quadratric_vtk.keys():
-            cell_type = _quadratric_vtk[cell_type]
-            order = 2
-        elif cell_type in _arbitrary_lagrange_vtk.keys():
-            cell_type = _arbitrary_lagrange_vtk[cell_type]
-            order = _cell_degree(cell_type, cells.shape[1])
-        else:
-            raise NotImplementedError(f"Cell type {cell_type} not supported in Pyvista backend.")
-        perm = dolfinx.cpp.io.perm_vtk(dolfinx.mesh.to_type(cell_type), cells.shape[1])
-        cells = cells[:, perm]
-        lvar = int(basix.LagrangeVariant.equispaced)
-        gtype = backend_args.get("dtype", geom.dtype)
-        order, lvar, nodes_per_cell, cell_type, gtype, gdim = comm.bcast(
-            (order, lvar, cells.shape[1], cell_type, gtype, geom.shape[1]), root=0
-        )
-    else:
-        order, lvar, nodes_per_cell, cell_type, gtype, gdim = comm.bcast(None, root=0)
-        geom = np.zeros((0, gdim), dtype=gtype)
-        cells = np.zeros((0, nodes_per_cell), dtype=np.int64)
+    gdim = backend_args["gdim"]
 
-    return ReadMeshData(
-        cells=cells, cell_type=cell_type, x=geom.astype(gtype), lvar=lvar, degree=order
-    )
+    def read() -> tuple[ReadMeshData, tuple[str, int, int, np.dtype]]:
+        mesh = helpers.read_grid(filename).mesh
+        if not np.allclose(mesh.x[:, gdim:], 0):
+            raise ValueError(
+                f"The points of {filename} have non-zero coordinates beyond gdim={gdim}."
+            )
+        mesh = replace(mesh, x=mesh.x[:, :gdim])
+        return mesh, (mesh.cell_type, mesh.degree, mesh.cells.shape[1], mesh.x.dtype)
+
+    mesh, (cell_type, degree, num_nodes, points_dtype) = run_on_root_and_share(comm, read)
+    if mesh is None:
+        mesh = ReadMeshData(
+            cells=np.zeros((0, num_nodes), dtype=np.int64),
+            cell_type=cell_type,
+            x=np.zeros((0, gdim), dtype=points_dtype),
+            lvar=int(basix.LagrangeVariant.equispaced),
+            degree=degree,
+        )
+    return replace(mesh, x=mesh.x.astype(backend_args["dtype"] or points_dtype))
 
 
 def read_point_data(
@@ -144,41 +115,19 @@ def read_point_data(
         backend_args: The backend arguments
 
     Returns:
-       Data local to process (contiguous, no mpi comm) and local start range
+       The data on rank 0, of shape ``(num_points, num_components)``, and the global start
+       of the data on this process, ``0``
     """
-    dataset: np.ndarray
-    if MPI.COMM_WORLD.rank == 0:
-        in_data = pyvista.read(filename)
-        if isinstance(in_data, pyvista.UnstructuredGrid):
-            grid = in_data
-        elif isinstance(in_data, pyvista.core.composite.MultiBlock):
-            # To handle multiblock like pvd
-            fenicsx_compat.pyvista_allow_snake_case(pyvista)
-            number_of_blocks = in_data.number_of_blocks
-            assert number_of_blocks == 1
-            b0 = in_data.get_block(0)
-            assert isinstance(b0, pyvista.UnstructuredGrid)
-            grid = b0
 
-        dataset = grid.point_data[name]
-        if len(dataset.shape) == 1:
-            num_components = 1
-            dataset = dataset.reshape(-1, num_components)
-        else:
-            num_components = dataset.shape[1]
-        if np.issubdtype(dataset.dtype, np.integer):
-            gtype = grid.points.dtype
-            dataset = dataset.astype(gtype)
-        else:
-            gtype = dataset.dtype
-        num_components, gtype = comm.bcast((num_components, gtype), root=0)
-        local_range_start = 0
-    else:
-        num_components, gtype = comm.bcast(None, root=0)
-        dataset = np.zeros((0, num_components), dtype=gtype)
-        local_range_start = 0
+    def read() -> tuple[np.ndarray, tuple[int, np.dtype]]:
+        grid = helpers.read_grid(filename)
+        data = _data(grid, grid.point_data, name, "point")
+        return data, (data.shape[1], data.dtype)
 
-    return dataset, int(local_range_start)
+    data, (num_components, dtype) = run_on_root_and_share(comm, read)
+    if data is None:
+        data = np.zeros((0, num_components), dtype=dtype)
+    return data, 0
 
 
 def read_cell_data(
@@ -188,40 +137,30 @@ def read_cell_data(
     time: str | float | None,
     backend_args: dict[str, Any] | None,
 ) -> tuple[npt.NDArray[np.int64], np.ndarray]:
-    dataset: np.ndarray
-    topology: np.ndarray
-    if MPI.COMM_WORLD.rank == 0:
-        in_data = pyvista.read(filename)
-        if isinstance(in_data, pyvista.UnstructuredGrid):
-            grid = in_data
-        elif isinstance(in_data, pyvista.core.composite.MultiBlock):
-            # To handle multiblock like pvd
-            fenicsx_compat.pyvista_allow_snake_case(pyvista)
-            number_of_blocks = in_data.number_of_blocks
-            assert number_of_blocks == 1
-            b0 = in_data.get_block(0)
-            assert isinstance(b0, pyvista.UnstructuredGrid)
-            grid = b0
+    """Read data from the cells of a mesh.
 
-        dataset = grid.cell_data[name]
-        if len(dataset.shape) == 1:
-            num_components = 1
-            dataset = dataset.reshape(-1, num_components)
-        else:
-            num_components = dataset.shape[1]
+    Args:
+        filename: Path to file
+        name: Name of cell data
+        comm: Communicator to launch IO on.
+        time: The time stamp
+        backend_args: The backend arguments
 
-        if np.issubdtype(dataset.dtype, np.integer):
-            gtype = in_data.points.dtype
-            dataset = dataset.astype(gtype)
-        else:
-            gtype = dataset.dtype
-        num_components, gtype = comm.bcast((num_components, gtype), root=0)
-    else:
-        num_components, gtype = comm.bcast(None, root=0)
-        dataset = np.zeros((0, num_components), dtype=gtype)
-    _time = float(time) if time is not None else None
-    topology = read_mesh_data(filename, comm, _time, False, backend_args=None).cells
-    return topology, dataset
+    Returns:
+        A tuple (topology, data), where topology holds the input node indices of each cell
+        and data the data of each cell, on rank 0
+    """
+
+    def read() -> tuple[tuple[npt.NDArray[np.int64], np.ndarray], tuple[int, int, np.dtype]]:
+        grid = helpers.read_grid(filename)
+        data = _data(grid, grid.cell_data, name, "cell")
+        cells = grid.mesh.cells
+        return (cells, data), (cells.shape[1], data.shape[1], data.dtype)
+
+    local, (num_nodes, num_components, dtype) = run_on_root_and_share(comm, read)
+    if local is None:
+        local = (np.zeros((0, num_nodes), dtype=np.int64), np.zeros((0, num_components), dtype))
+    return local
 
 
 def write_attributes(
@@ -294,23 +233,14 @@ def read_function_names(
         backend_args: Arguments to backend
 
     Returns:
-        A list of function names.
+        The names of the point data, then of the cell data.
     """
-    in_data = pyvista.read(filename)
-    if isinstance(in_data, pyvista.UnstructuredGrid):
-        grid = in_data
-    elif isinstance(in_data, pyvista.core.composite.MultiBlock):
-        # To handle multiblock like pvd
-        fenicsx_compat.pyvista_allow_snake_case(pyvista)
-        number_of_blocks = in_data.number_of_blocks
-        assert number_of_blocks == 1
-        b0 = in_data.get_block(0)
-        assert isinstance(b0, pyvista.UnstructuredGrid)
-        grid = b0
 
-    point_data = list(grid.point_data.keys())
-    cell_data = list(grid.cell_data.keys())
-    return point_data + cell_data
+    def read() -> tuple[None, list[str]]:
+        grid = helpers.read_grid(filename)
+        return None, list(grid.point_data) + list(grid.cell_data)
+
+    return run_on_root_and_share(comm, read)[1]
 
 
 def write_mesh(

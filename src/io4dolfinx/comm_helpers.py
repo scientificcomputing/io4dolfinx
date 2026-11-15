@@ -28,12 +28,15 @@ __all__ = [
     "numpy_to_mpi",
     "all_to_all",
     "run_on_root",
+    "run_on_root_and_share",
     "run_on_all",
     "gather_rows",
     "gather_concatenate",
 ]
 
 T = TypeVar("T")
+Local = TypeVar("Local")
+Shared = TypeVar("Shared")
 
 numpy_to_mpi = {
     np.float64: MPI.DOUBLE,
@@ -475,6 +478,25 @@ def run_on_root(comm: MPI.Comm, fn: Callable[[], T]) -> T | None:
     if error is not None:
         raise error
     return result
+
+
+def run_on_root_and_share(
+    comm: MPI.Comm, fn: Callable[[], tuple[Local, Shared]]
+) -> tuple[Local | None, Shared]:
+    """Run a function on rank 0, raise any error it raises on all ranks, and share part of
+    its result with all ranks.
+
+    Args:
+        comm: MPI communicator
+        fn: Function returning data kept on rank 0, and data shared with all ranks
+
+    Returns:
+        The first output of ``fn`` on rank 0 (``None`` on the other ranks), and its second
+        output on all ranks
+    """
+    result = run_on_root(comm, fn)
+    local, shared = result if result is not None else (None, None)
+    return local, comm.bcast(shared, root=0)
 
 
 def run_on_all(comm: MPI.Comm, fn: Callable[[], T]) -> T:

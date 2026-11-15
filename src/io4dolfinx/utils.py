@@ -36,6 +36,7 @@ __all__ = [
     "strip_suffix",
     "input_cell_index",
     "create_mixed_mesh",
+    "as_rows",
 ]
 
 #: Codimension of the entities named ``"cell"``, ``"facet"``, ``"ridge"`` and ``"peak"``,
@@ -378,3 +379,17 @@ def create_mixed_mesh(
             comm, flat_cells, cmaps, x, partitioner, max_facet_to_cell_links
         )
     return dolfinx.mesh.Mesh(cpp_mesh, None)
+
+
+def as_rows(values: npt.ArrayLike) -> np.ndarray:
+    """Data with one row per entity, such as a VTK data array.
+
+    Args:
+        values: Scalar values of shape ``(num_values,)``, or values of shape
+            ``(num_values, ...)``
+
+    Returns:
+        The values, of shape ``(num_values, num_components)``
+    """
+    values = np.asarray(values)
+    return values.reshape(len(values), -1)
