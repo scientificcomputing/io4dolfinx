@@ -30,6 +30,7 @@ exodus = ["netcdf4"]
 med = ["h5py>=3.10"]
 gmsh = ["gmsh"]
 nastran = ["gmsh"]
+openfoam = ["pyvista"]
 
 [dependency-groups]
 build = [

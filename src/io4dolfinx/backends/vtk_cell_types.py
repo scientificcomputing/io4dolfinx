@@ -10,6 +10,8 @@ _first_order_vtk = {
     9: "quadrilateral",
     10: "tetrahedron",
     12: "hexahedron",
+    13: "prism",
+    14: "pyramid",
 }
 
 _arbitrary_lagrange_vtk = {
