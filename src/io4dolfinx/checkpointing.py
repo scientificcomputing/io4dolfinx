@@ -31,11 +31,12 @@ from .comm_helpers import (
 from .format import check_appendable, check_readable, object_metadata, stamp
 from .original_checkpoint import create_function_data_on_original_mesh, create_original_mesh_data
 from .readers import create_geometry_function_space
-from .structures import ArrayData, FunctionData, MeshTagsData
+from .structures import ArrayData, FunctionData, MeshTagsData, ReadMixedMeshData
 from .utils import (
     check_file_exists,
     compute_dofmap_pos,
     compute_local_range,
+    create_mixed_mesh,
     index_owner,
     input_cell_index,
     unroll_dofmap,
@@ -498,7 +499,8 @@ def read_mesh(
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
     Returns:
-        The distributed mesh
+        The distributed mesh. A mesh with several cell types, which only some backends
+        read, has no UFL domain and requires DOLFINx 0.11 or later.
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading mesh from {filename}")
@@ -522,6 +524,18 @@ def read_mesh(
         read_from_partition=read_from_partition,
         backend_args=backend_args,
     )
+
+    if isinstance(dist_in_data, ReadMixedMeshData):
+        return create_mixed_mesh(
+            comm,
+            dist_in_data.cells,
+            dist_in_data.cell_types,
+            dist_in_data.x,
+            dist_in_data.degree,
+            dist_in_data.lvar,
+            ghost_mode=ghost_mode,
+            max_facet_to_cell_links=max_facet_to_cell_links,
+        )
 
     # Create DOLFINx mesh
     element: basix.ufl._ElementBase

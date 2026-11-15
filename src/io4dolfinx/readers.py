@@ -335,11 +335,16 @@ def read_function_from_legacy_h5(
 
 def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.fem.FunctionSpace:
     """Reconstruct a vector space with the N components using the geometry dofmap to ensure
-    a 1-1 mapping between mesh nodes and DOFs."""
+    a 1-1 mapping between mesh nodes and DOFs.
+
+    Raises:
+        NotImplementedError: For a mesh with several cell types, which has no UFL domain.
+    """
+    ufl_domain = mesh.ufl_domain()
+    if ufl_domain is None:
+        raise NotImplementedError("Point data on meshes with several cell types is not supported.")
     geom_imap = mesh.geometry.index_map()
     geom_dofmap = fenicsx_compat.dofmap(mesh)
-    ufl_domain = mesh.ufl_domain()
-    assert ufl_domain is not None
     sub_el = ufl_domain.ufl_coordinate_element().sub_elements[0]
     adj_list = dolfinx.cpp.graph.AdjacencyList_int32(geom_dofmap)
 

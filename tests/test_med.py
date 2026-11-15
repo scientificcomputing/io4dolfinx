@@ -24,6 +24,13 @@ requires_serendipity = pytest.mark.skipif(
     reason="Serendipity geometry requires the main branch of DOLFINx",
 )
 
+# Before DOLFINx 0.11, dofmaps assumed the same number of dofs on all entities of a
+# dimension, which is wrong for the faces of quadratic prisms (FEniCS/dolfinx#3977)
+requires_quadratic_prism = pytest.mark.skipif(
+    fenicsx_compat.before("0.11.0.dev0"),
+    reason="Quadratic prisms require DOLFINx 0.11 or later",
+)
+
 # (DOLFINx cell type, geometry degree, serendipity) -> MED element type
 _dolfinx_to_med = {
     ("interval", 1, False): "SE2",
@@ -454,7 +461,7 @@ def _moments(mesh, facet_tags=None):
         (dolfinx.mesh.CellType.quadrilateral, False),
         pytest.param(dolfinx.mesh.CellType.quadrilateral, True, marks=requires_serendipity),
         (dolfinx.mesh.CellType.tetrahedron, False),
-        (dolfinx.mesh.CellType.prism, False),
+        pytest.param(dolfinx.mesh.CellType.prism, False, marks=requires_quadratic_prism),
         (dolfinx.mesh.CellType.hexahedron, False),
         pytest.param(dolfinx.mesh.CellType.hexahedron, True, marks=requires_serendipity),
     ],

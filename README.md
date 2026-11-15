@@ -72,6 +72,7 @@ Most meshing formats supports associating data with the nodes of the mesh (the m
 - [XDMF](./docs/backends/xdmf.rst) (eXtensible Model Data Format): `.xdmf`. The `xdmf` backend supports the `HDF5` encoding, to ensure performance in parallel.
 - [Gmsh](./docs/backends/gmsh.rst): `.msh` files (MSH 2.2 and 4.1, ASCII and binary) are read and written with the [Gmsh](https://gmsh.info) Python API by the `gmsh` backend, including physical groups as mesh tags and time-dependent point and cell data.
 - [openCARP](./docs/backends/opencarp.rst): Linear triangle, quadrilateral, tetrahedral and hexahedral meshes with region tags, fibers and markers are written to and read from the ASCII format of the cardiac simulator [openCARP](https://opencarp.org) (`.pts`, `.elem`, `.lon`, `.vtx`, `.surf`) by the `opencarp` backend.
+- [Nastran](./docs/backends/nastran.rst): Meshes and property IDs (`PSOLID`, `PSHELL`) of Nastran bulk data files (`.bdf`, `.nas`) are read with the [Gmsh](https://gmsh.info) Python API by the `nastran` backend, including meshes with several cell types, such as hexahedra, pyramids and tetrahedra. GRID IDs are read as point data and vertex tags.
 - [PyVista](./docs/backends/pyvista.rst) (IO backend is meshio): The [pyvista](https://pyvista.org/) backend uses {py:func}`pyvista.read` to read in meshes, point data and cell data. `pyvista` relies on [meshio](https://github.com/nschloe/meshio) for most reading operations (including the XDMF ascii format).
 
 

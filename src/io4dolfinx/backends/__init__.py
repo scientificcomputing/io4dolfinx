@@ -9,7 +9,14 @@ import dolfinx
 import numpy as np
 import numpy.typing as npt
 
-from ..structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
+from ..structures import (
+    ArrayData,
+    FunctionData,
+    MeshData,
+    MeshTagsData,
+    ReadMeshData,
+    ReadMixedMeshData,
+)
 
 __all__ = [
     "DEFAULT_MESH_NAME",
@@ -215,7 +222,7 @@ class IOBackend(Protocol):
         time: str | float | None,
         read_from_partition: bool,
         backend_args: dict[str, Any] | None,
-    ) -> ReadMeshData:
+    ) -> ReadMeshData | ReadMixedMeshData:
         """Read mesh data from file.
 
         Args:
@@ -226,7 +233,9 @@ class IOBackend(Protocol):
             backend_args: Arguments to backend
 
         Returns:
-            Internal data structure for the mesh data read from file
+            Internal data structure for the mesh data read from file,
+            :class:`~io4dolfinx.structures.ReadMixedMeshData` for a mesh with several
+            cell types
         """
 
     def read_meshtags_data(
@@ -516,6 +525,10 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .opencarp import backend as OpenCARPInterface
 
         return OpenCARPInterface
+    elif backend == "nastran":
+        from .nastran import backend as NASTRANInterface
+
+        return NASTRANInterface
     else:
         return import_module(backend)
 
@@ -530,6 +543,7 @@ BUILTIN_BACKENDS = (
     "med",
     "gmsh",
     "opencarp",
+    "nastran",
 )
 
 

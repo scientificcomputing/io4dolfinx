@@ -43,6 +43,7 @@ parts:
     - file: "docs/backends/med"
     - file: "docs/backends/gmsh"
     - file: "docs/backends/opencarp"
+    - file: "docs/backends/nastran"
 
   - caption: Contributing
     chapters:

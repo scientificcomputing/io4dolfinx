@@ -20,7 +20,7 @@ authors = [
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["fenics-dolfinx>=0.10.0", "fenicsx-compat>=0.3.0"]
+dependencies = ["fenics-dolfinx>=0.10.0", "fenicsx-compat>=0.5.0"]
 
 [project.optional-dependencies]
 h5py = ["h5py>=3.10"]
@@ -29,6 +29,7 @@ xdmf = ["h5py>=3.10"]
 exodus = ["netcdf4"]
 med = ["h5py>=3.10"]
 gmsh = ["gmsh"]
+nastran = ["gmsh"]
 
 [dependency-groups]
 build = [
