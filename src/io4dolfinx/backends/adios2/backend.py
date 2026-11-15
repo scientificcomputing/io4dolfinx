@@ -444,6 +444,13 @@ def read_mesh_data(
     adios = adios2.ADIOS(comm)
     backend_args = get_default_backend_args(backend_args)
     legacy = backend_args.get("legacy", False)
+    if legacy:
+        warnings.warn(
+            "Reading adios4dolfinx checkpoints (format 0) with legacy=True is deprecated. "
+            "Convert the file once with io4dolfinx.convert or the io4dolfinx-convert command.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
     io_name = backend_args.get("io_name", "MeshReader")
     engine = backend_args["engine"]
     prefix = mesh_prefix(backend_args)

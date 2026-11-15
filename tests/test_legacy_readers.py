@@ -216,9 +216,14 @@ def test_io4dolfinx_legacy():
 
     el = ("N1curl", 3)
     backend_args = {"engine": "BP4", "legacy": True}
-    mesh = read_mesh(
-        path, comm, dolfinx.mesh.GhostMode.shared_facet, backend_args=backend_args, backend="adios2"
-    )
+    with pytest.warns(DeprecationWarning, match="io4dolfinx-convert"):
+        mesh = read_mesh(
+            path,
+            comm,
+            dolfinx.mesh.GhostMode.shared_facet,
+            backend_args=backend_args,
+            backend="adios2",
+        )
 
     def f(x):
         values = np.zeros((2, x.shape[1]), dtype=np.float64)
