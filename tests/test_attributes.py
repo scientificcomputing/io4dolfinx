@@ -23,11 +23,10 @@ def test_read_write_attributes(comm, backend, tmp_path):
         "c": np.array([6], dtype=np.uint8),
         "d": np.array([7, 8, 9, 10], dtype=np.float64),
     }
-    fname = comm.bcast(tmp_path, root=0)
-    fname = fname / "attributes"
+    # tmp_path is shared by all ranks, so on COMM_SELF each rank needs its own file
+    name = f"attributes_{MPI.COMM_WORLD.rank}" if comm.size == 1 else "attributes"
     suffix = ".bp" if backend == "adios2" else ".h5"
-    file = fname.with_suffix(suffix)
-    # print(comm.size)
+    file = (tmp_path / name).with_suffix(suffix)
 
     io4dolfinx.write_attributes(
         comm=comm, filename=file, name="group1", attributes=attributes1, backend=backend

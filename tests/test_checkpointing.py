@@ -243,7 +243,7 @@ def test_read_write_P_3D_time(
     ],
 )
 def test_read_nonexisting_file_raises_FileNotFoundError(func, args, backend):
-    if backend == "adios":
+    if backend == "adios2":
         suffix = ".bp"
     else:
         suffix = ".h5"
@@ -253,7 +253,7 @@ def test_read_nonexisting_file_raises_FileNotFoundError(func, args, backend):
 
 
 def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
-    if backend == "adios":
+    if backend == "adios2":
         suffix = ".bp"
     else:
         suffix = ".h5"
@@ -274,10 +274,7 @@ def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
 
 
 def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
-    if backend == "adios":
-        suffix = ".bp"
-    else:
-        suffix = ".h5"
+    suffix = ".bp" if backend == "adios2" else ".h5"
 
     mesh = mesh_2D
     dtype = get_dtype(mesh.geometry.x.dtype, False)
@@ -294,8 +291,9 @@ def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
     u = dolfinx.fem.Function(V, dtype=dtype, name="u")
     v = dolfinx.fem.Function(V, dtype=dtype, name="v")
 
-    f_path = mesh.comm.bcast(tmp_path, root=0)
-    filename = (f_path / "read_time_stamps").with_suffix(suffix)
+    # tmp_path is shared by all ranks, so a mesh on COMM_SELF needs a file per rank
+    name = f"read_time_stamps_{MPI.COMM_WORLD.rank}" if mesh.comm.size == 1 else "read_time_stamps"
+    filename = (tmp_path / name).with_suffix(suffix)
 
     t_u = [0.1, 1.4]
     t_v = [0.45, 1.2]
