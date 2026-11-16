@@ -4,7 +4,9 @@ VTKHDF-backend
 --------------
 
 Relies on MPI compatible :code:`h5py`, similar to the  :ref:`H5PY backend<h5pybackend>`.
-See that backend for detailed installation instructions.
+See that backend for detailed installation instructions. With :code:`h5py` built without MPI,
+it runs as :code:`vtkhdf-serial`, which writes through rank 0 in the same way as
+:code:`h5py-serial`.
 
 Lossless compression
 ~~~~~~~~~~~~~~~~~~~~

@@ -7,6 +7,7 @@ Copyright: Jørgen S. Dokken, Henrik N.T. Finsberg, Simula Research Laboratory
 """
 
 import contextlib
+import contextvars
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,10 @@ from ...utils import check_file_exists, compute_local_range
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
 
 read_mode = ReadMode.parallel
+
+#: Open files without MPI on every rank, even with h5py built with MPI. Set by the serial
+#: backends, see :mod:`io4dolfinx.backends.serial`.
+force_serial_files = contextvars.ContextVar("force_serial_files", default=False)
 
 # try:
 # except ModuleNotFoundError:
@@ -43,11 +48,13 @@ def h5pyfile(h5name, filemode="r", force_serial: bool = False, comm=None):
     """
     if comm is None:
         comm = MPI.COMM_WORLD
+    force_serial = force_serial or force_serial_files.get()
 
     if h5py.h5.get_config().mpi and not force_serial:
         h5file = h5py.File(h5name, filemode, driver="mpio", comm=comm)
     else:
-        if comm.size > 1 and not force_serial:
+        # Every rank may read a file on its own, but not write to it
+        if comm.size > 1 and not force_serial and filemode != "r":
             raise ValueError(
                 f"h5py is not installed with MPI support, while using {comm.size} processes.",
                 "If you really want to do this, turn on the `force_serial` flag.",

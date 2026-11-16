@@ -1,3 +1,4 @@
+import warnings
 from enum import Enum
 from importlib import import_module
 from pathlib import Path
@@ -489,10 +490,30 @@ def get_backend(backend: str | None = None) -> IOBackend:
     if backend is None:
         backend = _DEFAULT_BACKEND
 
+    if backend in ("h5py", "vtkhdf"):
+        import h5py
+
+        if not h5py.get_config().mpi:
+            warnings.warn(
+                f"h5py is built without MPI, so the {backend} backend runs as "
+                f"{backend}-serial, which writes all data through rank 0. Install h5py "
+                "with MPI for parallel IO, see the io4dolfinx installation guide.",
+                stacklevel=2,
+            )
+            backend = f"{backend}-serial"
+
     if backend == "h5py":
         from .h5py import backend as H5PYInterface
 
         return H5PYInterface
+    elif backend == "h5py-serial":
+        from .h5py_serial import backend as H5PYSerialInterface
+
+        return H5PYSerialInterface
+    elif backend == "vtkhdf-serial":
+        from .vtkhdf_serial import backend as VTKHDFSerialInterface
+
+        return VTKHDFSerialInterface
     elif backend == "adios2":
         from .adios2 import backend as ADIOS2Interface
 
@@ -539,6 +560,8 @@ def get_backend(backend: str | None = None) -> IOBackend:
 
 BUILTIN_BACKENDS = (
     "h5py",
+    "h5py-serial",
+    "vtkhdf-serial",
     "adios2",
     "pyvista",
     "xdmf",

@@ -106,7 +106,7 @@ def create_non_simplex_mesh_3D(tmp_path_factory):
 def create_2D_mesh(request, tmpdir_factory):
     dtype, cell_type = request.param
     mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 5, 7, cell_type=cell_type, dtype=dtype)
-    fname = Path(tmpdir_factory.mktemp("output")) / f"original_mesh_2D_{dtype}_{cell_type}.xdmf"
+    fname = Path(tmpdir_factory.mktemp("output")) / "original_mesh_2D.xdmf"
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, fname, "w") as xdmf:
         xdmf.write_mesh(mesh)
     return fname
@@ -116,7 +116,7 @@ def create_2D_mesh(request, tmpdir_factory):
 def create_3D_mesh(request, tmpdir_factory):
     dtype, cell_type = request.param
     mesh = dolfinx.mesh.create_unit_cube(MPI.COMM_WORLD, 5, 7, 3, cell_type=cell_type, dtype=dtype)
-    fname = Path(tmpdir_factory.mktemp("output")) / f"original_mesh_3D_{dtype}_{cell_type}.xdmf"
+    fname = Path(tmpdir_factory.mktemp("output")) / "original_mesh_3D.xdmf"
     with dolfinx.io.XDMFFile(MPI.COMM_WORLD, fname, "w") as xdmf:
         xdmf.write_mesh(mesh)
     return fname
@@ -150,7 +150,7 @@ def write_function_original(
     file_hash = f"{el_hash}_{np.dtype(dtype).name}"
     if backend == "adios2":
         suffix = ".bp"
-    elif backend == "h5py":
+    elif backend in ("h5py", "h5py-serial"):
         suffix = ".h5"
     else:
         raise NotImplementedError(f"Unknown backend {backend}")

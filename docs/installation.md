@@ -20,7 +20,7 @@ python3 -m pip install "io4dolfinx[test]"
 python3 -m pip install "io4dolfinx[docs]"
 ```
 
-- To run in parallel with the default `h5py` backend, you need an HDF5 library with MPI support, and `h5py` built against it; the `h5py` wheels on PyPI are serial. You can build `h5py` with MPI support using pip:
+- The `h5py` wheels on PyPI are built without MPI. With them, the default `h5py` backend still runs in parallel, but writes all data through rank 0 (see the [H5PY backend](./backends/h5py.rst)). For parallel IO, you need an HDF5 library with MPI support, and `h5py` built against it. You can build `h5py` with MPI support using pip:
 
 ```bash
 HDF5_MPI=ON python3 -m pip install --no-binary=h5py h5py
@@ -59,7 +59,7 @@ See [Spack PETSc](https://packages.spack.io/package.html?name=petsc) for options
 
 ## Docker
 
-The official DOLFINx containers have MPI builds of HDF5 and ADIOS2, but not of `h5py`. To run the default `h5py` backend in parallel, build `h5py` against the HDF5 of the image. Images from the main branch of DOLFINx (`nightly`) point `HDF5_ROOT` to it, while the v0.10 and v0.11 images have it in `/usr/local`:
+The official DOLFINx containers have MPI builds of HDF5 and ADIOS2, but not of `h5py`, so `pip install io4dolfinx` installs `h5py` without MPI, which writes through rank 0. For parallel IO with the default `h5py` backend, build `h5py` against the HDF5 of the image. Images from the main branch of DOLFINx (`nightly`) point `HDF5_ROOT` to it, while the v0.10 and v0.11 images have it in `/usr/local`:
 
 ```bash
 HDF5_MPI=ON HDF5_DIR=${HDF5_ROOT:-/usr/local} python3 -m pip install --no-binary=h5py --no-build-isolation h5py

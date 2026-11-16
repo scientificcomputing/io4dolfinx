@@ -2,6 +2,7 @@ from mpi4py import MPI
 
 import dolfinx
 import h5py
+import numpy as np
 import pytest
 
 import io4dolfinx
@@ -11,14 +12,13 @@ from io4dolfinx.backends import BUILTIN_BACKENDS
 @pytest.fixture(autouse=True)
 def reset_default_backend():
     """
-    Fixture to ensure the global default backend is always reset to 'adios2'
-    after each test, preventing state leakage to other tests.
+    Fixture to start each test with 'adios2' as the global default backend, and to
+    restore the default afterwards, preventing state leakage to other tests.
     """
-    # Setup: Ensure starting state is adios2
+    default = io4dolfinx.get_default_backend()
     io4dolfinx.set_default_backend("adios2")
     yield
-    # Teardown: Reset back to adios2
-    io4dolfinx.set_default_backend("adios2")
+    io4dolfinx.set_default_backend(default)
 
 
 def test_explicit_backend_overrides_default(tmp_path):
@@ -98,3 +98,43 @@ def test_list_builtin_backends():
     # We can be reasonably certain that 'h5py' or 'adios2' should be
     # present if the io4dolfinx test suite is running successfully
     assert "h5py" in available_backends or "adios2" in available_backends
+
+
+class _SerialConfig:
+    mpi = False
+
+
+@pytest.mark.parametrize("backend", ["h5py", "vtkhdf"])
+def test_serial_h5py_fallback(monkeypatch, backend):
+    """With h5py built without MPI, the HDF5 backends run as their serial versions, with a
+    warning to install h5py with MPI."""
+    monkeypatch.setattr(h5py, "get_config", lambda: _SerialConfig())
+    serial = io4dolfinx.get_backend(f"{backend}-serial")
+    with pytest.warns(UserWarning, match=f"runs as {backend}-serial"):
+        assert io4dolfinx.get_backend(backend) is serial
+
+
+@pytest.mark.skipif(h5py.get_config().mpi, reason="Needs h5py built without MPI, as on PyPI")
+def test_checkpoint_with_serial_h5py(tmp_path):
+    """With h5py from PyPI, the default backend writes and reads a checkpoint on any number of
+    processes, warning to install h5py with MPI."""
+    io4dolfinx.set_default_backend("h5py")
+    comm = MPI.COMM_WORLD
+    mesh = dolfinx.mesh.create_unit_square(comm, 4, 5)
+    V = dolfinx.fem.functionspace(mesh, ("Lagrange", 2))
+    u = dolfinx.fem.Function(V)
+    u.interpolate(lambda x: x[0] + 2 * x[1] ** 2)
+
+    filename = tmp_path / "serial_h5py.h5"
+    with pytest.warns(UserWarning, match="runs as h5py-serial"):
+        io4dolfinx.write_mesh(filename, mesh)
+        io4dolfinx.write_function(filename, u, time=0.5)
+    with pytest.warns(UserWarning, match="runs as h5py-serial"):
+        mesh_in = io4dolfinx.read_mesh(filename, comm)
+    u_in = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh_in, ("Lagrange", 2)))
+    with pytest.warns(UserWarning, match="runs as h5py-serial"):
+        io4dolfinx.read_function(filename, u_in, time=0.5)
+
+    u_ex = dolfinx.fem.Function(u_in.function_space)
+    u_ex.interpolate(lambda x: x[0] + 2 * x[1] ** 2)
+    np.testing.assert_allclose(u_in.x.array, u_ex.x.array, atol=1e-14)

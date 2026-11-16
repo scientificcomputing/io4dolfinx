@@ -6,6 +6,16 @@ H5PY-backend
 The H5PY-backend relies on an MPI compatible build of :code:`HDF5`, which should be linked to the same MPI
 implementation as DOLFINx relies on.
 
+h5py without MPI
+~~~~~~~~~~~~~~~~
+
+With :code:`h5py` built without MPI, as the wheels on PyPI are, the backend runs as
+:code:`h5py-serial`, with a warning to install :code:`h5py` with MPI. It writes the same files:
+every process reads its part of a file on its own, while all data written is gathered on
+rank 0, which writes it. This works on any number of processes, but rank 0 holds and writes
+all the data, so build :code:`h5py` with MPI, as below, for large problems. The
+:code:`h5py-serial` backend can also be chosen directly.
+
 The DOLFINx docker images (:code:`ghcr.io/fenics/dolfinx/dolfinx:stable`) comes with an already configures MPI compatible HDF5 installation, and `h5py` can in
 turn be installed with
 
@@ -35,3 +45,6 @@ Note that this code block does not install DOLFINx, it just illustrates how to g
 .. automodule:: io4dolfinx.backends.h5py.backend
     :members:
     :exclude-members: read_point_data
+
+.. automodule:: io4dolfinx.backends.serial
+    :members:
