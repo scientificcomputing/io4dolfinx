@@ -123,11 +123,24 @@ io4dolfinx.read_function_from_legacy_h5(
 )
 ```
 
+## Converting Meshes and Mesh Functions
+
+The mesh and mesh functions (`MeshFunction`) of a file written with `dolfin.HDF5File` can be
+converted once to an `io4dolfinx` checkpoint, holding the mesh and mesh tags of the same names:
+
+```bash
+io4dolfinx-convert mesh.h5 checkpoint.h5 --meshtags facet_tags
+```
+
+or {py:func}`io4dolfinx.convert` from Python. The mesh of the checkpoint keeps the node order of
+the DOLFIN file, so functions of that file are still read onto it with
+{py:func}`io4dolfinx.read_function_from_legacy_h5`.
+
 ## Limitations
 
 * **Function Types:** Only `Lagrange` (Continuous Galerkin) and `DG` (Discontinuous Galerkin)
     functions are supported.
 * **One Checkpoint per File:** The legacy reader generally expects one checkpoint series per file
     structure for XDMF checkpoints.
-* **Backends:** The default backend is `adios2`. Ensure you have an MPI-enabled build of HDF5
-    if using the `h5py` backend explicitly.
+* **Backends:** The default backend is `h5py`. Ensure you have an MPI-enabled build of HDF5
+    and `h5py` to read in parallel.

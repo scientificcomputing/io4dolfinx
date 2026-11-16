@@ -27,7 +27,7 @@ __all__ = [
     "set_default_backend",
 ]
 
-_DEFAULT_BACKEND = "adios2"
+_DEFAULT_BACKEND = "h5py"
 
 #: Name used for a mesh when the caller does not supply one. A file written
 #: before named meshes existed holds exactly this mesh, so backends must store

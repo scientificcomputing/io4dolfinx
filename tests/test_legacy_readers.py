@@ -80,9 +80,14 @@ def test_legacy_function(backend):
     if not path.exists():
         pytest.skip(f"{path} does not exist")
     mesh = read_mesh_from_legacy_h5(path, comm, "/mesh", backend=backend)
-    ff = read_meshtags(
-        path, mesh, "facet_tags", backend_args={"legacy": True, "engine": "HDF5"}, backend=backend
-    )
+    with pytest.warns(DeprecationWarning, match="--meshtags facet_tags"):
+        ff = read_meshtags(
+            path,
+            mesh,
+            "facet_tags",
+            backend_args={"legacy": True, "engine": "HDF5"},
+            backend=backend,
+        )
     fdim = mesh.topology.dim - 1
     assert ff.dim == fdim
     boundary_facets = ff.find(2)
