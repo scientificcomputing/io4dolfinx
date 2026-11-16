@@ -150,7 +150,7 @@ def write_function_original(
     file_hash = f"{el_hash}_{np.dtype(dtype).name}"
     if backend == "adios2":
         suffix = ".bp"
-    elif backend == "h5py":
+    elif backend in ("h5py", "h5py-serial"):
         suffix = ".h5"
     else:
         raise NotImplementedError(f"Unknown backend {backend}")

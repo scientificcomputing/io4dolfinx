@@ -19,7 +19,7 @@ pytest.importorskip("adios2")
 # before the tests
 legacy_dir = pathlib.Path("legacy_checkpoint").absolute()
 dolfin_dir = pathlib.Path("legacy").absolute()
-suffixes = {"adios2": ".bp", "h5py": ".h5"}
+suffixes = {"adios2": ".bp", "h5py": ".h5", "h5py-serial": ".h5"}
 
 
 def f(x):

@@ -51,6 +51,7 @@ __all__ = ["convert", "main"]
 
 # Backends that write checkpoints, by the suffix of their files
 _backends_by_suffix = {".bp": "adios2", ".h5": "h5py"}
+_checkpoint_backends = ("adios2", "h5py", "h5py-serial")
 
 
 def _convert_dolfin(
@@ -159,10 +160,10 @@ def convert(
                 f"suffixes {sorted(_backends_by_suffix)}."
             )
         backend = _backends_by_suffix[output_file.suffix]
-    if backend not in _backends_by_suffix.values():
+    if backend not in _checkpoint_backends:
         raise ValueError(
             f"Cannot write checkpoints with the {backend!r} backend, use one of "
-            f"{sorted(set(_backends_by_suffix.values()))}."
+            f"{list(_checkpoint_backends)}."
         )
     if output_file.exists() and not overwrite:
         raise FileExistsError(f"{output_file} exists. Set overwrite to replace it.")
@@ -230,7 +231,7 @@ def main(argv: Sequence[str] | None = None):
     )
     parser.add_argument(
         "--backend",
-        choices=sorted(set(_backends_by_suffix.values())),
+        choices=_checkpoint_backends,
         default=None,
         help="The backend to write with. Chosen from the suffix of the output if not given: "
         ".bp for adios2, .h5 for h5py",

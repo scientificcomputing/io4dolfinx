@@ -11,14 +11,13 @@ from io4dolfinx.backends import BUILTIN_BACKENDS
 @pytest.fixture(autouse=True)
 def reset_default_backend():
     """
-    Fixture to ensure the global default backend is always reset to 'adios2'
-    after each test, preventing state leakage to other tests.
+    Fixture to start each test with 'adios2' as the global default backend, and to
+    restore the default afterwards, preventing state leakage to other tests.
     """
-    # Setup: Ensure starting state is adios2
+    default = io4dolfinx.get_default_backend()
     io4dolfinx.set_default_backend("adios2")
     yield
-    # Teardown: Reset back to adios2
-    io4dolfinx.set_default_backend("adios2")
+    io4dolfinx.set_default_backend(default)
 
 
 def test_explicit_backend_overrides_default(tmp_path):
@@ -98,3 +97,17 @@ def test_list_builtin_backends():
     # We can be reasonably certain that 'h5py' or 'adios2' should be
     # present if the io4dolfinx test suite is running successfully
     assert "h5py" in available_backends or "adios2" in available_backends
+
+
+class _SerialConfig:
+    mpi = False
+
+
+@pytest.mark.parametrize("backend", ["h5py", "vtkhdf"])
+def test_serial_h5py_fallback(monkeypatch, backend):
+    """With h5py built without MPI, the HDF5 backends run as their serial versions, with a
+    warning to install h5py with MPI."""
+    monkeypatch.setattr(h5py, "get_config", lambda: _SerialConfig())
+    serial = io4dolfinx.get_backend(f"{backend}-serial")
+    with pytest.warns(UserWarning, match=f"runs as {backend}-serial"):
+        assert io4dolfinx.get_backend(backend) is serial

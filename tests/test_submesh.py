@@ -9,7 +9,7 @@ import ufl
 
 import io4dolfinx
 
-SUFFIX = {"adios2": ".bp", "h5py": ".h5"}
+SUFFIX = {"adios2": ".bp", "h5py": ".h5", "h5py-serial": ".h5"}
 
 
 def _reference(x, vector: bool, gdim: int):

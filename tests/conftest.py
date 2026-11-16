@@ -32,6 +32,8 @@ def find_backends():
 
         if h5py.get_config().mpi:
             backends.append("h5py")
+        # Opens files without MPI even if h5py has it, so runs everywhere
+        backends.append("h5py-serial")
     except ModuleNotFoundError:
         pass
     return backends
