@@ -24,7 +24,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from ...utils import check_file_exists
+from ...utils import check_file_exists, serendipity_num_nodes
 from .. import FileMode, ReadMode
 
 _interval_to_vertex_map = {0: [0, 1]}
@@ -87,9 +87,6 @@ _degrees = {
     ("hexahedron", 27): 2,
     ("prism", 6): 1,
 }
-
-# Elements with serendipity geometry, with nodes at the vertices and edge midpoints only
-_serendipity = {("quadrilateral", 8), ("hexahedron", 20)}
 
 # The DOLFINx node of each HEX27 node, from Fig 4.14 of
 # https://sandialabs.github.io/seacas-docs/exodusII-new.pdf. Its face and edge nodes are not
@@ -157,7 +154,8 @@ def _side_nodes(
     name = dolfinx.mesh.to_string(cell_type)
     if name not in _side_set_to_vertex_map:
         raise NotImplementedError(f"Side sets on {name} cells are not supported.")
-    family = basix.ElementFamily.serendipity if (name, num_nodes) in _serendipity else "Lagrange"
+    serendipity = serendipity_num_nodes.get(name) == num_nodes
+    family = basix.ElementFamily.serendipity if serendipity else "Lagrange"
     element = basix.ufl.element(family, name, _degrees[(name, num_nodes)])
     tdim = dolfinx.mesh.cell_dim(cell_type)
     facets = [set(f) for f in basix.topology(getattr(basix.CellType, name))[tdim - 1]]
@@ -426,7 +424,8 @@ def read_mesh_data(
         lvar=int(basix.LagrangeVariant.equispaced),
         degree=degree,
         partition_graph=None,
-        serendipity=(dolfinx.mesh.to_string(cell_type), num_dofs_per_cell) in _serendipity,
+        serendipity=serendipity_num_nodes.get(dolfinx.mesh.to_string(cell_type))
+        == num_dofs_per_cell,
     )
 
 

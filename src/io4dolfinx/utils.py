@@ -35,11 +35,46 @@ __all__ = [
     "input_cell_index",
     "create_mixed_mesh",
     "as_rows",
+    "serendipity_num_nodes",
+    "coordinate_element",
 ]
 
 #: Codimension of the entities named ``"cell"``, ``"facet"``, ``"ridge"`` and ``"peak"``,
 #: as in :func:`dolfinx.io.gmsh.model_to_mesh`
 codim_names = {"cell": 0, "facet": 1, "ridge": 2, "peak": 3}
+
+#: Number of nodes of the cells read with DOLFINx's nodal degree-2 serendipity
+#: coordinate element, with nodes at the vertices and edge midpoints
+serendipity_num_nodes = {"quadrilateral": 8, "hexahedron": 20}
+
+
+def coordinate_element(
+    cell_type: str, degree: int, lvar: int, serendipity: bool, dtype: npt.DTypeLike
+) -> basix.ufl._ElementBase:
+    """Create a scalar coordinate element, Lagrange or nodal serendipity.
+
+    Args:
+        cell_type: DOLFINx cell type
+        degree: Degree of the Lagrange element
+        lvar: Lagrange variant
+        serendipity: Use DOLFINx's nodal degree-2 serendipity element instead of Lagrange
+        dtype: Floating point type of the coordinates
+
+    Returns:
+        The element, without the block size of the geometric dimension
+    """
+    if serendipity:
+        try:
+            from dolfinx.io.utils import _serendipity_coordinate_element
+        except ImportError as e:
+            raise NotImplementedError(
+                "Meshes with serendipity geometry (8-node quadrilaterals, 20-node "
+                "hexahedra) require the main branch of DOLFINx."
+            ) from e
+        return _serendipity_coordinate_element(dolfinx.mesh.to_type(cell_type), dtype)
+    return basix.ufl.element(
+        basix.ElementFamily.P, cell_type, degree, basix.LagrangeVariant(int(lvar)), dtype=dtype
+    )
 
 
 def check_file_exists(filename: Path | str):
