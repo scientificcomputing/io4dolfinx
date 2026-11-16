@@ -45,7 +45,7 @@ for i in range(mesh.topology.dim + 1):
 # {py:class}`dolfinx.mesh.Mesh` and {py:class}`dolfinx.mesh.MeshTags` to file.
 # We associate each meshtag with a name
 
-filename = Path("mesh_with_meshtags.bp")
+filename = Path("mesh_with_meshtags.h5")
 io4dolfinx.write_mesh(filename, mesh)
 for i, tag in meshtags.items():
     io4dolfinx.write_meshtags(filename, mesh, tag, meshtag_name=f"meshtags_{i}")

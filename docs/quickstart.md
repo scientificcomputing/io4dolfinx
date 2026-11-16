@@ -158,12 +158,12 @@ Helper functions are available to query the contents of a checkpoint file.
 `io4dolfinx` is backend-agnostic. You can choose the storage engine by passing
 the `backend` argument to most functions.
 
-1.  **`adios2` (Default)**: Uses the ADIOS2 library. Best for large-scale parallel IO.
+1.  **`h5py` (Default)**: Uses the standard HDF5 library via `h5py`. Requires an MPI-enabled
+    HDF5 build to run in parallel. Good for compatibility with other HDF5 tools.
+
+
+2.  **`adios2`**: Uses the ADIOS2 library. Best for large-scale parallel IO.
     Supports engines like "BP4", "BP5", and "HDF5".
-
-
-2.  **`h5py`**: Uses the standard HDF5 library via `h5py`. Requires an MPI-enabled HDF5 build.
-    Good for compatibility with other HDF5 tools.
 
 
 3.  **`vtkhdf`**: Supports reading and writing the VTKHDF format (scalable VTK).
