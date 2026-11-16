@@ -399,7 +399,8 @@ def test_geometry_matches_gmsh(kind, orders, dtype, shared_tmp_path):
         ("quadrilateral", [3, 4, 6], [0.8, 0.4]),
         ("tetrahedron", [3, 4, 5], [0.4, 0.27]),
         ("hexahedron", [3, 4], [0.8, 0.4]),
-        ("prism", [2, 3, 4, 5, 6], [0.8, 0.4]),
+        # DOLFINx 0.11 cannot create prisms of degree 3 and above
+        ("prism", [2] if fenicsx_compat.before("0.12.0.dev0") else [2, 3, 4, 5, 6], [0.8, 0.4]),
     ],
 )
 def test_volume_convergence(kind, orders, sizes, shared_tmp_path):

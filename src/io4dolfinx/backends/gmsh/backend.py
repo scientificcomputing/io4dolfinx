@@ -645,6 +645,13 @@ def read_mesh_data(
         return (x, cells), (cell_type, degree, cells.shape[1], serendipity)
 
     local, (cell_type, degree, num_nodes_per_cell, serendipity) = _run_on_root(comm, read)
+    if cell_type == "prism" and degree > 2 and fenicsx_compat.before("0.12.0.dev0"):
+        # From degree 3, both the triangle and the quadrilateral faces of a prism hold nodes,
+        # which DOLFINx 0.11 cannot build a geometry for
+        raise NotImplementedError(
+            f"Prisms of degree {degree} require DOLFINx 0.12 or later; DOLFINx "
+            f"{dolfinx.__version__} reads prisms up to degree 2."
+        )
     if local is None:
         x = np.zeros((0, gdim), dtype=np.float64)
         cells = np.zeros((0, num_nodes_per_cell), dtype=np.int64)
