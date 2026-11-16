@@ -10,7 +10,6 @@ Vectorized numpy operations used internally in io4dolfinx
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
