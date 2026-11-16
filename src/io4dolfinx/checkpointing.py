@@ -36,6 +36,7 @@ from .utils import (
     check_file_exists,
     compute_dofmap_pos,
     compute_local_range,
+    coordinate_element,
     create_mixed_mesh,
     index_owner,
     input_cell_index,
@@ -546,30 +547,16 @@ def read_mesh(
         )
 
     # Create DOLFINx mesh
-    element: basix.ufl._ElementBase
-    if dist_in_data.serendipity:
-        try:
-            from dolfinx.io.utils import _serendipity_coordinate_element
-        except ImportError as e:
-            raise NotImplementedError(
-                "Meshes with serendipity geometry (8-node quadrilaterals, 20-node "
-                "hexahedra) require the main branch of DOLFINx."
-            ) from e
-        element = basix.ufl.blocked_element(
-            _serendipity_coordinate_element(
-                dolfinx.mesh.to_type(dist_in_data.cell_type), dist_in_data.x.dtype
-            ),
-            shape=(dist_in_data.x.shape[1],),
-        )
-    else:
-        element = basix.ufl.element(
-            basix.ElementFamily.P,
+    element = basix.ufl.blocked_element(
+        coordinate_element(
             dist_in_data.cell_type,
             dist_in_data.degree,
-            basix.LagrangeVariant(int(dist_in_data.lvar)),
-            shape=(dist_in_data.x.shape[1],),
-            dtype=dist_in_data.x.dtype,
-        )
+            dist_in_data.lvar,
+            dist_in_data.serendipity,
+            dist_in_data.x.dtype,
+        ),
+        shape=(dist_in_data.x.shape[1],),
+    )
     domain = ufl.Mesh(element)
     # `dolfinx.mesh.PartitioningFunc` is not available in all supported
     # versions of DOLFINx, and the accepted callback signature varies (see

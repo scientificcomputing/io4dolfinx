@@ -2,9 +2,12 @@
 Gmsh interface to io4dolfinx.
 
 Reads and writes Gmsh ``.msh`` files (MSH 2.2 and 4.1, ASCII and binary) through the
-Gmsh Python API, reusing :mod:`dolfinx.io.gmsh` for the geometry, the topology and the
-node ordering. All file access happens on rank 0. Only the element types of
-``dolfinx.io.gmsh`` are supported, and DOLFINx 0.11 or later is required.
+Gmsh Python API, reusing :mod:`dolfinx.io.gmsh` for the geometry and the topology. All
+file access happens on rank 0, and DOLFINx 0.11 or later is required. Complete Lagrange
+elements of any order are supported: the node ordering is computed from the reference
+coordinates Gmsh gives for each element type, so it is not limited to the orders of
+``dolfinx.io.gmsh``. The incomplete 8-node quadrilateral and 20-node hexahedron are read
+as serendipity geometry, which requires the main branch of DOLFINx.
 
 In DOLFINx terms:
 
@@ -23,6 +26,7 @@ SPDX License identifier: MIT
 Copyright: Jørgen S. Dokken and Simula Research Laboratory
 """
 
+import functools
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
@@ -46,7 +50,7 @@ except ImportError:
     raise ModuleNotFoundError("The gmsh-backend requires gmsh")
 
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from ...utils import check_file_exists, codim_names
+from ...utils import check_file_exists, codim_names, coordinate_element, serendipity_num_nodes
 from .. import FileMode, ReadMode
 
 read_mode = ReadMode.serial
@@ -56,6 +60,143 @@ _options = ("General.Terminal", "Mesh.Binary", "Mesh.SaveAll", "PostProcessing.S
 
 Local = TypeVar("Local")
 Shared = TypeVar("Shared")
+
+# Gmsh element family, as named by getElementType, of each DOLFINx cell type
+_gmsh_families = {
+    "point": "Point",
+    "interval": "Line",
+    "triangle": "Triangle",
+    "quadrilateral": "Quadrangle",
+    "tetrahedron": "Tetrahedron",
+    "hexahedron": "Hexahedron",
+    "prism": "Prism",
+    "pyramid": "Pyramid",
+}
+
+
+@functools.cache
+def _reference_map(cell_type: str) -> npt.NDArray[np.float64]:
+    """Find the affine map from Gmsh's reference cell to basix's.
+
+    The map is fitted to the reference vertices each library reports, paired by the
+    first-order node ordering of :mod:`dolfinx.io.gmsh`, so it follows a change of either
+    reference cell. Must be called in a Gmsh session.
+
+    Args:
+        cell_type: DOLFINx cell type
+
+    Returns:
+        Matrix ``M`` such that ``np.hstack([X, 1]) @ M`` maps Gmsh reference points ``X``,
+        one per row, to basix reference points
+
+    Raises:
+        RuntimeError: If no affine map relates the reference cells.
+    """
+    gmsh_type = gmsh.model.mesh.getElementType(_gmsh_families[cell_type], 1)
+    _, dim, _, num_vertices, coordinates, _ = gmsh.model.mesh.getElementProperties(gmsh_type)
+    perm = cell_perm_array(dolfinx.mesh.to_type(cell_type), num_vertices)
+    X_gmsh = np.reshape(coordinates, (num_vertices, dim))[perm]
+    # DOLFINx numbers vertices as basix does
+    X_basix = basix.geometry(basix.CellType[cell_type])
+    A = np.hstack([X_gmsh, np.ones((num_vertices, 1))])
+    M = np.linalg.lstsq(A, X_basix, rcond=None)[0]
+    if not np.allclose(A @ M, X_basix, atol=1e-12):
+        raise RuntimeError(f"Gmsh's reference {cell_type} is not an affine image of basix's.")
+    return M
+
+
+@functools.cache
+def _element(
+    gmsh_type: int,
+) -> tuple[int, tuple[str, int, npt.NDArray[np.int64], bool] | None]:
+    """Find the DOLFINx cell and node ordering of a Gmsh element type.
+
+    The node ordering matches the reference coordinates of the Gmsh nodes with the nodes of
+    the DOLFINx coordinate element, so Lagrange elements of any order work, as do the
+    8-node quadrilateral and 20-node hexahedron, as serendipity geometry. Gmsh cannot give
+    the reference coordinates of prisms of order 3 and above, so for those the hand-written
+    ordering of :mod:`dolfinx.io.gmsh` is used where it exists. Must be called in a Gmsh
+    session.
+
+    Args:
+        gmsh_type: Gmsh element type
+
+    Returns:
+        Tuple containing:
+            - The topological dimension of the element
+            - ``None`` if DOLFINx has no coordinate element for it, e.g. for an incomplete
+              element other than the two above, otherwise a tuple of the DOLFINx cell type,
+              the degree, the permutation ``perm`` such that ``gmsh_nodes[perm]`` are the
+              nodes in DOLFINx order, and whether the geometry is serendipity
+
+    Raises:
+        NotImplementedError: If neither Gmsh nor :mod:`dolfinx.io.gmsh` describe the nodes
+            of the element.
+    """
+    try:
+        name, dim, order, num_nodes, coordinates, _ = gmsh.model.mesh.getElementProperties(
+            gmsh_type
+        )
+    except Exception as e:
+        if gmsh_type not in _gmsh_to_cells:
+            raise NotImplementedError(
+                f"Gmsh cannot describe the nodes of element type {gmsh_type}: {e}"
+            ) from e
+        cell, degree = _gmsh_to_cells[gmsh_type]
+        num_nodes = basix.ufl.element("Lagrange", cell, degree).dim
+        perm = cell_perm_array(dolfinx.mesh.to_type(cell), num_nodes)
+        tdim = dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(cell))
+        return tdim, (cell, degree, np.asarray(perm, dtype=np.int64), False)
+
+    # getElementProperties names quadrilaterals "Quadrilateral", getElementType "Quadrangle"
+    families = {f: c for c, f in _gmsh_families.items()} | {"Quadrilateral": "quadrilateral"}
+    if (cell_type := families.get(name.split()[0])) is None:
+        return dim, None
+    if cell_type == "point":
+        return dim, ("point", 0, np.zeros(1, dtype=np.int64), False)
+    serendipity = serendipity_num_nodes.get(cell_type) == num_nodes
+    # Lagrange geometries are equispaced in Gmsh
+    lvar = int(basix.LagrangeVariant.equispaced)
+    points = coordinate_element(
+        cell_type, order, lvar, serendipity, np.float64
+    ).basix_element.points
+    if len(points) != num_nodes:
+        # Other incomplete elements, e.g. the 12-node quadrilateral
+        return dim, None
+    X = np.hstack([np.reshape(coordinates, (num_nodes, dim)), np.ones((num_nodes, 1))])
+    X = X @ _reference_map(cell_type)
+    distance = np.linalg.norm(points[:, None, :] - X[None, :, :], axis=2)
+    perm = np.argmin(distance, axis=1)
+    if not np.allclose(distance[np.arange(num_nodes), perm], 0, atol=1e-10):
+        raise RuntimeError(f"The nodes of Gmsh element '{name}' do not match DOLFINx's.")
+    return dim, (cell_type, int(order), perm.astype(np.int64), serendipity)
+
+
+def _gmsh_type(cell_type: str, degree: int) -> int:
+    """Find the Gmsh element type of a DOLFINx cell, the inverse of :func:`_element`.
+
+    Must be called in a Gmsh session.
+
+    Args:
+        cell_type: DOLFINx cell type
+        degree: Degree of the Lagrange element, 0 for a point
+
+    Returns:
+        The Gmsh element type
+
+    Raises:
+        NotImplementedError: If Gmsh has no complete Lagrange element for the cell.
+    """
+    try:
+        gmsh_type = gmsh.model.mesh.getElementType(_gmsh_families[cell_type], degree)
+        element = _element(gmsh_type)[1]
+    except Exception as e:
+        raise NotImplementedError(
+            f"Gmsh has no element for a {cell_type} of degree {degree}."
+        ) from e
+    if element is None or element[:2] != (cell_type, degree) or element[3]:
+        raise NotImplementedError(f"Gmsh has no element for a {cell_type} of degree {degree}.")
+    return gmsh_type
 
 
 def _run_on_root(
@@ -162,7 +303,8 @@ def _find_view(
 
 def _tagged_entities() -> dict[
     int,
-    tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int32], str, int] | None,
+    tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int32], str, int, bool]
+    | None,
 ]:
     """Get the elements in physical groups of the current Gmsh model, by dimension.
 
@@ -172,40 +314,42 @@ def _tagged_entities() -> dict[
 
     Returns:
         Map from topological dimension to ``None`` if the elements of that dimension are
-        of several types or of a type not supported by :mod:`dolfinx.io.gmsh`, otherwise
-        to a tuple containing:
+        of several types or have no DOLFINx coordinate element, otherwise to a tuple
+        containing:
             - The element tags, sorted
             - The element nodes as zero-based node indices in DOLFINx ordering, of shape
               ``(num_elements, num_nodes_per_element)``, one row per element tag
             - The physical tag of each element
             - The DOLFINx cell type of the elements
             - The degree of the elements
+            - Whether the elements have serendipity geometry
     """
     topologies, _ = extract_topology_and_markers(gmsh.model)
     if len(topologies) == 0:
         raise ValueError("No physical groups in the Gmsh model.")
     types_by_dim: dict[int, list[int]] = {}
     for gmsh_type in topologies:
-        if gmsh_type in _gmsh_to_cells:
-            cell_type = dolfinx.mesh.to_type(_gmsh_to_cells[gmsh_type][0])
-            dim = dolfinx.mesh.cell_dim(cell_type)
-        else:
-            dim = gmsh.model.mesh.getElementProperties(gmsh_type)[1]
-        types_by_dim.setdefault(dim, []).append(gmsh_type)
+        types_by_dim.setdefault(_element(gmsh_type)[0], []).append(gmsh_type)
 
     entities: dict[int, Any] = {}
     for dim, types in types_by_dim.items():
-        if len(types) > 1 or types[0] not in _gmsh_to_cells:
+        if len(types) > 1 or (element := _element(types[0])[1]) is None:
             entities[dim] = None
             continue
-        cell_name, degree = _gmsh_to_cells[types[0]]
+        cell_name, degree, perm, serendipity = element
         data = topologies[types[0]]
         tags = data["entity_tags"].astype(np.int64)
         order = np.argsort(tags, kind="stable")
         nodes = data["topology"].astype(np.int64)
-        perm = cell_perm_array(dolfinx.mesh.to_type(cell_name), nodes.shape[1])
         values = data["cell_data"].astype(np.int32)
-        entities[dim] = (tags[order], nodes[order][:, perm], values[order], cell_name, degree)
+        entities[dim] = (
+            tags[order],
+            nodes[order][:, perm],
+            values[order],
+            cell_name,
+            degree,
+            serendipity,
+        )
     return entities
 
 
@@ -355,11 +499,6 @@ def write_mesh(
         raise ValueError(f"Expected a filename with suffix .msh, got {filename}.")
     if mesh.degree > 2 and mesh.lagrange_variant != int(basix.LagrangeVariant.equispaced):
         raise NotImplementedError("Gmsh only supports equispaced Lagrange geometries.")
-    cell = (mesh.cell_type, mesh.degree)
-    if (gmsh_type := next((t for t, c in _gmsh_to_cells.items() if c == cell), None)) is None:
-        raise NotImplementedError(
-            f"Gmsh has no element for a {mesh.cell_type} of degree {mesh.degree}."
-        )
     backend_args = get_default_backend_args(backend_args)
 
     # Rank order is global index order
@@ -372,11 +511,14 @@ def write_mesh(
         x_3d = np.zeros((x.shape[0], 3), dtype=np.float64)
         x_3d[:, : x.shape[1]] = x
         topology = np.vstack(cells)
+        gmsh_type = _gmsh_type(mesh.cell_type, mesh.degree)
+        perm = _element(gmsh_type)[1][2]  # type: ignore[index]
+        if topology.shape[1] != len(perm):
+            raise NotImplementedError("The gmsh backend writes Lagrange geometries only.")
         gmsh_topology = np.empty_like(topology)
-        cell_type = dolfinx.mesh.to_type(mesh.cell_type)
-        gmsh_topology[:, cell_perm_array(cell_type, topology.shape[1])] = topology
+        gmsh_topology[:, perm] = topology
 
-        tdim = dolfinx.mesh.cell_dim(cell_type)
+        tdim = dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(mesh.cell_type))
         gmsh.model.addDiscreteEntity(tdim, 1)
         gmsh.model.mesh.addNodes(tdim, 1, np.arange(1, x.shape[0] + 1), x_3d.reshape(-1))
         gmsh.model.mesh.addElementsByType(
@@ -426,23 +568,23 @@ def read_mesh_data(
 
     def read(
         preexisting_views: list[int],
-    ) -> tuple[tuple[npt.NDArray[np.float64], npt.NDArray[np.int64]], tuple[str, int, int]]:
+    ) -> tuple[tuple[npt.NDArray[np.float64], npt.NDArray[np.int64]], tuple[str, int, int, bool]]:
         gmsh.merge(str(filename))
         x = extract_geometry(gmsh.model)[:, :gdim]
         tagged = _tagged_entities()
         tdim = max(tagged)
         if (cell_data := tagged[tdim]) is None:
             raise NotImplementedError(f"Mixed or unsupported cell types in {filename}.")
-        tags, cells, _, cell_type, degree = cell_data
+        tags, cells, _, cell_type, degree, serendipity = cell_data
         num_cells = sum(len(t) for t in gmsh.model.mesh.getElements(dim=tdim, tag=-1)[1])
         if len(tags) != num_cells or len(np.unique(tags)) != len(tags):
             raise ValueError(
                 f"All cells are expected to be in exactly one physical group, as in "
                 f"dolfinx.io.gmsh.model_to_mesh; found {len(tags)} tags for {num_cells} cells."
             )
-        return (x, cells), (cell_type, degree, cells.shape[1])
+        return (x, cells), (cell_type, degree, cells.shape[1], serendipity)
 
-    local, (cell_type, degree, num_nodes_per_cell) = _run_on_root(comm, read)
+    local, (cell_type, degree, num_nodes_per_cell, serendipity) = _run_on_root(comm, read)
     if local is None:
         x = np.zeros((0, gdim), dtype=np.float64)
         cells = np.zeros((0, num_nodes_per_cell), dtype=np.int64)
@@ -454,6 +596,7 @@ def read_mesh_data(
         x=x.astype(backend_args["dtype"]),
         lvar=int(basix.LagrangeVariant.equispaced),
         degree=degree,
+        serendipity=serendipity,
     )
 
 
@@ -504,7 +647,7 @@ def write_meshtags(
         tdim = max(tagged)
         if (cell_data := tagged[tdim]) is None:
             raise NotImplementedError(f"Mixed or unsupported cell types in {filename}.")
-        cell_tags, cells, _, _, degree = cell_data
+        cell_tags, cells, _, _, degree, _ = cell_data
         dim = data.dim
         groups = [tag for d, tag in gmsh.model.getPhysicalGroups() if d == dim]
         if dim < tdim and len(groups) > 0:
@@ -514,15 +657,9 @@ def write_meshtags(
             )
 
         assert data.cell_type is not None
-        entity_degree = 0 if data.cell_type == "point" else degree
-        cell = (data.cell_type, entity_degree)
-        if (gmsh_type := next((t for t, c in _gmsh_to_cells.items() if c == cell), None)) is None:
-            raise NotImplementedError(
-                f"Gmsh has no element for a {data.cell_type} of degree {entity_degree}."
-            )
+        gmsh_type = _gmsh_type(data.cell_type, 0 if data.cell_type == "point" else degree)
         gmsh_entities = np.empty_like(entities)
-        perm = cell_perm_array(dolfinx.mesh.to_type(data.cell_type), entities.shape[1])
-        gmsh_entities[:, perm] = entities
+        gmsh_entities[:, _element(gmsh_type)[1][2]] = entities  # type: ignore[index]
 
         if dim == tdim:
             # Find the element tag of each tagged cell by matching node sets
@@ -630,7 +767,7 @@ def read_meshtags_data(
             return (np.zeros((0, 0), dtype=np.int64), np.zeros(0, dtype=np.int32)), (dim, 0)
         if (entity_data := tagged[dim]) is None:
             raise NotImplementedError(f"Mixed or unsupported element types of dimension {dim}.")
-        _, entities, tag_values, _, _ = entity_data
+        _, entities, tag_values, *_ = entity_data
         keep = np.isin(tag_values, group_tags)
         return (entities[keep], tag_values[keep]), (dim, entities.shape[1])
 
