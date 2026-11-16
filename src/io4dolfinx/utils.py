@@ -10,7 +10,6 @@ Vectorized numpy operations used internally in io4dolfinx
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -30,7 +29,6 @@ __all__ = [
     "unroll_dofmap",
     "compute_insert_position",
     "unroll_insert_position",
-    "reconstruct_mesh",
     "codim_names",
     "match_rows",
     "strip_suffix",
@@ -230,31 +228,6 @@ def compute_dofmap_pos(
             " rather than on a mesh derived with `create_submesh`."
         )
     return local_cell, dof_pos
-
-
-def reconstruct_mesh(mesh: dolfinx.mesh.Mesh, coordinate_element_degree: int) -> dolfinx.mesh.Mesh:
-    """
-    Make a copy of a mesh and potentially change the element of the coordinate element.
-
-    Note:
-        The topology is shared with the original mesh but the geometry is reconstructed.
-
-    Args:
-        mesh: Mesh to reconstruct
-        coordinate_element_degree: Degree to use for coordinate element
-
-    Returns:
-        The new mesh
-
-    """
-    warnings.warn(
-        "reconstruct_mesh is deprecated and will be removed in a future release. "
-        + "Use dolfinx.fem.interpolate_geometry instead, available from DOLFINx>=0.11, "
-        + "or fenicsx_compat.reconstruct_mesh.",
-        category=DeprecationWarning,
-        stacklevel=2,
-    )
-    return fenicsx_compat.reconstruct_mesh(mesh, coordinate_element_degree)
 
 
 def match_rows(reference: npt.NDArray[np.int64], query: npt.NDArray[np.int64]) -> npt.NDArray:

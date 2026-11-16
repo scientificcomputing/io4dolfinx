@@ -39,7 +39,6 @@ from .submesh import (
     transfer_submesh_function,
     write_submesh,
 )
-from .utils import reconstruct_mesh
 
 meta = metadata("io4dolfinx")
 __version__ = meta["Version"]
@@ -72,7 +71,6 @@ __all__ = [
     "set_default_backend",
     "write_cell_data",
     "write_point_data",
-    "reconstruct_mesh",
     "SubmeshCheckpoint",
     "write_submesh",
     "read_submesh",
