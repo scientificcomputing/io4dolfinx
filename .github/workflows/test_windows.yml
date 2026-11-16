@@ -1,0 +1,57 @@
+name: Test package on Windows
+
+# Tests io4dolfinx installed with pip and no flags, as on Windows: h5py comes from PyPI, built
+# without MPI, so the h5py and vtkhdf backends run as h5py-serial and vtkhdf-serial. ADIOS2 and the
+# other optional dependencies are not installed, so their tests are skipped.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # The DOLFINx wheels for Windows need Intel MPI, whose mpiexec is in <prefix>\Library\bin
+      - name: Install MPI
+        run: |
+          python -m pip install impi-rt mpi4py
+          python -c "import sys; print(sys.prefix + '\\Library\\bin')" >> $env:GITHUB_PATH
+
+      # Only the FEniCSx packages come from TestPyPI; their other dependencies are resolved from
+      # PyPI in the next step, so nothing else can be picked up from TestPyPI.
+      - name: Install DOLFINx from TestPyPI
+        run: >
+          python -m pip install --pre --no-deps --index-url https://test.pypi.org/simple/
+          fenics-dolfinx fenics-basix fenics-ffcx fenics-ufl
+
+      - name: Install package
+        run: python -m pip install . pytest ipyparallel
+
+      - name: Check installed dependencies
+        run: python -m pip check
+
+      - name: Check h5py is built without MPI
+        run: python -c "import h5py; assert not h5py.get_config().mpi; print(h5py.version.info)"
+
+      - name: Run tests in serial
+        run: python -m pytest -vs -rs tests
+
+      - name: Run tests in parallel
+        run: mpiexec -n 2 python -m pytest -rs tests

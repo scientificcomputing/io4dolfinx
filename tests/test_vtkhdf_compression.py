@@ -1,5 +1,6 @@
 """Lossless VTKHDF filters, append policies, and collective writes from empty ranks."""
 
+import importlib.util
 from dataclasses import replace
 
 from mpi4py import MPI
@@ -9,12 +10,15 @@ import numpy as np
 import pytest
 from dolfinx.fem import Function, functionspace
 from dolfinx.mesh import create_unit_square, meshtags
-from vtkmodules.vtkIOHDF import vtkHDFReader
 
 import io4dolfinx
-from io4dolfinx.backends.vtkhdf import backend
+from io4dolfinx.backends.vtkhdf import backend as vtkhdf
+from io4dolfinx.backends.vtkhdf_serial import backend as vtkhdf_serial
 from io4dolfinx.structures import ArrayData
 from io4dolfinx.writers import prepare_meshdata_for_storage
+
+# VTK comes with the optional pyvista dependency
+has_vtk = importlib.util.find_spec("vtkmodules") is not None
 
 # HDF5 can be built without zlib, in which case gzip is unavailable.
 requires_gzip = pytest.mark.skipif(
@@ -125,6 +129,10 @@ def test_compressed_roundtrip(shared_tmp_path, options):
         np.testing.assert_allclose(
             np.sort(restored_points, axis=0), np.sort(original_points, axis=0)
         )
+        if not has_vtk:
+            continue
+        from vtkmodules.vtkIOHDF import vtkHDFReader
+
         vtk_reader = vtkHDFReader()
         vtk_reader.SetFileName(str(filename))
         vtk_reader.UpdateTimeStep(time)
@@ -166,9 +174,12 @@ def test_compressed_roundtrip(shared_tmp_path, options):
 )
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("association", ["Point", "Cell"])
-def test_compressed_empty_ranks(shared_tmp_path, dtype, association, options):
+@pytest.mark.parametrize("backend", [vtkhdf, vtkhdf_serial], ids=["vtkhdf", "vtkhdf-serial"])
+def test_compressed_empty_ranks(shared_tmp_path, dtype, association, options, backend):
     """Empty ranks join collective writes; filters preserve special floating-point values."""
     comm = MPI.COMM_WORLD
+    if backend is vtkhdf and comm.size > 1 and not h5py.get_config().mpi:
+        pytest.skip("Writing in parallel needs h5py with MPI")
     filename = shared_tmp_path / "empty_ranks.vtkhdf"
     mesh = create_unit_square(MPI.COMM_SELF, 2, 2, dtype=dtype)
     data = prepare_meshdata_for_storage(mesh, False)

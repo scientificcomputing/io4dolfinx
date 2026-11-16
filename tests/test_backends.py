@@ -2,6 +2,7 @@ from mpi4py import MPI
 
 import dolfinx
 import h5py
+import numpy as np
 import pytest
 
 import io4dolfinx
@@ -111,3 +112,29 @@ def test_serial_h5py_fallback(monkeypatch, backend):
     serial = io4dolfinx.get_backend(f"{backend}-serial")
     with pytest.warns(UserWarning, match=f"runs as {backend}-serial"):
         assert io4dolfinx.get_backend(backend) is serial
+
+
+@pytest.mark.skipif(h5py.get_config().mpi, reason="Needs h5py built without MPI, as on PyPI")
+def test_checkpoint_with_serial_h5py(tmp_path):
+    """With h5py from PyPI, the default backend writes and reads a checkpoint on any number of
+    processes, warning to install h5py with MPI."""
+    io4dolfinx.set_default_backend("h5py")
+    comm = MPI.COMM_WORLD
+    mesh = dolfinx.mesh.create_unit_square(comm, 4, 5)
+    V = dolfinx.fem.functionspace(mesh, ("Lagrange", 2))
+    u = dolfinx.fem.Function(V)
+    u.interpolate(lambda x: x[0] + 2 * x[1] ** 2)
+
+    filename = tmp_path / "serial_h5py.h5"
+    with pytest.warns(UserWarning, match="runs as h5py-serial"):
+        io4dolfinx.write_mesh(filename, mesh)
+        io4dolfinx.write_function(filename, u, time=0.5)
+    with pytest.warns(UserWarning, match="runs as h5py-serial"):
+        mesh_in = io4dolfinx.read_mesh(filename, comm)
+    u_in = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh_in, ("Lagrange", 2)))
+    with pytest.warns(UserWarning, match="runs as h5py-serial"):
+        io4dolfinx.read_function(filename, u_in, time=0.5)
+
+    u_ex = dolfinx.fem.Function(u_in.function_space)
+    u_ex.interpolate(lambda x: x[0] + 2 * x[1] ** 2)
+    np.testing.assert_allclose(u_in.x.array, u_ex.x.array, atol=1e-14)

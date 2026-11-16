@@ -15,6 +15,7 @@ from mpi4py import MPI
 
 from ...structures import ArrayData, MeshData, MeshTagsData
 from .. import FileMode
+from ..h5py import storage as h5_storage
 from ..serial import gather_array, gather_mesh, gather_meshtags, serial, write_on_root
 from ..vtkhdf import backend as parallel
 
@@ -47,6 +48,8 @@ def write_mesh(
     time: float,
 ):
     """Write a mesh to file, see :func:`io4dolfinx.backends.vtkhdf.backend.write_mesh`."""
+    # Rank 0 writes alone, so compare the storage options of all ranks first
+    h5_storage.storage_options(comm, get_default_backend_args(backend_args))
     data = gather_mesh(comm, mesh)
     write_on_root(
         comm,
@@ -62,6 +65,8 @@ def write_meshtags(
     backend_args: dict[str, Any] | None,
 ):
     """Write mesh tags to file, see :func:`io4dolfinx.backends.vtkhdf.backend.write_meshtags`."""
+    # Rank 0 writes alone, so compare the storage options of all ranks first
+    h5_storage.storage_options(comm, get_default_backend_args(backend_args))
     tags = gather_meshtags(comm, data)
     write_on_root(
         comm, tags, lambda d: parallel.write_meshtags(filename, MPI.COMM_SELF, d, backend_args)
@@ -78,6 +83,8 @@ def write_data(
 ):
     """Write point or cell data to file, see
     :func:`io4dolfinx.backends.vtkhdf.backend.write_data`."""
+    # Rank 0 writes alone, so compare the storage options of all ranks first
+    h5_storage.storage_options(comm, get_default_backend_args(backend_args))
     data = gather_array(comm, array_data)
     write_on_root(
         comm,
