@@ -282,7 +282,7 @@ def test_node_ordering_matches_dolfinx():
         gmsh.finalize()
 
 
-def _generate(filename, kind, order, comm, h=0.5, incomplete=False):
+def generate(filename, kind, order, comm, h=0.5, incomplete=False):
     """Generate a curved Gmsh mesh with cell size ``h`` on rank 0, and return the exact
     area or volume of the domain.
 
@@ -319,7 +319,7 @@ def _generate(filename, kind, order, comm, h=0.5, incomplete=False):
     return 4 / 3 * np.pi if kind == "tetrahedron" else np.pi
 
 
-def _check_geometry_against_gmsh(filename, mesh):
+def check_geometry_against_gmsh(filename, mesh):
     """Check that DOLFINx's coordinate map equals Gmsh's on every local cell: the points and
     the Jacobians at the Gauss points of the reference cell, which a misplaced node of any
     kind changes."""
@@ -378,11 +378,11 @@ def test_geometry_matches_gmsh(kind, orders, shared_tmp_path):
     comm = MPI.COMM_WORLD
     for order in orders:
         filename = shared_tmp_path / f"{kind}_{order}.msh"
-        _generate(filename, kind, order, comm, h=0.8)
+        generate(filename, kind, order, comm, h=0.8)
         mesh = io4dolfinx.read_mesh(filename, comm, backend_args={"gdim": 3})
         assert mesh.topology.cell_name() == kind
         assert fenicsx_compat.cmap(mesh).degree == order
-        _check_geometry_against_gmsh(filename, mesh)
+        check_geometry_against_gmsh(filename, mesh)
 
 
 @pytest.mark.parametrize(
@@ -403,7 +403,7 @@ def test_volume_convergence(kind, orders, sizes, shared_tmp_path):
         errors = []
         for h in sizes:
             filename = shared_tmp_path / f"{kind}_{order}_{h}.msh"
-            exact = _generate(filename, kind, order, comm, h=h)
+            exact = generate(filename, kind, order, comm, h=h)
             mesh = io4dolfinx.read_mesh(filename, comm, backend_args={"gdim": 3})
             volume = dolfinx.fem.form(1 * ufl.dx(domain=mesh), dtype=np.float64)
             errors.append(abs(comm.allreduce(dolfinx.fem.assemble_scalar(volume)) - exact))
@@ -411,7 +411,7 @@ def test_volume_convergence(kind, orders, sizes, shared_tmp_path):
         assert rate > 2 * (order // 2) + 2 - 0.5, (order, errors, rate)
 
 
-def _generate_torus(filename, kind, order, h, comm):
+def generate_torus(filename, kind, order, h, comm):
     """Generate a curved Gmsh surface mesh of a torus with cell size ``h`` on rank 0, and
     return its exact area."""
     major, minor = 1.0, 0.4
@@ -454,7 +454,7 @@ def test_surface_area_convergence(kind, shared_tmp_path):
         errors, h = [], []
         for size in sizes:
             filename = shared_tmp_path / f"torus_{kind}_{order}_{size}.msh"
-            exact = _generate_torus(filename, kind, order, size, comm)
+            exact = generate_torus(filename, kind, order, size, comm)
             mesh = io4dolfinx.read_mesh(filename, comm, backend_args={"gdim": 3})
             area = dolfinx.fem.form(1 * ufl.dx(domain=mesh), dtype=np.float64)
             errors.append(abs(comm.allreduce(dolfinx.fem.assemble_scalar(area)) - exact))
@@ -472,18 +472,18 @@ def test_read_serendipity_gmsh_mesh(kind, num_nodes, shared_tmp_path):
         pytest.skip("Serendipity geometry requires the main branch of DOLFINx")
     comm = MPI.COMM_WORLD
     filename = shared_tmp_path / f"{kind}_serendipity.msh"
-    _generate(filename, kind, 2, comm, incomplete=True)
+    generate(filename, kind, 2, comm, incomplete=True)
     mesh = io4dolfinx.read_mesh(filename, comm, backend_args={"gdim": 3})
     assert mesh.topology.cell_name() == kind
     assert fenicsx_compat.dofmap(mesh).shape[1] == num_nodes
-    _check_geometry_against_gmsh(filename, mesh)
+    check_geometry_against_gmsh(filename, mesh)
 
 
 def test_reject_incomplete_element_without_coordinate_element(shared_tmp_path):
     """DOLFINx has no coordinate element for Gmsh's 12-node quadrilateral."""
     comm = MPI.COMM_WORLD
     filename = shared_tmp_path / "quad12.msh"
-    _generate(filename, "quadrilateral", 3, comm, incomplete=True)
+    generate(filename, "quadrilateral", 3, comm, incomplete=True)
     with pytest.raises(NotImplementedError, match="unsupported cell types"):
         io4dolfinx.read_mesh(filename, comm, backend_args={"gdim": 3})
 
