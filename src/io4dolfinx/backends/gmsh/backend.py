@@ -37,12 +37,7 @@ import dolfinx
 import fenicsx_compat
 import numpy as np
 import numpy.typing as npt
-from dolfinx.io.gmsh import (
-    _gmsh_to_cells,
-    cell_perm_array,
-    extract_geometry,
-    extract_topology_and_markers,
-)
+from dolfinx.io.gmsh import cell_perm_array, extract_geometry
 
 try:
     import gmsh
@@ -105,6 +100,46 @@ def _reference_map(cell_type: str) -> npt.NDArray[np.float64]:
     return M
 
 
+def _scratch_element_nodes(gmsh_type: int, order: int) -> tuple[int, int, npt.NDArray[np.float64]]:
+    """Find the reference node coordinates of a prism that Gmsh cannot describe.
+
+    Gmsh cannot report the properties of prisms of order 3 and above, but it can create
+    them. A first-order prism on Gmsh's reference vertices is raised to the order in a
+    scratch model, which places the nodes at their reference coordinates. Must be called
+    in a Gmsh session; the current model is restored.
+
+    Args:
+        gmsh_type: Gmsh element type of the prism
+        order: Order of the prism
+
+    Returns:
+        Tuple of the topological dimension, the order and the reference coordinates of the
+        nodes, of shape ``(num_nodes, dim)``
+    """
+    first_order = gmsh.model.mesh.getElementType("Prism", 1)
+    _, dim, _, num_vertices, vertices, _ = gmsh.model.mesh.getElementProperties(first_order)
+    x = np.zeros((num_vertices, 3))
+    x[:, :dim] = np.reshape(vertices, (num_vertices, dim))
+    current = gmsh.model.getCurrent()
+    gmsh.model.add("io4dolfinx_reference_element")
+    try:
+        entity = gmsh.model.addDiscreteEntity(dim)
+        tags = np.arange(1, num_vertices + 1)
+        gmsh.model.mesh.addNodes(dim, entity, tags, x.reshape(-1))
+        gmsh.model.mesh.addElementsByType(entity, first_order, [1], tags)
+        gmsh.model.mesh.setOrder(order)
+        element_types, _, element_nodes = gmsh.model.mesh.getElements(dim, entity)
+        node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    finally:
+        gmsh.model.remove()
+        gmsh.model.setCurrent(current)
+    if list(element_types) != [gmsh_type]:
+        raise RuntimeError(f"Gmsh did not create a reference element of type {gmsh_type}.")
+    position = dict(zip(node_tags, np.reshape(coordinates, (-1, 3))))
+    nodes = np.array([position[tag][:dim] for tag in element_nodes[0]])
+    return dim, order, nodes
+
+
 @functools.cache
 def _element(
     gmsh_type: int,
@@ -114,9 +149,9 @@ def _element(
     The node ordering matches the reference coordinates of the Gmsh nodes with the nodes of
     the DOLFINx coordinate element, so Lagrange elements of any order work, as do the
     8-node quadrilateral and 20-node hexahedron, as serendipity geometry. Gmsh cannot give
-    the reference coordinates of prisms of order 3 and above, so for those the hand-written
-    ordering of :mod:`dolfinx.io.gmsh` is used where it exists. Must be called in a Gmsh
-    session.
+    the reference coordinates of prisms of order 3 and above, so for those they are taken
+    from a reference prism Gmsh creates, see :func:`_scratch_element_nodes`. Must be
+    called in a Gmsh session.
 
     Args:
         gmsh_type: Gmsh element type
@@ -130,28 +165,24 @@ def _element(
               nodes in DOLFINx order, and whether the geometry is serendipity
 
     Raises:
-        NotImplementedError: If neither Gmsh nor :mod:`dolfinx.io.gmsh` describe the nodes
-            of the element.
+        RuntimeError: If Gmsh does not know the element type.
     """
-    try:
+    # Gmsh cannot describe prisms of order 3 to 9, and a failed Gmsh call makes every later
+    # setOrder in the session do nothing, so these are recognised without failing calls
+    prisms = {gmsh.model.mesh.getElementType("Prism", k): k for k in range(3, 10)}
+    if gmsh_type in prisms:
+        dim, order, nodes = _scratch_element_nodes(gmsh_type, prisms[gmsh_type])
+        cell_type = "prism"
+        name, num_nodes, coordinates = f"type {gmsh_type}", len(nodes), nodes.reshape(-1)
+    else:
         name, dim, order, num_nodes, coordinates, _ = gmsh.model.mesh.getElementProperties(
             gmsh_type
         )
-    except Exception as e:
-        if gmsh_type not in _gmsh_to_cells:
-            raise NotImplementedError(
-                f"Gmsh cannot describe the nodes of element type {gmsh_type}: {e}"
-            ) from e
-        cell, degree = _gmsh_to_cells[gmsh_type]
-        num_nodes = basix.ufl.element("Lagrange", cell, degree).dim
-        perm = cell_perm_array(dolfinx.mesh.to_type(cell), num_nodes)
-        tdim = dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(cell))
-        return tdim, (cell, degree, np.asarray(perm, dtype=np.int64), False)
-
-    # getElementProperties names quadrilaterals "Quadrilateral", getElementType "Quadrangle"
-    families = {f: c for c, f in _gmsh_families.items()} | {"Quadrilateral": "quadrilateral"}
-    if (cell_type := families.get(name.split()[0])) is None:
-        return dim, None
+        # getElementProperties names quadrilaterals "Quadrilateral", getElementType "Quadrangle"
+        families = {f: c for c, f in _gmsh_families.items()} | {"Quadrilateral": "quadrilateral"}
+        if (cell := families.get(name.split()[0])) is None:
+            return dim, None
+        cell_type = cell
     if cell_type == "point":
         return dim, ("point", 0, np.zeros(1, dtype=np.int64), False)
     serendipity = serendipity_num_nodes.get(cell_type) == num_nodes
@@ -301,6 +332,39 @@ def _find_view(
     return found, np.array(times, dtype=np.float64)
 
 
+def _physical_elements() -> dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Get the elements of each physical group of the current Gmsh model, by element type.
+
+    As :func:`dolfinx.io.gmsh.extract_topology_and_markers`, but without asking Gmsh for
+    element properties, which it cannot give for prisms of order 3 and above (DOLFINx
+    0.11 asks for them). An element in several physical groups appears once per group.
+
+    Returns:
+        Map from Gmsh element type to a tuple of the element tags, the element nodes as
+        zero-based node indices in Gmsh ordering, of shape
+        ``(num_elements, num_nodes_per_element)``, and the physical tag of each element
+    """
+    found: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+    for dim, physical_tag in gmsh.model.getPhysicalGroups():
+        for entity in gmsh.model.getEntitiesForPhysicalGroup(dim, physical_tag):
+            types, element_tags, element_nodes = gmsh.model.mesh.getElements(dim, tag=entity)
+            for gmsh_type, tags, nodes in zip(types, element_tags, element_nodes, strict=True):
+                if len(tags) == 0:
+                    continue
+                # Node i has node tag i + 1
+                topology = np.reshape(nodes, (len(tags), -1)).astype(np.int64) - 1
+                markers = np.full(len(tags), physical_tag, dtype=np.int32)
+                found.setdefault(int(gmsh_type), []).append((tags, topology, markers))
+    return {
+        gmsh_type: (
+            np.hstack([t for t, _, _ in parts]).astype(np.int64),
+            np.vstack([n for _, n, _ in parts]),
+            np.hstack([m for _, _, m in parts]),
+        )
+        for gmsh_type, parts in found.items()
+    }
+
+
 def _tagged_entities() -> dict[
     int,
     tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int32], str, int, bool]
@@ -308,9 +372,8 @@ def _tagged_entities() -> dict[
 ]:
     """Get the elements in physical groups of the current Gmsh model, by dimension.
 
-    Uses :func:`dolfinx.io.gmsh.extract_topology_and_markers`, so as in
-    :func:`dolfinx.io.gmsh.model_to_mesh` the highest dimension holds the cells, and an
-    element in several physical groups appears once per group.
+    As in :func:`dolfinx.io.gmsh.model_to_mesh`, the highest dimension holds the cells, and
+    an element in several physical groups appears once per group.
 
     Returns:
         Map from topological dimension to ``None`` if the elements of that dimension are
@@ -324,7 +387,7 @@ def _tagged_entities() -> dict[
             - The degree of the elements
             - Whether the elements have serendipity geometry
     """
-    topologies, _ = extract_topology_and_markers(gmsh.model)
+    topologies = _physical_elements()
     if len(topologies) == 0:
         raise ValueError("No physical groups in the Gmsh model.")
     types_by_dim: dict[int, list[int]] = {}
@@ -337,11 +400,8 @@ def _tagged_entities() -> dict[
             entities[dim] = None
             continue
         cell_name, degree, perm, serendipity = element
-        data = topologies[types[0]]
-        tags = data["entity_tags"].astype(np.int64)
+        tags, nodes, values = topologies[types[0]]
         order = np.argsort(tags, kind="stable")
-        nodes = data["topology"].astype(np.int64)
-        values = data["cell_data"].astype(np.int32)
         entities[dim] = (
             tags[order],
             nodes[order][:, perm],
@@ -585,6 +645,13 @@ def read_mesh_data(
         return (x, cells), (cell_type, degree, cells.shape[1], serendipity)
 
     local, (cell_type, degree, num_nodes_per_cell, serendipity) = _run_on_root(comm, read)
+    if cell_type == "prism" and degree > 2 and fenicsx_compat.before("0.12.0.dev0"):
+        # From degree 3, both the triangle and the quadrilateral faces of a prism hold nodes,
+        # which DOLFINx 0.11 cannot build a geometry for
+        raise NotImplementedError(
+            f"Prisms of degree {degree} require DOLFINx 0.12 or later; DOLFINx "
+            f"{dolfinx.__version__} reads prisms up to degree 2."
+        )
     if local is None:
         x = np.zeros((0, gdim), dtype=np.float64)
         cells = np.zeros((0, num_nodes_per_cell), dtype=np.int64)
