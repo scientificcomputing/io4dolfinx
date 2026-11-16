@@ -930,7 +930,8 @@ def test_lagrange_variant_survives_mesh_roundtrip(tmp_path, store, degree):
     equispaced and has no slot for a variant, so io4dolfinx records one in an
     extra attribute; this is what pins that down.
     """
-    pytest.importorskip("h5py")
+    if store == "adios2":
+        pytest.importorskip("adios2")
     comm = MPI.COMM_WORLD
     folder = comm.bcast(tmp_path, root=0)
     suffix = {"adios2": ".bp", "h5py": ".h5", "vtkhdf": ".vtkhdf"}[store]
