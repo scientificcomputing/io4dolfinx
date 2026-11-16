@@ -106,12 +106,13 @@ def test_convert_dolfin(shared_tmp_path, backend):
     fdim = mesh.topology.dim - 1
     assert tags.dim == fdim
     mesh.topology.create_connectivity(fdim, fdim + 1)
+    # exterior_facet_indices returns owned facets, while the tags also hold ghosts
     exterior = dolfinx.mesh.exterior_facet_indices(mesh.topology)
-    np.testing.assert_array_equal(np.sort(tags.find(2)), np.sort(exterior))
-    facet_map = mesh.topology.index_map(fdim)
-    num_facets = facet_map.size_local + facet_map.num_ghosts
+    num_owned = mesh.topology.index_map(fdim).size_local
+    boundary, interior = tags.find(2), tags.find(1)
+    np.testing.assert_array_equal(np.sort(boundary[boundary < num_owned]), np.sort(exterior))
     np.testing.assert_array_equal(
-        np.sort(tags.find(1)), np.setdiff1d(np.arange(num_facets), exterior)
+        np.sort(interior[interior < num_owned]), np.setdiff1d(np.arange(num_owned), exterior)
     )
 
     W = dolfinx.fem.functionspace(mesh, ("DG", 2, (mesh.geometry.dim,)))
