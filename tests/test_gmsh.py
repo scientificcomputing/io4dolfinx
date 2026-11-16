@@ -274,10 +274,12 @@ def test_node_ordering_matches_dolfinx():
             assert element is not None
             assert element[:2] == (cell, degree)
             assert dim == dolfinx.mesh.cell_dim(dolfinx.mesh.to_type(cell))
-            num_nodes = len(element[2])
-            expected = cell_perm_array(dolfinx.mesh.to_type(cell), num_nodes)
-            np.testing.assert_array_equal(element[2], expected)
             assert _gmsh_type(cell, degree) == gmsh_type
+            if gmsh_type == 92 and fenicsx_compat.before("0.12.0.dev0"):
+                # DOLFINx 0.11 lists the order-3 hexahedron without its C++ ordering
+                continue
+            expected = cell_perm_array(dolfinx.mesh.to_type(cell), len(element[2]))
+            np.testing.assert_array_equal(element[2], expected)
     finally:
         gmsh.finalize()
 
@@ -351,14 +353,18 @@ def check_geometry_against_gmsh(filename, mesh):
     num_cells = mesh.topology.index_map(tdim).size_local
     cells = np.arange(num_cells, dtype=np.int32)
     original = mesh.topology.original_cell_index[:num_cells]
-    x = dolfinx.fem.Expression(ufl.SpatialCoordinate(mesh), X).eval(mesh, cells)
+    dtype = mesh.geometry.x.dtype
+    X = X.astype(dtype)
+    x = dolfinx.fem.Expression(ufl.SpatialCoordinate(mesh), X, dtype=dtype).eval(mesh, cells)
     x = np.reshape(x, (num_cells, len(X), gdim))
-    np.testing.assert_allclose(x, x_gmsh[original][:, :, :gdim], atol=1e-12)
-    J = dolfinx.fem.Expression(ufl.Jacobian(mesh), X).eval(mesh, cells)
+    # Gmsh evaluates its map in double precision, with round-off growing with the order
+    tol = max(np.finfo(dtype).eps, 1e-13)
+    np.testing.assert_allclose(x, x_gmsh[original][:, :, :gdim], atol=500 * tol)
+    J = dolfinx.fem.Expression(ufl.Jacobian(mesh), X, dtype=dtype).eval(mesh, cells)
     J = np.reshape(J, (num_cells, len(X), gdim, tdim))
     # Chain rule through the affine map between the reference cells
     expected = np.einsum("ij,cpkj->cpik", M[:tdim], J)
-    np.testing.assert_allclose(J_gmsh[original][:, :, :tdim, :gdim], expected, atol=1e-11)
+    np.testing.assert_allclose(J_gmsh[original][:, :, :tdim, :gdim], expected, atol=5000 * tol)
 
 
 @pytest.mark.parametrize(
@@ -372,14 +378,15 @@ def check_geometry_against_gmsh(filename, mesh):
         ("prism", [2]),
     ],
 )
-def test_geometry_matches_gmsh(kind, orders, shared_tmp_path):
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_geometry_matches_gmsh(kind, orders, dtype, shared_tmp_path):
     """Higher-order meshes from Gmsh, beyond the orders of dolfinx.io.gmsh, have the
     geometry Gmsh computes."""
     comm = MPI.COMM_WORLD
     for order in orders:
         filename = shared_tmp_path / f"{kind}_{order}.msh"
         generate(filename, kind, order, comm, h=0.8)
-        mesh = io4dolfinx.read_mesh(filename, comm, backend_args={"gdim": 3})
+        mesh = io4dolfinx.read_mesh(filename, comm, backend_args={"gdim": 3, "dtype": dtype})
         assert mesh.topology.cell_name() == kind
         assert fenicsx_compat.cmap(mesh).degree == order
         check_geometry_against_gmsh(filename, mesh)
@@ -392,7 +399,7 @@ def test_geometry_matches_gmsh(kind, orders, shared_tmp_path):
         ("quadrilateral", [3, 4, 6], [0.8, 0.4]),
         ("tetrahedron", [3, 4, 5], [0.4, 0.27]),
         ("hexahedron", [3, 4], [0.8, 0.4]),
-        ("prism", [2, 3], [0.8, 0.4]),
+        ("prism", [2, 3, 4, 5, 6], [0.8, 0.4]),
     ],
 )
 def test_volume_convergence(kind, orders, sizes, shared_tmp_path):
