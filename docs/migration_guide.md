@@ -25,7 +25,7 @@ It also opens the door for new backends in the future.
 
 ### Key API Updates
 
-1.  **Backend Agnosticism**: You can now switch between {py:class}`adios2.ADIOS` (default) and {py:class}`h5py.File` by passing a `backend` argument.
+1.  **Backend Agnosticism**: You can now switch between {py:class}`h5py.File` (the default since io4dolfinx 2.0, before which it was {py:class}`adios2.ADIOS`) and {py:class}`adios2.ADIOS` by passing a `backend` argument.
 2.  **Engine Configuration**: The explicit `engine` argument (e.g., "BP4", "HDF5", see ADIOS2 [Engine Types](https://adios2.readthedocs.io/en/latest/engines/engines.html)) has been removed from function signatures. It is now passed via a dictionary `backend_args`. This is because different backends may have different engine options. For example {py:class}`adios2.ADIOS` supports "BP4" and "HDF5", while `h5py` does not use engines.
 
 

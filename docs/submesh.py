@@ -66,7 +66,7 @@ u.interpolate(lambda x: np.sin(3 * x[1]) + x[2])
 # a file of its own.
 
 # +
-filename = Path("submesh_checkpoint.bp")
+filename = Path("submesh_checkpoint.h5")
 io4dolfinx.write_mesh(filename, mesh)
 io4dolfinx.write_submesh(filename, submesh, mesh, cell_map, mesh_name="wall")
 io4dolfinx.write_function(filename, u, time=0.0, mode=io4dolfinx.FileMode.append, mesh_name="wall")

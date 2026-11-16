@@ -66,7 +66,7 @@ def read_write_snapshot(filename: Path):
 
 # +
 
-mesh_file = Path("snapshot.bp")
+mesh_file = Path("snapshot.h5")
 
 with ipp.Cluster(engines="mpi", n=3, log_level=logging.ERROR) as cluster:
     cluster[:].push({"f": f})

@@ -11,7 +11,7 @@ turn be installed with
 
 .. code-block:: bash
 
-    HDF5_MPI="ON" HDF5_DIR="/usr/local" python3 -m pip install --no-binary=h5py h5py --no-build-isolation
+    HDF5_MPI="ON" HDF5_DIR="${HDF5_ROOT:-/usr/local}" python3 -m pip install --no-binary=h5py h5py --no-build-isolation
 
 If you are using `apt` on Ubuntu, this can for instance be achieved with the following commands (here using Docker).
 Note that this code block does not install DOLFINx, it just illustrates how to get the correct `h5py`.

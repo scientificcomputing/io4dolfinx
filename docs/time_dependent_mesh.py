@@ -68,7 +68,7 @@ def write_meshes(filename: Path):
 # We write the sequence of meshes to file
 
 # +
-mesh_file = Path("timedep_mesh.bp")
+mesh_file = Path("timedep_mesh.h5")
 n = 3
 
 with ipp.Cluster(engines="mpi", n=n, log_level=logging.ERROR) as cluster:
@@ -84,14 +84,10 @@ with ipp.Cluster(engines="mpi", n=n, log_level=logging.ERROR) as cluster:
 # The only thing we need to do to read the mesh is to send in the associated time stamp,
 # which we do by adding `time=time_stamp` when calling {py:func}`io4dolfinx.read_mesh`.
 
-second_mesh = io4dolfinx.read_mesh(
-    mesh_file, comm=MPI.COMM_WORLD, backend="adios2", backend_args={"engine": "BP4"}, time=3.3
-)
+second_mesh = io4dolfinx.read_mesh(mesh_file, comm=MPI.COMM_WORLD, time=3.3)
 compute_volume(second_mesh, 3.3)
 
-first_mesh = io4dolfinx.read_mesh(
-    mesh_file, comm=MPI.COMM_WORLD, backend="adios2", backend_args={"engine": "BP4"}, time=1.5
-)
+first_mesh = io4dolfinx.read_mesh(mesh_file, comm=MPI.COMM_WORLD, time=1.5)
 compute_volume(first_mesh, 1.5)
 
 # We observe that the volume of the mesh has changed, as we have perturbed the mesh

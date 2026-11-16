@@ -287,6 +287,14 @@ def read_meshtags(
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     backend_args = backend_cls.get_default_backend_args(backend_args)
+    if backend_args.get("legacy", False):
+        warnings.warn(
+            "Reading mesh tags of legacy DOLFIN files with legacy=True is deprecated. Convert "
+            "the file once with io4dolfinx.convert or the io4dolfinx-convert command, with "
+            f"--meshtags {meshtag_name}.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     check_readable(
         object_metadata(backend_cls, filename, mesh.comm, "meshtags", meshtag_name, backend_args),
         f"Mesh tags '{meshtag_name}' in {filename}",

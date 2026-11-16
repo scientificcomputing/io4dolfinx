@@ -42,7 +42,7 @@ u.interpolate(f)
 
 # For the checkpointing, we start by storing the mesh to file
 
-filename = Path("function_checkpoint.bp")
+filename = Path("function_checkpoint.h5")
 io4dolfinx.write_mesh(filename, mesh)
 
 # Next, we store the function to file, and associate it with a name.

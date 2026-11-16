@@ -99,7 +99,7 @@ def write_function(
     u.interpolate(f)
 
     io4dolfinx.write_function(
-        function_filename.with_suffix(".bp"),
+        function_filename.with_suffix(".h5"),
         u,
         mode=io4dolfinx.FileMode.write,
         time=0.0,
@@ -108,7 +108,7 @@ def write_function(
     )
     print(
         f"{mesh.comm.rank + 1}/{mesh.comm.size} Function written to ",
-        f"{function_filename.with_suffix('.bp')}",
+        f"{function_filename.with_suffix('.h5')}",
     )
 
 
@@ -117,7 +117,7 @@ def write_function(
 # Read in mesh and write function to file
 
 element = ("DG", 4, (3,))
-function_file = Path("MyFunction.bp")
+function_file = Path("MyFunction.h5")
 with ipp.Cluster(engines="mpi", n=2, log_level=logging.ERROR) as cluster:
     cluster[:].push({"f": f})
     query = cluster[:].apply_async(write_function, mesh_file, function_file, element)
@@ -144,7 +144,7 @@ def verify_checkpoint(
         in_mesh = xdmf.read_mesh()
     V = dolfinx.fem.functionspace(in_mesh, element)
     u_in = dolfinx.fem.Function(V)
-    io4dolfinx.read_function(function_filename.with_suffix(".bp"), u_in, time=0.0, name="Output")
+    io4dolfinx.read_function(function_filename.with_suffix(".h5"), u_in, time=0.0, name="Output")
 
     # Compute exact interpolation
     u_ex = dolfinx.fem.Function(V)

@@ -6,7 +6,7 @@ The main way to install `io4dolfinx` is through [PYPI](https://pypi.org/project/
 python3 -m pip install io4dolfinx
 ```
 
-`io4dolfinx` has some optional dependencies for specific backends (like ADIOS2 or H5PY). If you want to use these backends, you can install the library with the appropriate extras:
+`io4dolfinx` installs `h5py`, which its default backend uses. Other backends (like ADIOS2) have optional dependencies, installed with the appropriate extras:
 
 - Test dependencies (for running the test suite):
 
@@ -20,11 +20,13 @@ python3 -m pip install "io4dolfinx[test]"
 python3 -m pip install "io4dolfinx[docs]"
 ```
 
-- For HDF5 support with MPI, you need to have an HDF5 library installed with MPI support, and the `h5py` Python package installed with MPI support. You can install `h5py` with MPI support using pip:
+- To run in parallel with the default `h5py` backend, you need an HDF5 library with MPI support, and `h5py` built against it; the `h5py` wheels on PyPI are serial. You can build `h5py` with MPI support using pip:
 
 ```bash
-python3 -m pip install --no-binary=h5py h5py
+HDF5_MPI=ON python3 -m pip install --no-binary=h5py h5py
 ```
+
+  For the official DOLFINx Docker images, which have an MPI build of HDF5 but not of `h5py`, see [Docker](#docker).
 
 - For pyvista support, you can install the `pyvista` package:
 
@@ -38,7 +40,7 @@ or equivalently
 python3 -m pip install "io4dolfinx[pyvista]"
 ```
 
-- For ADIOS2 support you should have ADIOS2 installed with Python bindings, see https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html for more info.
+- For ADIOS2 support you should have ADIOS2 installed with Python bindings, see https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html for more info. `python3 -m pip install "io4dolfinx[adios2]"` installs the serial ADIOS2 wheels from PyPI.
 
 ## Spack
 
@@ -57,8 +59,13 @@ See [Spack PETSc](https://packages.spack.io/package.html?name=petsc) for options
 
 ## Docker
 
-An MPI build of ADIOS2 is installed in the official DOLFINx containers, and thus there are no additional dependencies required to install `io4dolfinx`
-on top of DOLFINx in these images.
+The official DOLFINx containers have MPI builds of HDF5 and ADIOS2, but not of `h5py`. To run the default `h5py` backend in parallel, build `h5py` against the HDF5 of the image. Images from the main branch of DOLFINx (`nightly`) point `HDF5_ROOT` to it, while the v0.10 and v0.11 images have it in `/usr/local`:
+
+```bash
+HDF5_MPI=ON HDF5_DIR=${HDF5_ROOT:-/usr/local} python3 -m pip install --no-binary=h5py --no-build-isolation h5py
+```
+
+or use the `adios2` backend, for instance with `io4dolfinx.set_default_backend("adios2")`.
 
 Create a Docker container, named for instance `dolfinx-checkpoint`.
 Use the `nightly` tag to get the main branch of DOLFINx, or `stable` to get the latest stable release
@@ -71,8 +78,8 @@ For the latest version compatible with nightly (with the ability to run the test
 
 ```bash
 export HDF5_MPI=ON
-export HDF5_DIR=/usr/local
-python3 -m pip install --no-binary-h5py --no-build-isolation io4dolfinx[test]@git+https://github.com/scientificcomputing/io4dolfinx@main
+export HDF5_DIR=${HDF5_ROOT:-/usr/local}
+python3 -m pip install --no-binary=h5py --no-build-isolation io4dolfinx[test]@git+https://github.com/scientificcomputing/io4dolfinx@main
 ```
 
 If you are using the `stable` image, you can install `io4dolfinx` from [PYPI](https://pypi.org/project/io4dolfinx/) with
