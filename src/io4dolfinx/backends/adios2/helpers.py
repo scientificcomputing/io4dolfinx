@@ -28,6 +28,7 @@ __all__ = [
     "check_variable_exists",
     "read_array",
     "read_adjacency_list",
+    "read_local_rows",
     "adios_to_numpy_dtype",
 ]
 
@@ -37,6 +38,9 @@ adios_to_numpy_dtype = {
     "float complex": np.complex64,
     "double complex": np.complex128,
     "uint32_t": np.uint32,
+    "int32_t": np.int32,
+    "int64_t": np.int64,
+    "uint64_t": np.uint64,
 }
 
 
@@ -73,6 +77,39 @@ def ADIOSFile(
     finally:
         file.Close()
         adios.RemoveIO(io_name)
+
+
+def read_local_rows(
+    adios_file: AdiosFile,
+    comm: MPI.Comm,
+    name: str,
+    overlap: int = 0,
+    mode: adios2.Mode = adios2.Mode.Sync,
+) -> tuple[npt.NDArray, tuple[int, int], int]:
+    """Read this process's rows of a variable in the current step, the rows being divided
+    over the processes by :func:`io4dolfinx.utils.compute_local_range`.
+
+    Args:
+        adios_file: The open file.
+        comm: The communicator the rows are divided over.
+        name: Name of the variable.
+        overlap: Number of rows after this process's rows to read as well, e.g. 1 for
+            offsets.
+        mode: ``adios2.Mode.Deferred`` to fill the array at the next ``PerformGets``.
+
+    Returns:
+        The rows read, their range (without the overlap) and the global number of rows
+        (without the overlap).
+    """
+    variable = adios_file.io.InquireVariable(name)
+    shape = variable.Shape()
+    num_rows = shape[0] - overlap
+    start, stop = compute_local_range(comm, num_rows)
+    count = [stop - start + overlap, *shape[1:]]
+    variable.SetSelection([[start] + [0] * (len(shape) - 1), count])
+    data = np.empty(count, dtype=adios_to_numpy_dtype[variable.Type()])
+    adios_file.file.Get(variable, data, mode)
+    return data, (start, stop), num_rows
 
 
 def check_variable_exists(
@@ -155,32 +192,9 @@ def read_adjacency_list(
         if offsets_name not in adios_file.io.AvailableVariables().keys():
             raise KeyError(f"Dof offsets not found at '{offsets_name}' in {filename}")
 
-        # Get global shape of dofmap-offset, and read in data with an overlap
-        d_offsets = adios_file.io.InquireVariable(offsets_name)
-        shape = d_offsets.Shape()
-        num_nodes = shape[0] - 1
-        local_range = compute_local_range(comm, num_nodes)
-
-        # As the offsets are one longer than the number of cells, we need to read in with an overlap
-        if len(shape) == 1:
-            d_offsets.SetSelection([[local_range[0]], [local_range[1] + 1 - local_range[0]]])
-            in_offsets = np.empty(
-                local_range[1] + 1 - local_range[0],
-                dtype=d_offsets.Type().strip("_t"),
-            )
-        else:
-            d_offsets.SetSelection(
-                [
-                    [local_range[0], 0],
-                    [local_range[1] + 1 - local_range[0], shape[1]],
-                ]
-            )
-            in_offsets = np.empty(
-                (local_range[1] + 1 - local_range[0], shape[1]),
-                dtype=d_offsets.Type().strip("_t"),
-            )
-
-        adios_file.file.Get(d_offsets, in_offsets, adios2.Mode.Sync)
+        # The offsets are one longer than the number of nodes, so read one row more
+        in_offsets, _, _ = read_local_rows(adios_file, comm, offsets_name, overlap=1)
+        shape = adios_file.io.InquireVariable(offsets_name).Shape()
         in_offsets = in_offsets.squeeze()
 
         # Assuming dofmap is saved in stame step
@@ -273,24 +287,9 @@ def read_array(
             if array_name not in adios_file.io.AvailableVariables().keys():
                 raise KeyError(f"No array found at {time=} for {array_name}")
 
-        arr = adios_file.io.InquireVariable(array_name)
-        arr_shape = arr.Shape()
-        # TODO: Should we always pick the first element?
-        assert len(arr_shape) >= 1
-        arr_range = compute_local_range(comm, arr_shape[0])
-
-        if len(arr_shape) == 1:
-            arr.SetSelection([[arr_range[0]], [arr_range[1] - arr_range[0]]])
-            vals = np.empty(arr_range[1] - arr_range[0], dtype=adios_to_numpy_dtype[arr.Type()])
-        else:
-            arr.SetSelection([[arr_range[0], 0], [arr_range[1] - arr_range[0], arr_shape[1]]])
-            vals = np.empty(
-                (arr_range[1] - arr_range[0], arr_shape[1]),
-                dtype=adios_to_numpy_dtype[arr.Type()],
-            )
-            assert arr_shape[1] == 1
-
-        adios_file.file.Get(arr, vals, adios2.Mode.Sync)
+        arr_shape = adios_file.io.InquireVariable(array_name).Shape()
+        assert len(arr_shape) == 1 or arr_shape[1] == 1
+        vals, arr_range, _ = read_local_rows(adios_file, comm, array_name)
         adios_file.file.EndStep()
 
     return vals.reshape(-1), arr_range[0]

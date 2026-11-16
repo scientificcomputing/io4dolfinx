@@ -25,6 +25,7 @@ from .checkpointing import (
     write_meshtags,
     write_point_data,
 )
+from .converter import convert
 from .readers import (
     read_cell_data,
     read_function_from_legacy_h5,
@@ -74,4 +75,5 @@ __all__ = [
     "write_submesh",
     "read_submesh",
     "transfer_submesh_function",
+    "convert",
 ]

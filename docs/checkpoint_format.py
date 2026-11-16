@@ -144,11 +144,21 @@ with adios2.FileReader(str(files["adios2"])) as adios_file:
 #
 # Checkpoints written with adios4dolfinx 0.7 and older, before a file could hold several
 # functions and time steps, use an earlier layout. Their single function is stored as
-# `Dofmap`, `XDofmap` and `Values`, without time steps, and the mesh has no `MeshTime`. Read
-# them with the ADIOS2 backend and `"legacy": True` in the backend arguments:
+# `Dofmap`, `XDofmap` and `Values`, without time steps, and the mesh has no `MeshTime`.
+# Convert them once to the current format with {py:func}`io4dolfinx.convert`, which
+# copies the stored data without creating a mesh. The file stores no function names, so
+# each function, in the order it was written, gets a name from `names`:
 #
 # ```python
-# backend_args = {"engine": "BP4", "legacy": True}
-# mesh = io4dolfinx.read_mesh(filename, comm, backend="adios2", backend_args=backend_args)
-# io4dolfinx.read_function(filename, u, backend="adios2", backend_args=backend_args)
+# io4dolfinx.convert("old.bp", "new.h5", names=["u"])
 # ```
+#
+# The backend is chosen from the suffix of the new file (`.bp` for ADIOS2, `.h5` for h5py)
+# unless given. The same conversion runs from the command line, also under MPI:
+#
+# ```bash
+# io4dolfinx-convert old.bp new.h5 --names u
+# ```
+#
+# Reading them directly, with the ADIOS2 backend and `"legacy": True` in the backend
+# arguments, still works but is deprecated.

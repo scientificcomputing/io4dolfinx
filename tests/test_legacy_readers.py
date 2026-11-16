@@ -210,15 +210,20 @@ def test_read_legacy_function_from_checkpoint(backend):
 
 def test_io4dolfinx_legacy():
     comm = MPI.COMM_WORLD
-    path = (pathlib.Path("legacy_checkpoint") / "io4dolfinx_checkpoint.bp").absolute()
+    path = (pathlib.Path("legacy_checkpoint") / "adios4dolfinx_checkpoint.bp").absolute()
     if not path.exists():
         pytest.skip(f"{path} does not exist")
 
     el = ("N1curl", 3)
     backend_args = {"engine": "BP4", "legacy": True}
-    mesh = read_mesh(
-        path, comm, dolfinx.mesh.GhostMode.shared_facet, backend_args=backend_args, backend="adios2"
-    )
+    with pytest.warns(DeprecationWarning, match="io4dolfinx-convert"):
+        mesh = read_mesh(
+            path,
+            comm,
+            dolfinx.mesh.GhostMode.shared_facet,
+            backend_args=backend_args,
+            backend="adios2",
+        )
 
     def f(x):
         values = np.zeros((2, x.shape[1]), dtype=np.float64)
