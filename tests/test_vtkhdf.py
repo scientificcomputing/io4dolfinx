@@ -1119,9 +1119,7 @@ def test_read_vtk_written_scalars(tmp_path):
     comm = MPI.COMM_WORLD
     tmp_path = comm.bcast(tmp_path, root=0)
     filename = tmp_path / "vtk_scalars.vtkhdf"
-    if comm.rank == 0:
-        write_vtk_temporal_triangles(filename, [0.0, 1.0])
-    comm.barrier()
+    write_vtk_temporal_triangles(filename, [0.0, 1.0], comm)
     mesh_in = io4dolfinx.read_mesh(filename, comm, time=0.0, backend="vtkhdf")
     p = io4dolfinx.read_point_data(filename, "p", mesh_in, time=0.0, backend="vtkhdf")
     assert p.ufl_shape == ()
