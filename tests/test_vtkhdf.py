@@ -914,10 +914,11 @@ def test_append_to_file_without_record(tmp_path, vtkhdf_backend):
         np.testing.assert_array_equal(u_in.x.array, value)
 
 
-def write_vtk_temporal_triangles(filename, times):
-    """Write a temporal triangle grid with VTK's own VTKHDF writer.
+def write_vtk_temporal_triangles(filename, times, comm):
+    """Write a temporal triangle grid with VTK's own VTKHDF writer, on rank 0.
 
-    The point array ``p`` and the cell array ``c`` change at every time step.
+    The point array ``p`` and the cell array ``c`` change at every time step. Call it on every
+    rank of ``comm``, so that a missing VTK skips the test on all of them.
     """
     vtk = pytest.importorskip("vtk")
     from vtkmodules.util import numpy_support
@@ -957,12 +958,14 @@ def write_vtk_temporal_triangles(filename, times):
                 data.AddArray(array)
             return 1
 
-    source = TemporalTriangles()
-    writer = vtk.vtkHDFWriter()
-    writer.SetInputConnection(source.GetOutputPort())
-    writer.SetFileName(str(filename))
-    writer.SetWriteAllTimeSteps(True)
-    writer.Write()
+    if comm.rank == 0:
+        source = TemporalTriangles()
+        writer = vtk.vtkHDFWriter()
+        writer.SetInputConnection(source.GetOutputPort())
+        writer.SetFileName(str(filename))
+        writer.SetWriteAllTimeSteps(True)
+        writer.Write()
+    comm.barrier()
 
 
 def test_read_timestamps_vtk_written(tmp_path):
@@ -971,9 +974,7 @@ def test_read_timestamps_vtk_written(tmp_path):
     tmp_path = comm.bcast(tmp_path, root=0)
     filename = tmp_path / "vtk_temporal.vtkhdf"
     times = [0.0, 0.25, 0.5, 1.0]
-    if comm.rank == 0:
-        write_vtk_temporal_triangles(filename, times)
-    comm.barrier()
+    write_vtk_temporal_triangles(filename, times, comm)
     for name in ("p", "c"):
         np.testing.assert_allclose(
             io4dolfinx.read_timestamps(filename, comm, name, backend="vtkhdf"), times
