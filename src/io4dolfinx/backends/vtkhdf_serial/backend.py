@@ -26,6 +26,7 @@ read_mesh_data = serial(parallel.read_mesh_data)
 read_point_data = serial(parallel.read_point_data)
 read_cell_data = serial(parallel.read_cell_data)
 read_timestamps = serial(parallel.read_timestamps)
+read_value_shape = serial(parallel.read_value_shape)
 read_function_names = serial(parallel.read_function_names)
 read_meshtags_data = serial(parallel.read_meshtags_data)
 write_attributes = parallel.write_attributes

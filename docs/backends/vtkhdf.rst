@@ -58,6 +58,20 @@ disabling compression.
     MPI-enabled h5py; see the
     `HDF5 parallel compression guidance <https://portal.hdfgroup.org/documentation/hdf5/latest/_par_compr.html>`_.
 
+Vectors and tensors
+~~~~~~~~~~~~~~~~~~~
+
+VTK reads arrays with 3 components as vectors and arrays with 9 components as tensors.
+Point and cell data with fewer components are therefore padded with zeros when written:
+vectors of length 1 or 2 are stored with 3 components, and tensors of at most 3 x 3 are
+embedded in a 3 x 3 tensor (row by row), so that, for instance, a 2D displacement can warp
+the mesh in ParaView. The value shape of each array is stored as the attribute
+``ValueShape`` of the array's metadata group,
+``/io4dolfinx/<mesh name>/<Point|Cell>Data/<array name>``, and io4dolfinx removes the
+padding when it reads the array back with its value shape. Arrays without this
+attribute, written by other programs or by older versions of io4dolfinx, are read with
+as many components as are stored: one component as a scalar, more as a vector.
+
 Time steps
 ~~~~~~~~~~
 

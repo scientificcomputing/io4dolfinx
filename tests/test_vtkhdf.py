@@ -996,3 +996,138 @@ def test_read_timestamps_dolfinx_written(tmp_path):
     np.testing.assert_allclose(
         io4dolfinx.read_timestamps(filename, comm, "u", backend="vtkhdf"), times
     )
+
+
+def components(value_shape):
+    """A field with distinct, linear components of the given value shape."""
+    size = int(np.prod(value_shape))
+    return lambda x: np.vstack([x[0] + (k + 1) * x[1] + k for k in range(size)])
+
+
+# (mesh, value shape, number of components VTK stores, VTK component of each value)
+padding_cases = [
+    ("interval", (), 1, [0]),
+    ("interval", (1,), 3, [0]),
+    ("square", (2,), 3, [0, 1]),
+    ("square", (3,), 3, [0, 1, 2]),
+    ("square", (2, 2), 9, [0, 1, 3, 4]),
+    ("square", (3, 3), 9, list(range(9))),
+    ("cube", (3,), 3, [0, 1, 2]),
+]
+
+
+@pytest.mark.parametrize("entity", ["Point", "Cell"])
+@pytest.mark.parametrize("mesh_type, value_shape, num_vtk, vtk_components", padding_cases)
+def test_padding(tmp_path, vtkhdf_backend, entity, mesh_type, value_shape, num_vtk, vtk_components):
+    """Vectors are stored with 3 components and tensors with 9, as VTK expects, and are
+    read back with their value shape."""
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / f"padding_{entity}_{mesh_type}_{len(value_shape)}_{num_vtk}.vtkhdf"
+    mesh = {
+        "interval": lambda: create_unit_interval(comm, 6),
+        "square": lambda: create_unit_square(comm, 3, 4),
+        "cube": lambda: create_unit_cube(comm, 2, 2, 3),
+    }[mesh_type]()
+    family = ("Lagrange", 1) if entity == "Point" else ("DG", 0)
+    u = Function(functionspace(mesh, (*family, value_shape)), name="u")
+    u.interpolate(components(value_shape))
+    writer = io4dolfinx.write_point_data if entity == "Point" else io4dolfinx.write_cell_data
+    io4dolfinx.write_mesh(filename, mesh, backend=vtkhdf_backend)
+    writer(filename, u, 0.0, io4dolfinx.FileMode.append, None, vtkhdf_backend)
+    comm.barrier()
+
+    if comm.rank == 0:
+        with h5py.File(filename, "r") as h5file:
+            stored = h5file[f"VTKHDF/mesh/{entity}Data/u"][:]
+            assert stored.shape[1] == num_vtk
+            padding = np.setdiff1d(np.arange(num_vtk), vtk_components)
+            np.testing.assert_array_equal(stored[:, padding], 0)
+            shape = h5file[f"io4dolfinx/mesh/{entity}Data/u"].attrs["ValueShape"]
+            assert tuple(shape) == value_shape
+
+    mesh_in = io4dolfinx.read_mesh(filename, comm, backend=vtkhdf_backend)
+    reader = io4dolfinx.read_point_data if entity == "Point" else io4dolfinx.read_cell_data
+    u_in = reader(filename, "u", mesh_in, time=0.0, backend=vtkhdf_backend)
+    assert u_in.ufl_shape == value_shape
+    u_ref = Function(u_in.function_space)
+    u_ref.interpolate(components(value_shape))
+    np.testing.assert_allclose(u_in.x.array, u_ref.x.array, atol=1e-12)
+
+
+@pytest.mark.parametrize("value_shape, attribute", [((2,), "vectors"), ((2, 2), "tensors")])
+def test_padding_read_by_vtk(tmp_path, value_shape, attribute):
+    """VTK accepts padded vectors and tensors as its vector and tensor attributes."""
+    pyvista = pytest.importorskip("pyvista")
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / f"padding_vtk_{attribute}.vtkhdf"
+    mesh = create_unit_square(comm, 2, 3)
+    u = Function(functionspace(mesh, ("Lagrange", 1, value_shape)), name="u")
+    u.interpolate(components(value_shape))
+    io4dolfinx.write_mesh(filename, mesh, backend="vtkhdf")
+    io4dolfinx.write_point_data(filename, u, 0.0, io4dolfinx.FileMode.append, None, "vtkhdf")
+    comm.barrier()
+    if comm.rank == 0:
+        grid = pyvista.read(filename)
+        while isinstance(grid, pyvista.MultiBlock):
+            grid = grid[0]
+        getattr(grid, f"set_active_{attribute}")("u")
+        assert getattr(grid, f"active_{attribute}_name") == "u"
+
+
+def test_padding_value_shape_mismatch(tmp_path, vtkhdf_backend):
+    """An array cannot change its value shape between time steps."""
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / "padding_mismatch.vtkhdf"
+    mesh = create_unit_square(comm, 2, 2)
+    vector = Function(functionspace(mesh, ("Lagrange", 1, (2,))), name="u")
+    scalar = Function(functionspace(mesh, ("Lagrange", 1)), name="u")
+    io4dolfinx.write_mesh(filename, mesh, backend=vtkhdf_backend)
+    io4dolfinx.write_point_data(
+        filename, vector, 0.0, io4dolfinx.FileMode.append, None, vtkhdf_backend
+    )
+    with pytest.raises(ValueError, match="value shape"):
+        io4dolfinx.write_point_data(
+            filename, scalar, 1.0, io4dolfinx.FileMode.append, None, vtkhdf_backend
+        )
+
+
+def test_read_unpadded_vectors(tmp_path):
+    """Arrays without a recorded value shape (here 2D vectors written by DOLFINx) are
+    read with as many components as are stored."""
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / "unpadded.vtkhdf"
+    mesh = create_unit_square(comm, 3, 2)
+    num_nodes_local = mesh.geometry.index_map().size_local
+    x = mesh.geometry.x[:num_nodes_local]
+    write_mesh(str(filename), mesh)
+    write_point_data(str(filename), mesh, np.column_stack([x[:, 0], 2 * x[:, 1]]).flatten(), 0.0)
+    comm.barrier()
+    mesh_in = io4dolfinx.read_mesh(filename, comm, backend="vtkhdf")
+    u_in = io4dolfinx.read_point_data(filename, "u", mesh_in, time=0.0, backend="vtkhdf")
+    assert u_in.ufl_shape == (2,)
+    u_ref = Function(u_in.function_space)
+    u_ref.interpolate(lambda x: (x[0], 2 * x[1]))
+    np.testing.assert_allclose(u_in.x.array, u_ref.x.array, atol=1e-12)
+
+
+def test_read_vtk_written_scalars(tmp_path):
+    """VTK stores single-component arrays as 1D datasets."""
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / "vtk_scalars.vtkhdf"
+    if comm.rank == 0:
+        write_vtk_temporal_triangles(filename, [0.0, 1.0])
+    comm.barrier()
+    mesh_in = io4dolfinx.read_mesh(filename, comm, time=0.0, backend="vtkhdf")
+    p = io4dolfinx.read_point_data(filename, "p", mesh_in, time=0.0, backend="vtkhdf")
+    assert p.ufl_shape == ()
+    p_ref = Function(p.function_space)
+    p_ref.interpolate(lambda x: x[0])
+    np.testing.assert_allclose(p.x.array, p_ref.x.array, atol=1e-12)
+    c = io4dolfinx.read_cell_data(filename, "c", mesh_in, time=0.0, backend="vtkhdf")
+    assert c.ufl_shape == ()
+    np.testing.assert_allclose(c.x.array, 0.0)

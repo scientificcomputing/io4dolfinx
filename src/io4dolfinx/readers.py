@@ -333,13 +333,27 @@ def read_function_from_legacy_h5(
     u.x.scatter_forward()
 
 
-def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.fem.FunctionSpace:
+def create_geometry_function_space(
+    mesh: dolfinx.mesh.Mesh, N: int, value_shape: tuple[int, ...] | None = None
+) -> dolfinx.fem.FunctionSpace:
     """Reconstruct a vector space with the N components using the geometry dofmap to ensure
     a 1-1 mapping between mesh nodes and DOFs.
 
+    Args:
+        mesh: The mesh.
+        N: Number of components.
+        value_shape: Value shape of the space, with ``N`` values. Defaults to a scalar for
+            ``N=1``, otherwise to a vector of length ``N``.
+
+    Returns:
+        The function space, with one block of ``N`` degrees of freedom per mesh node
+
     Raises:
+        ValueError: If ``value_shape`` does not have ``N`` values.
         NotImplementedError: For a mesh with several cell types, which has no UFL domain.
     """
+    if value_shape is not None and int(np.prod(value_shape)) != N:
+        raise ValueError(f"Value shape {value_shape} does not have {N} components.")
     ufl_domain = mesh.ufl_domain()
     if ufl_domain is None:
         raise NotImplementedError("Point data on meshes with several cell types is not supported.")
@@ -348,13 +362,12 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
     sub_el = ufl_domain.ufl_coordinate_element().sub_elements[0]
     adj_list = dolfinx.cpp.graph.AdjacencyList_int32(geom_dofmap)
 
-    value_shape: tuple[int, ...]
-    if N == 1:
+    if value_shape is None:
+        value_shape = () if N == 1 else (N,)
+    if value_shape == ():
         ufl_el = sub_el
-        value_shape = ()
     else:
-        ufl_el = basix.ufl.blocked_element(sub_el, shape=(N,))
-        value_shape = (N,)
+        ufl_el = basix.ufl.blocked_element(sub_el, shape=value_shape)
 
     _fe_constructor: (
         type[dolfinx.cpp.fem.FiniteElement_float32] | type[dolfinx.cpp.fem.FiniteElement_float64]
@@ -374,7 +387,9 @@ def create_geometry_function_space(mesh: dolfinx.mesh.Mesh, N: int) -> dolfinx.f
         _fe_constructor,
         ufl_el.basix_element._e,
         gdim=mesh.geometry.dim,
-        value_shape=value_shape,
+        # As in DOLFINx, only blocked elements have a value shape (a vector of length 1
+        # is a scalar)
+        value_shape=value_shape if N > 1 else (),
     )
     dof_layout = dolfinx.cpp.fem.create_element_dof_layout(cpp_el, [])
     cpp_dofmap = dolfinx.cpp.fem.DofMap(
@@ -397,6 +412,38 @@ def _function_dtype(data_dtype: np.dtype, mesh: dolfinx.mesh.Mesh) -> np.dtype:
     if np.issubdtype(data_dtype, np.complexfloating):
         return np.result_type(real, np.complex64)
     return real
+
+
+def _stored_value_shape(
+    backend_cls: Any,
+    filename: Path | str,
+    name: str,
+    comm: MPI.Comm,
+    backend_args: dict[str, Any] | None,
+    entity: str,
+) -> tuple[int, ...] | None:
+    """The value shape of point or cell data, as recorded by the backend.
+
+    ``read_value_shape`` is an optional backend function, for file formats that change
+    the layout of vectors and tensors (and so need to record their value shape).
+
+    Args:
+        backend_cls: The backend module
+        filename: Path to file
+        name: Name of the array
+        comm: MPI communicator used in storage
+        backend_args: Arguments to backend
+        entity: ``"Point"`` for point data, ``"Cell"`` for cell data
+
+    Returns:
+        The value shape, or ``None`` if the backend or the file does not record it
+    """
+    read_value_shape = getattr(backend_cls, "read_value_shape", None)
+    if read_value_shape is None:
+        return None
+    return read_value_shape(
+        filename=filename, name=name, comm=comm, backend_args=backend_args, entity=entity
+    )
 
 
 def read_point_data(
@@ -436,9 +483,10 @@ def read_point_data(
     )
 
     num_components = dataset.shape[1]
+    value_shape = _stored_value_shape(backend_cls, filename, name, mesh.comm, backend_args, "Point")
 
     # Create appropriate function space (based on coordinate map)
-    V = create_geometry_function_space(mesh, num_components)
+    V = create_geometry_function_space(mesh, num_components, value_shape=value_shape)
     uh = dolfinx.fem.Function(V, name=name, dtype=_function_dtype(dataset.dtype, mesh))
     # Assume that mesh is first order for now
     x_dofmap = fenicsx_compat.dofmap(mesh)
@@ -504,11 +552,9 @@ def read_cell_data(
         filename=filename, name=name, comm=mesh.comm, time=time, backend_args=backend_args
     )
     num_components = dofs.shape[1]
-    shape: tuple[int, ...]
-    if num_components == 1:
-        shape = ()
-    else:
-        shape = (num_components,)
+    shape = _stored_value_shape(backend_cls, filename, name, mesh.comm, backend_args, "Cell")
+    if shape is None:
+        shape = () if num_components == 1 else (num_components,)
     V = dolfinx.fem.functionspace(mesh, ("DG", 0, shape))
     u = dolfinx.fem.Function(V, dtype=_function_dtype(dofs.dtype, mesh))
     data_array = u.x.array.reshape(-1, num_components)

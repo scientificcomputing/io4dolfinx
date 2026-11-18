@@ -15,7 +15,13 @@ import numpy as np
 import numpy.typing as npt
 
 from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from io4dolfinx.utils import check_file_exists, compute_local_range, same_time
+from io4dolfinx.utils import (
+    check_file_exists,
+    compute_local_range,
+    pad_for_vtk,
+    same_time,
+    strip_vtk_padding,
+)
 
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode
 from ..h5py import storage as h5_storage
@@ -53,6 +59,58 @@ def _array_metadata_group(mesh_name: str, extension: str, name: str) -> str:
         Path of the group in the file
     """
     return f"{_metadata_group}/{mesh_name}/{extension}Data/{name}"
+
+
+#: Value shape of a point or cell array, attribute of the array's metadata group. VTK
+#: stores vectors with 3 components and tensors with 9, so the value shape is needed to
+#: read vectors and tensors of lower dimension back.
+_value_shape_attr = "ValueShape"
+
+
+def _read_value_shape(
+    h5file: h5py.File, mesh_name: str, entity: str, name: str
+) -> tuple[int, ...] | None:
+    """The value shape of a point or cell array, as recorded by io4dolfinx.
+
+    Args:
+        h5file: An open file
+        mesh_name: Name of the mesh the array is stored on
+        entity: ``"Point"`` for point data, ``"Cell"`` for cell data
+        name: Name of the array
+
+    Returns:
+        The value shape, or ``None`` for an array without one (written by another
+        program or by an older version of io4dolfinx)
+    """
+    group = _array_metadata_group(mesh_name, entity, name)
+    if group not in h5file or _value_shape_attr not in h5file[group].attrs:
+        return None
+    return tuple(int(i) for i in h5file[group].attrs[_value_shape_attr])
+
+
+def read_value_shape(
+    filename: Path | str,
+    name: str,
+    comm: MPI.Comm,
+    backend_args: dict[str, Any] | None,
+    entity: str,
+) -> tuple[int, ...] | None:
+    """Read the value shape of point or cell data.
+
+    Args:
+        filename: Path to file
+        name: Name of the array
+        comm: MPI communicator used in storage
+        backend_args: Arguments to backend
+        entity: ``"Point"`` for point data, ``"Cell"`` for cell data
+
+    Returns:
+        The value shape of an array written by io4dolfinx, ``None`` for other arrays
+    """
+    backend_args = get_default_backend_args(backend_args)
+    check_file_exists(filename)
+    with h5pyfile(filename, "r", comm=comm) as h5file:
+        return _read_value_shape(h5file, backend_args["name"], entity, name)
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -527,12 +585,13 @@ def read_point_data(
         if name not in point_data.keys():
             raise ValueError(f"No point data named {name} in {filename}.")
         func_node = point_data[name]
+        value_shape = _read_value_shape(h5file, backend_args["name"], "Point", name)
 
         if time is None:
             data_shape = func_node.shape[0]
             lr = compute_local_range(comm, data_shape)
             data = func_node[slice(*lr)]
-            return data, lr[0]
+            return strip_vtk_padding(data, value_shape), lr[0]
         else:
             time_index = _get_time_index(hdf, time, filename)
             stamps = hdf["Steps"]["Values"][:]
@@ -545,7 +604,8 @@ def read_point_data(
             else:
                 num_pts = hdf["NumberOfPoints"][time_index]
             lr = compute_local_range(comm, num_pts)
-            return func_node[step_start + lr[0] : step_start + lr[1]], lr[0]
+            data = func_node[step_start + lr[0] : step_start + lr[1]]
+            return strip_vtk_padding(data, value_shape), lr[0]
 
 
 def read_cell_data(
@@ -568,6 +628,7 @@ def read_cell_data(
             raise ValueError(f"No cell data with name {name} in {filename}")
         cell_data_node = cell_data[name]
         assert cell_data_node is not None
+        value_shape = _read_value_shape(h5file, backend_args["name"], "Cell", name)
         if time is None:
             cell_data_shape = cell_data_node.shape
             num_cells_global = hdf["Types"].size
@@ -594,9 +655,7 @@ def read_cell_data(
     md = read_mesh_data(
         filename, comm, time=time, read_from_partition=False, backend_args=backend_args
     )
-    if len(data.shape) == 1:
-        data = data.reshape(-1, 1)
-    return md.cells, data
+    return md.cells, strip_vtk_padding(data, value_shape)
 
 
 def write_attributes(
@@ -1467,6 +1526,19 @@ def write_data(
         # Find mesh block to add data to
         block = _get_vtk_group(h5file, mesh_name)
 
+        # Lay out vectors and tensors as VTK expects them
+        values = array_data.values
+        global_shape = array_data.global_shape
+        if array_data.value_shape is not None:
+            stored_shape = _read_value_shape(h5file, mesh_name, extension, array_data.name)
+            if stored_shape is not None and stored_shape != array_data.value_shape:
+                raise ValueError(
+                    f"{extension} data {array_data.name} in {filename} has value shape "
+                    f"{stored_shape}, not {array_data.value_shape}."
+                )
+            values = pad_for_vtk(values, array_data.value_shape)
+            global_shape = (global_shape[0], values.shape[1])
+
         data_path = f"{extension}Data/{array_data.name}"
         if storage_options and data_path in block:
             h5_storage.check_storage_options(block[data_path], storage_options)
@@ -1494,20 +1566,20 @@ def write_data(
         dataset = _create_dataset(
             data_group,
             array_data.name,
-            shape=array_data.global_shape,
-            dtype=array_data.values.dtype,
+            shape=global_shape,
+            dtype=values.dtype,
             chunks=True,
-            maxshape=(None, array_data.values.shape[1]),
+            maxshape=(None, values.shape[1]),
             mode=h5_mode,
-            filters=h5_storage.filter_options(storage_options, array_data.values.dtype),
+            filters=h5_storage.filter_options(storage_options, values.dtype),
         )
         insert_slice = _compute_append_slice(
             dataset,
-            array_data.global_shape[0],
+            global_shape[0],
             np.array(
                 [
                     array_data.local_range[0],
-                    array_data.local_range[0] + array_data.values.shape[0],
+                    array_data.local_range[0] + values.shape[0],
                 ]
             ),
             mode=h5_mode,
@@ -1515,7 +1587,7 @@ def write_data(
         h5_storage.write_dataset(
             dataset,
             insert_slice,
-            array_data.values,
+            values,
         )
 
         # The data at each step is that of the latest write at or before it, see
@@ -1531,8 +1603,11 @@ def write_data(
             mode=h5_mode,
             resize=False,
         )
-        written_offsets = np.append(written_offsets, dataset.shape[0] - array_data.global_shape[0])
+        written_offsets = np.append(written_offsets, dataset.shape[0] - global_shape[0])
         written_steps = np.append(written_steps, step)
         offsets[:] = _fill_time_steps(num_steps, written_steps, written_offsets)
         _create_temporal_record(h5file, record, written_steps)
+        if array_data.value_shape is not None:
+            metadata = h5file[_array_metadata_group(mesh_name, extension, array_data.name)]
+            metadata.attrs[_value_shape_attr] = np.array(array_data.value_shape, dtype=np.int64)
         _link_steps_at_root(h5file)
