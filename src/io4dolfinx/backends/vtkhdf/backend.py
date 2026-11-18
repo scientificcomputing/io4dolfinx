@@ -15,7 +15,7 @@ import numpy as np
 import numpy.typing as npt
 
 from io4dolfinx.structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
-from io4dolfinx.utils import check_file_exists, compute_local_range
+from io4dolfinx.utils import check_file_exists, compute_local_range, same_time
 
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode
 from ..h5py import storage as h5_storage
@@ -34,6 +34,25 @@ _vtk_hdf_version = np.array([2, 1], dtype=np.int32)
 _metadata_group = "/io4dolfinx"
 #: Basix Lagrange variant of a mesh's coordinate element, per mesh name.
 _lagrange_variant_attr = "LagrangeVariant"
+#: Steps at which a mesh's geometry or a point or cell array was written, in the mesh's
+#: or array's metadata group. Every step needs data in VTKHDF, so the steps before the
+#: first write share the data of the first write, and the offsets alone cannot tell at
+#: which step that was. The writer needs it to fill in steps written out of order.
+_written_steps = "Steps"
+
+
+def _array_metadata_group(mesh_name: str, extension: str, name: str) -> str:
+    """The io4dolfinx metadata group of a point or cell array.
+
+    Args:
+        mesh_name: Name of the mesh the array is stored on
+        extension: ``"Point"`` for point data, ``"Cell"`` for cell data
+        name: Name of the array
+
+    Returns:
+        Path of the group in the file
+    """
+    return f"{_metadata_group}/{mesh_name}/{extension}Data/{name}"
 
 
 def get_default_backend_args(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -125,12 +144,197 @@ def _get_vtk_group(h5file, name: str) -> h5py.Group:
         raise RuntimeError(f"Not supported file type {file_type}")
 
 
+def _get_all_temporal_unstructured_grids(h5file: h5py.File) -> list[h5py.Group]:
+    """The unstructured grids (meshes and mesh tags) with time steps in a file.
+
+    Args:
+        h5file: An open MultiBlockDataSet file
+
+    Returns:
+        The groups of the grids, empty if the file has no ``VTKHDF`` group
+    """
+    if "VTKHDF" not in h5file:
+        return []
+    return [
+        block
+        for block in h5file["VTKHDF"].values()
+        if isinstance(block, h5py.Group)
+        and "Steps" in block
+        and _decode_bytes_if_needed(block.attrs.get("Type", "")) == "UnstructuredGrid"
+    ]
+
+
+def _get_longest_time_sequence(h5file: h5py.File) -> np.ndarray:
+    """The longest time sequence of the grids in a file.
+
+    VTK requires all grids to share their time steps, which older versions of io4dolfinx
+    did not ensure.
+
+    Args:
+        h5file: An open MultiBlockDataSet file
+
+    Returns:
+        The time stamps, empty if no grid has time steps
+    """
+    values = [block["Steps"]["Values"][:] for block in _get_all_temporal_unstructured_grids(h5file)]
+    return max(values, key=len, default=np.empty(0, dtype=np.float64))
+
+
+def _find_time_step_index(stamps: np.ndarray, time: float, filename: str | Path) -> int | None:
+    """Index of a time among the time steps of a file.
+
+    Args:
+        stamps: Time stamps of the file, increasing
+        time: The time to look for, see :func:`io4dolfinx.utils.same_time`
+        filename: Name of the file, for error messages
+
+    Returns:
+        The index of the time step, or ``None`` if ``time`` is a new time
+
+    Raises:
+        ValueError: If ``time`` is new but earlier than the last time step. VTK requires
+            increasing time steps.
+    """
+    match = np.flatnonzero(same_time(stamps, time))
+    if len(match) > 1:
+        raise ValueError(f"Time {time} matches several time steps in {filename}.")
+    if len(match) == 1:
+        return int(match[0])
+    if len(stamps) > 0 and time < stamps[-1]:
+        raise ValueError(
+            f"Cannot add time {time} to {filename}: a new time step must be later than "
+            f"the last one, {stamps[-1]}."
+        )
+    return None
+
+
+def _extend_1d_dataset(dataset: h5py.Dataset, num_steps: int):
+    """Extend a per-step dataset with entries that repeat its last entry.
+
+    Args:
+        dataset: A dataset with one entry per time step
+        num_steps: Number of entries after extension. A dataset with as many entries or
+            more is left unchanged.
+    """
+    num_old = dataset.shape[0]
+    if 0 < num_old < num_steps:
+        dataset.resize(num_steps, axis=0)
+        dataset[num_old:] = dataset[num_old - 1]
+
+
+def _set_time_steps(h5file: h5py.File, stamps: np.ndarray):
+    """Give every grid in a file the same time steps.
+
+    The per-step datasets of a grid are extended to the new steps, where the grid keeps
+    its data from its last step.
+
+    Args:
+        h5file: An open MultiBlockDataSet file
+        stamps: The time stamps, which extend the existing time steps of every grid
+    """
+    num_steps = len(stamps)
+    for block in _get_all_temporal_unstructured_grids(h5file):
+        steps = block["Steps"]
+        per_step = [
+            block[key]
+            for key in ("NumberOfPoints", "NumberOfCells", "NumberOfConnectivityIds")
+            if key in block
+        ]
+        per_step += [
+            steps[key]
+            for key in (
+                "PartOffsets",
+                "NumberOfParts",
+                "PointOffsets",
+                "CellOffsets",
+                "ConnectivityIdOffsets",
+            )
+            if key in steps
+        ]
+        for key in ("PointDataOffsets", "CellDataOffsets", "FieldDataOffsets"):
+            if key in steps:
+                per_step += list(steps[key].values())
+        # Datasets shared by a mesh and its tags are extended once
+        for dataset in per_step:
+            _extend_1d_dataset(dataset, num_steps)
+        values = steps["Values"]
+        if values.shape[0] != num_steps:
+            values.resize(num_steps, axis=0)
+        values[:] = stamps
+        steps.attrs["NSteps"] = np.int64(num_steps)
+
+
+def _get_time_steps_and_data_offset(
+    h5file: h5py.File, record: str, offsets_path: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Steps at which io4dolfinx wrote the geometry or an array, and the offset of the
+    data written at each.
+
+    Files without the record (older versions of io4dolfinx) have a write at the first
+    step and wherever the offset changes.
+
+    Args:
+        h5file: An open file
+        record: Path of the record of the written steps, see `_create_temporal_record`
+        offsets_path: Path of the per-step offsets of the geometry or the array
+
+    Returns:
+        The written steps and their offsets, both empty if the offsets do not exist
+    """
+    if offsets_path not in h5file:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+    offsets = h5file[offsets_path][:]
+    if record in h5file:
+        steps = h5file[record][:]
+    else:
+        steps = np.flatnonzero(np.hstack([[True], offsets[1:] != offsets[:-1]]))
+    return steps, offsets[steps]
+
+
+def _fill_time_steps(
+    num_steps: int, written_steps: np.ndarray, written_values: np.ndarray
+) -> np.ndarray:
+    """Values of a per-step dataset, such as data offsets, at every time step.
+
+    A step takes the value of the latest write at or before it. The steps before the
+    first write take the value of the first write, as VTKHDF requires data at every step.
+
+    Args:
+        num_steps: Number of time steps
+        written_steps: Steps at which a value was written, in any order
+        written_values: The value written at each of ``written_steps``
+
+    Returns:
+        The value at each of the ``num_steps`` time steps
+    """
+    order = np.argsort(written_steps)
+    previous_write = np.searchsorted(written_steps[order], np.arange(num_steps), side="right") - 1
+    return written_values[order][np.maximum(previous_write, 0)]
+
+
+def _create_temporal_record(h5file: h5py.File, record: str, written_steps: np.ndarray):
+    """Create, or replace, the record of the steps at which the geometry or an array has
+    been written.
+
+    Args:
+        h5file: An open file
+        record: Path of the record, in the io4dolfinx metadata group
+        written_steps: The steps at which the geometry or the array has been written
+    """
+    written_steps = np.sort(written_steps).astype(np.int64)
+    if record in h5file:
+        h5file[record].resize(written_steps.shape)
+        h5file[record][:] = written_steps
+    else:
+        h5file.create_dataset(record, data=written_steps, chunks=True, maxshape=(None,))
+
+
 def _get_time_index(hdf: h5py.Group, time: float | str, filename: str | Path) -> int:
     """Finds the index of a specific time stamp."""
     if "Steps" not in hdf.keys():
         raise RuntimeError(f"No timestepping information found in {filename}.")
     stamps = hdf["Steps"]["Values"][:]
-    pos = np.flatnonzero(np.isclose(stamps, time))
+    pos = np.flatnonzero(same_time(stamps, float(time)))
     if len(pos) == 0:
         raise RuntimeError(f"Could not find mesh at t={time} in {filename}.")
     elif len(pos) > 1:
@@ -430,33 +634,22 @@ def read_timestamps(
         backend_args: Arguments to backend
 
     Returns:
-        Numpy array of timestamps read from file
+        The time steps of the mesh the function is stored on. A VTKHDF array has
+        data at every time step of its mesh.
     """
     backend_args = get_default_backend_args(backend_args)
     check_file_exists(filename)
+    mesh_name = backend_args["name"]
     # Temporal data storage as described in
     # https://docs.vtk.org/en/latest/vtk_file_formats/vtkhdf_file_format/vtkhdf_specifications.html#temporal-data
     with h5pyfile(filename, "r", comm=comm) as h5file:
-        hdf = h5file["VTKHDF"]
-        if "Steps" in hdf.keys():
-            timestamps = hdf["Steps"]["Values"][:]
-            # For either point data or cell data, check if function exists,
-            # and check if offsets in time are changing between steps.
-            if "CellData" in hdf.keys() and function_name in hdf["CellData"].keys():
-                offsets = hdf["Steps"]["CellDataOffsets"][function_name]
-                step_offsets = offsets[:]
-                step_diff = np.flatnonzero(step_offsets[1:] - step_offsets[:-1])
-                return timestamps[step_diff]
-            elif "PointData" in hdf.keys() and function_name in hdf["PointData"].keys():
-                offsets = hdf["Steps"]["PointDataOffsets"][function_name]
-                step_offsets = offsets[:]
-                step_diff = np.flatnonzero(step_offsets[1:] - step_offsets[:-1])
-                # This only finds when the offset changes, does not capture first step
-                return np.hstack([[timestamps[0]], timestamps[step_diff]])
-            else:
-                raise RuntimeError(f"Function {function_name} is not assoicated with a time-stamp.")
-        else:
+        block = _get_vtk_group(h5file, mesh_name)
+        if "Steps" not in block.keys():
             raise RuntimeError(f"{filename} does not contain time-stepping information.")
+        for data in ("CellData", "PointData"):
+            if data in block.keys() and function_name in block[data].keys():
+                return block["Steps"]["Values"][:]
+        raise RuntimeError(f"Function {function_name} is not associated with a time-stamp.")
 
 
 def read_function_names(
@@ -583,6 +776,39 @@ def write_mesh(
             for key in ("Points", "Offsets", "Connectivity", "Types"):
                 if key in block:
                     h5_storage.check_storage_options(block[key], storage_options)
+
+        # Check the mesh and the time before writing anything. Only the geometry of a mesh
+        # can change between time steps, as its topology is stored once.
+        block_path = f"/VTKHDF/{name}"
+        if block_path in h5file and "NumberOfCells" in h5file[block_path]:
+            num_dofs_per_cell = mesh.local_topology.shape[1]
+            for key, value in (
+                ("NumberOfPoints", mesh.num_nodes_global),
+                ("NumberOfCells", mesh.num_cells_global),
+                ("NumberOfConnectivityIds", mesh.num_cells_global * num_dofs_per_cell),
+            ):
+                stored = int(h5file[block_path][key][0])
+                if stored != value:
+                    raise ValueError(
+                        f"Mesh '{name}' in {filename} has {key} {stored}, not {value}. Only "
+                        "the geometry of a mesh can change between time steps."
+                    )
+        stamps = _get_longest_time_sequence(h5file)
+        step = _find_time_step_index(stamps, time, filename)
+        record = f"{_metadata_group}/{name}/{_written_steps}"
+        written_steps, written_offsets = _get_time_steps_and_data_offset(
+            h5file, record, f"/VTKHDF/{name}/Steps/PointOffsets"
+        )
+        if same_time(stamps[written_steps], time).any():
+            raise ValueError(
+                f"Mesh '{name}' has already been written at time {time} in {filename}."
+            )
+        if step is None:
+            stamps = np.append(stamps, time)
+            step = len(stamps) - 1
+        _set_time_steps(h5file, stamps)
+        num_steps = len(stamps)
+
         hdf = _create_group(h5file, "/VTKHDF", h5_mode)
         hdf.attrs.create("Type", "MultiBlockDataSet")
         hdf.attrs["Version"] = _vtk_hdf_version
@@ -606,17 +832,17 @@ def write_mesh(
         mesh_metadata = _create_group(metadata, name, h5_mode)
         mesh_metadata.attrs[_lagrange_variant_attr] = np.int32(mesh.lagrange_variant)
 
-        # Write time dependent points
+        # Number of points per time step, set with the point offsets below
         number_of_points = _create_dataset(
             mesh_group,
             "NumberOfPoints",
-            shape=(1,),
+            shape=(num_steps,),
             dtype=np.int64,
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
+            resize=False,
         )
-        number_of_points[-1] = mesh.num_nodes_global
 
         # Store nodes
         points = _create_dataset(
@@ -638,31 +864,28 @@ def write_mesh(
             mesh.local_geometry,
         )
 
-        # NOTE: VTKHDF currently does not support reading time dependent topology in
-        # Paraview: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
-        # Therefore the following data is not resized
+        # DOLFINx meshes only move their geometry, so the topology is stored once and a
+        # later write of the mesh rewrites it in place. Every time step reads it as part
+        # 0 (zero PartOffsets, CellOffsets and ConnectivityIdOffsets), the VTKHDF layout
+        # for static data.
         time_indep_datasets = {}
         for key in ["NumberOfCells", "NumberOfConnectivityIds"]:
             time_indep_datasets[key] = _create_dataset(
                 mesh_group,
                 key,
-                shape=(1,),
+                shape=(num_steps,),
                 dtype=np.int64,
                 chunks=True,
                 maxshape=(None,),
                 mode=h5_mode,
-                resize=False,  # Resize should really be True
+                resize=False,  # Static, stored once
             )
 
         num_dofs_per_cell = mesh.local_topology.shape[1]
-        time_indep_datasets["NumberOfCells"][-1] = mesh.num_cells_global
-        time_indep_datasets["NumberOfConnectivityIds"][-1] = (
+        time_indep_datasets["NumberOfCells"][:] = mesh.num_cells_global
+        time_indep_datasets["NumberOfConnectivityIds"][:] = (
             mesh.num_cells_global * num_dofs_per_cell
         )
-
-        # NOTE: The following offsets are currently overwriting the existing topology data.
-        # This is due to the VTKHDF bug. When we switch resize=True this will automatically work
-        # for time dependent topologies
 
         # Store topology offsets (single celltype assumption)
         offsets = _create_dataset(
@@ -673,7 +896,7 @@ def write_mesh(
             chunks=True,
             mode=h5_mode,
             maxshape=(None,),
-            resize=False,  # Resize should really be True
+            resize=False,  # Static, stored once
             filters=h5_storage.filter_options(storage_options, np.int64),
         )
         # Each offset has one writer. Only the last nonempty rank writes the final offset.
@@ -703,9 +926,9 @@ def write_mesh(
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
-            resize=False,  # Resize should really be True, see issue below
+            resize=False,  # Static, stored once
             filters=h5_storage.filter_options(storage_options, np.int64),
-        )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
+        )
         insert_slice = _compute_append_slice(
             topology,
             mesh.num_cells_global * num_dofs_per_cell,
@@ -729,103 +952,53 @@ def write_mesh(
             maxshape=(None,),
             chunks=True,
             mode=h5_mode,
-            resize=False,  # Resize should really be True, see issue below
+            resize=False,  # Static, stored once
             filters=h5_storage.filter_options(storage_options, np.uint8),
-        )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
+        )
         insert_slice = _compute_append_slice(
             types, mesh.num_cells_global, mesh.local_topology_pos, h5_mode
         )
         h5_storage.write_dataset(types, insert_slice, cell_types)
         del cell_types
 
+        # The file's time steps, with static topology. The geometry at each step is
+        # that of the latest write at or before it, see `_fill_time_steps`.
         steps = _create_group(mesh_group, "Steps", mode=h5_mode)
-        # First fetch time-steps to see if we have stored this timestep already
-        values = _create_dataset(
-            steps,
-            "Values",
-            shape=(1,),
-            dtype=np.float64,
-            chunks=True,
-            maxshape=(None,),
-            mode=h5_mode,
-            resize=h5_mode == "a",
-        )
-
-        if h5_mode == "w":
-            values[0] = time
-        else:
-            existing_steps = values[:-1]
-            if len(np.flatnonzero(np.isclose(existing_steps, time))) > 0:
-                raise RuntimeError(f"Mesh already exists at time {time} in {filename}.")
-            values[-1] = time
-        steps.attrs.create("NSteps", np.int64(len(values)), dtype=np.int64)
-
-        # Write offset data for current time-step
-        all_parts = {}
-        for key in [
-            "NumberOfParts",
-            "PartOffsets",
-            "PointOffsets",
-            "CellOffsets",
-            "ConnectivityIdOffsets",
-        ]:
-            all_parts[key] = _create_dataset(
+        steps.attrs["NSteps"] = np.int64(num_steps)
+        for key, dtype in (
+            ("Values", np.float64),
+            ("NumberOfParts", np.int64),
+            ("PartOffsets", np.int64),
+            ("PointOffsets", np.int64),
+            ("CellOffsets", np.int64),
+            ("ConnectivityIdOffsets", np.int64),
+        ):
+            _create_dataset(
                 steps,
                 key,
-                shape=(1,),
-                dtype=np.int64,
+                shape=(num_steps,),
+                dtype=dtype,
                 chunks=True,
                 maxshape=(None,),
                 mode=h5_mode,
+                resize=False,
             )
-
-        all_parts["NumberOfParts"][-1] = 1
-        all_parts["PartOffsets"][-1] = 0
-        all_parts["PointOffsets"][-1] = points.shape[0] - mesh.num_nodes_global
-        all_parts["CellOffsets"][-1] = types.shape[0] - mesh.num_cells_global
-        all_parts["ConnectivityIdOffsets"][-1] = (
+        steps["Values"][:] = stamps
+        steps["NumberOfParts"][:] = 1
+        steps["PartOffsets"][:] = 0
+        steps["CellOffsets"][:] = types.shape[0] - mesh.num_cells_global
+        steps["ConnectivityIdOffsets"][:] = (
             topology.shape[0] - mesh.num_cells_global * num_dofs_per_cell
         )
+        for key in ("CellDataOffsets", "PointDataOffsets"):
+            _create_group(steps, key, mode=h5_mode)
 
-        # Update cell-data and point-data offsets by copying over data from previous step
-        for key in ["CellDataOffsets", "PointDataOffsets"]:
-            group = _create_group(steps, key, mode=h5_mode)
-            for cd in group.keys():
-                group[cd].resize(steps.attrs["NSteps"], axis=0)
-                group[cd][-1] = group[cd][-2]
-
-        # Update Steps in all other parts of the mesh as well
-        for key in mesh_assembly.keys():
-            if key == name:
-                continue
-            # Copy time-dependent geometry info (NumberOfPoints) from mesh to tag
-            sub_group = mesh_assembly[key]
-            sub_step = sub_group["Steps"]
-            sub_step.attrs["NSteps"] = steps.attrs["NSteps"]
-
-            # Copy time dependent and partition info from mesh to tag
-            step_copy_keys = ["Values", "PartOffsets", "NumberOfParts"]
-            for key in step_copy_keys:
-                if key in sub_step.keys():
-                    sub_step[key].resize(steps[key].shape)
-                    sub_step[key][:] = steps[key][:]
-                else:
-                    raise RuntimeError(f"{sub_step.name} should have {key}/")
-
-            # Append value from previous step for meshtags as they are time-independent
-            append_keys = ["CellOffsets", "ConnectivityIdOffsets"]
-            for key in append_keys:
-                if key in sub_step.keys():
-                    sub_step[key].resize(sub_step[key].size + 1, axis=0)
-                    sub_step[key][-1] = sub_step[key][-2]
-                else:
-                    raise RuntimeError(f"{sub_step.name} should have {key}/")
-            # Append value from previous step for meshtags celldata
-            for key in ["CellDataOffsets", "PointDataOffsets"]:
-                group = _create_group(sub_step, key, mode=h5_mode)
-                for cd in group.keys():
-                    group[cd].resize(sub_step.attrs["NSteps"], axis=0)
-                    group[cd][-1] = group[cd][-2]
+        written_points = np.append(number_of_points[:][written_steps], mesh.num_nodes_global)
+        written_offsets = np.append(written_offsets, points.shape[0] - mesh.num_nodes_global)
+        written_steps = np.append(written_steps, step)
+        steps["PointOffsets"][:] = _fill_time_steps(num_steps, written_steps, written_offsets)
+        number_of_points[:] = _fill_time_steps(num_steps, written_steps, written_points)
+        _create_temporal_record(h5file, record, written_steps)
 
 
 def write_meshtags(
@@ -902,8 +1075,8 @@ def write_meshtags(
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
-            resize=False,  # Resize should really be True, see issue below
-        )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
+            resize=False,  # Static, stored once
+        )
         num_cells[-1] = data.num_entities_global
 
         # Hardlink data should also follow hardlink for numbering
@@ -921,8 +1094,8 @@ def write_meshtags(
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
-            resize=False,  # Resize should really be True, see issue below
-        )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
+            resize=False,  # Static, stored once
+        )
         assert data.num_entities_global is not None and num_dofs_per_cell is not None
         number_of_connectivities[-1] = data.num_entities_global * num_dofs_per_cell
 
@@ -935,9 +1108,9 @@ def write_meshtags(
             chunks=True,
             mode=h5_mode,
             maxshape=(None,),
-            resize=False,  # Resize should really be True, see issue below
+            resize=False,  # Static, stored once
             filters=h5_storage.filter_options(storage_options, np.int64),
-        )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
+        )
         # Each offset has one writer. Only the last nonempty rank writes the final offset.
         assert data.local_start is not None
         first, last = data.local_start, data.local_start + data.indices.shape[0]
@@ -967,9 +1140,9 @@ def write_meshtags(
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
-            resize=False,  # Resize should really be True, see issue below
+            resize=False,  # Static, stored once
             filters=h5_storage.filter_options(storage_options, np.int64),
-        )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
+        )
         insert_slice = _compute_append_slice(
             topology,
             data.num_entities_global * num_dofs_per_cell,
@@ -994,9 +1167,9 @@ def write_meshtags(
             maxshape=(None,),
             chunks=True,
             mode=h5_mode,
-            resize=False,  # Resize should really be True, see issue below
+            resize=False,  # Static, stored once
             filters=h5_storage.filter_options(storage_options, np.uint8),
-        )  # VTKHDFReader issue: https://gitlab.kitware.com/vtk/vtk/-/issues/19257
+        )
         insert_slice = _compute_append_slice(
             types,
             data.num_entities_global,
@@ -1043,6 +1216,17 @@ def write_meshtags(
             mode=h5_mode,
         )
         cd_data[-1] = types.shape[0] - data.num_entities_global
+
+        # Static tags: every time step of the mesh holds the same cells
+        num_steps = int(steps.attrs["NSteps"])
+        for dataset in (
+            num_cells,
+            number_of_connectivities,
+            all_parts["CellOffsets"],
+            all_parts["ConnectivityIdOffsets"],
+            cd_data,
+        ):
+            _extend_1d_dataset(dataset, num_steps)
 
 
 def read_meshtags_data(
@@ -1267,6 +1451,25 @@ def write_data(
         if storage_options and data_path in block:
             h5_storage.check_storage_options(block[data_path], storage_options)
 
+        # Check the time before writing anything
+        assert isinstance(time, float)
+        stamps = _get_longest_time_sequence(h5file)
+        step = _find_time_step_index(stamps, time, filename)
+        record = f"{_array_metadata_group(mesh_name, extension, array_data.name)}/{_written_steps}"
+        written_steps, written_offsets = _get_time_steps_and_data_offset(
+            h5file, record, f"{block.name}/Steps/{extension}DataOffsets/{array_data.name}"
+        )
+        if same_time(stamps[written_steps], time).any():
+            raise ValueError(
+                f"{extension} data '{array_data.name}' has already been written at time "
+                f"{time} in {filename}."
+            )
+        if step is None:
+            stamps = np.append(stamps, time)
+            step = len(stamps) - 1
+        _set_time_steps(h5file, stamps)
+        num_steps = len(stamps)
+
         data_group = _create_group(block, f"{extension}Data", mode=h5_mode)
         dataset = _create_dataset(
             data_group,
@@ -1295,84 +1498,20 @@ def write_data(
             array_data.values,
         )
 
-        steps = _create_group(block, "Steps", mode=h5_mode)
-        pdo = _create_group(steps, f"{extension}DataOffsets", mode=h5_mode)
-
-        # Check if time step is already in time-stepping of mesh
-        timestamps = steps["Values"][:]
-        assert isinstance(timestamps, np.ndarray)
-        assert isinstance(time, float)
-        time_exists = np.flatnonzero(np.isclose(timestamps, time))
-        if len(time_exists) > 1:
-            raise ValueError("Time-step has been written multiple times")
-        pdo_u = _create_dataset(
-            pdo,
+        # The data at each step is that of the latest write at or before it, see
+        # `_fill_time_steps`.
+        data_offsets = _create_group(block["Steps"], f"{extension}DataOffsets", mode=h5_mode)
+        offsets = _create_dataset(
+            data_offsets,
             array_data.name,
-            shape=(1,),
+            shape=(num_steps,),
             dtype=np.int64,
             chunks=True,
             maxshape=(None,),
             mode=h5_mode,
             resize=False,
         )
-        if len(time_exists) == 1:
-            idx = time_exists[0]
-        elif len(time_exists) == 0:
-            # No mesh written at step, update mesh offsets
-            # Geometry has to be time-dependent
-            num_points = block["NumberOfPoints"]
-            num_points.resize(len(timestamps) + 1, axis=0)
-            num_points[-1] = num_points[-2]
-            # Even if topology cannot be time dep at the moment, number of cells
-            # must be updated
-            num_cells = block["NumberOfCells"]
-            num_cells.resize(len(timestamps) + 1, axis=0)
-            num_cells[-1] = num_cells[-2]
-
-            steps.attrs.create("NSteps", block["Steps"].attrs["NSteps"] + 1)
-            step_vals = _create_dataset(
-                steps,
-                "Values",
-                shape=(1,),
-                dtype=np.float64,
-                chunks=True,
-                maxshape=(None,),
-                mode=h5_mode,
-                resize=True,
-            )
-            step_vals[-1] = time
-            idx = step_vals.size - 1
-            for key in [
-                "PartOffsets",
-                "NumberOfParts",
-                "PointOffsets",
-                "CellOffsets",
-                "ConnectivityIdOffsets",
-            ]:
-                comp = steps[key]
-                comp.resize(steps.attrs["NSteps"], axis=0)
-                if comp.size > 1:
-                    comp[-1] = comp[-2]
-        else:
-            raise ValueError(f"Time step found multiple times in {filename}")
-
-        # Update offsets for current variable
-        pdo_u.resize(steps.attrs["NSteps"], axis=0)
-        pdo_u[idx] = dataset.shape[0] - array_data.global_shape[0]
-
-        # Point and cell data of all other variables has to be updated to be synced
-        for key in [
-            "CellDataOffsets",
-            "PointDataOffsets",
-        ]:
-            comp = steps[key]
-            num_steps = steps.attrs["NSteps"]
-            for dname, dset in comp.items():
-                # Only resize other data arrays
-                if dname != array_data.name:
-                    # Only resize if it hasn't already been resized
-                    if dset.size != num_steps:
-                        dset.resize(num_steps, axis=0)
-                        # Only update data if we are further than first time step
-                        if dset.size > 1:
-                            dset[-1] = dset[-2]
+        written_offsets = np.append(written_offsets, dataset.shape[0] - array_data.global_shape[0])
+        written_steps = np.append(written_steps, step)
+        offsets[:] = _fill_time_steps(num_steps, written_steps, written_offsets)
+        _create_temporal_record(h5file, record, written_steps)

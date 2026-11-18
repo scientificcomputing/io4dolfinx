@@ -31,6 +31,7 @@ __all__ = [
     "unroll_insert_position",
     "codim_names",
     "match_rows",
+    "same_time",
     "strip_suffix",
     "input_cell_index",
     "create_mixed_mesh",
@@ -281,6 +282,27 @@ def match_rows(reference: npt.NDArray[np.int64], query: npt.NDArray[np.int64]) -
     matched, first = np.unique(inverse[: len(reference)], return_index=True)
     lookup[matched] = first
     return lookup[inverse[len(reference) :]]
+
+
+def same_time(stamps: npt.ArrayLike, time: float) -> npt.NDArray[np.bool_]:
+    """Which time stamps are the same as ``time``, up to the precision of their dtype.
+
+    The relative tolerance is the square root of the machine epsilon of the stamps
+    (float64 if they are not floating point), so that round-off in computing a time does
+    not make it a different time. The absolute tolerance is the machine epsilon, so that
+    small but distinct times near zero stay apart.
+
+    Args:
+        stamps: Time stamps
+        time: The time to look for
+
+    Returns:
+        A boolean array, true where a stamp is the same as ``time``
+    """
+    stamps = np.asarray(stamps)
+    dtype = stamps.dtype if np.issubdtype(stamps.dtype, np.floating) else np.dtype(np.float64)
+    eps = np.finfo(dtype).eps
+    return np.isclose(stamps, time, rtol=np.sqrt(eps), atol=eps)
 
 
 def strip_suffix(filename: Path | str, suffixes: Sequence[str]) -> Path:

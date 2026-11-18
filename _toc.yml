@@ -30,6 +30,7 @@ parts:
     - file: "docs/original_checkpoint"
     - file: "docs/checkpoint_format"
     - file: "docs/vtkhdf_compression"
+    - file: "docs/vtkhdf_time_steps"
 
   - caption: Python API
     chapters:
