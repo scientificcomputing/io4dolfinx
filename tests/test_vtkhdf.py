@@ -848,8 +848,11 @@ def test_meshes_share_time_steps_in_vtk(tmp_path):
         info = reader.GetOutputInformation(0)
         times = info.Get(vtk.vtkStreamingDemandDrivenPipeline.TIME_STEPS())
         np.testing.assert_allclose(times, [0.0, 1.0, 2.0])
-        for t in times:
-            reader.UpdateTimeStep(t)
+        for step, t in enumerate(times):
+            # Select the step itself: for MultiBlockDataSet files, VTK 9.7 ignores the
+            # time requested with UpdateTimeStep and reads the first step
+            reader.SetStep(step)
+            reader.Update()
             blocks = {}
             iterator = reader.GetOutputDataObject(0).NewIterator()
             iterator.InitTraversal()
