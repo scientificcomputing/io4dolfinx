@@ -176,7 +176,8 @@ class IOBackend(Protocol):
             backend_args: Arguments to backend
 
         Returns:
-            Numpy array of timestamps read from file
+            Numpy array of timestamps read from file. A checkpoint backend returns an empty
+            array for a function the file does not hold.
         """
 
     def write_mesh(

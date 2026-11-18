@@ -264,7 +264,7 @@ def read_timestamps(
         backend_args: Arguments for backend, for instance file type.
         backend: What backend to use for writing.
     Returns:
-        The time-stamps
+        The time-stamps, none for a function the file does not hold
     """
     check_file_exists(filename)
 

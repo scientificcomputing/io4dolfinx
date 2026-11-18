@@ -245,15 +245,15 @@ def read_timestamps(
         backend_args: Arguments for backend, for instance file type.
 
     Returns:
-        The time-stamps
+        The time-stamps, none for a function the file does not hold
     """
     check_file_exists(filename)
     mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_directory = h5file[mesh_name]
-        functions = mesh_directory["functions"]
-        u = functions[function_name]
-        timestamps = u.attrs["timestamps"]
+        functions = h5file.get(f"{mesh_name}/functions")
+        if functions is None or function_name not in functions:
+            return np.array([], dtype=np.float64)
+        timestamps = functions[function_name].attrs["timestamps"]
     return timestamps
 
 
@@ -282,7 +282,7 @@ def write_mesh(
             mesh_directory = h5file[mesh_name]
             timestamps = mesh_directory.attrs["timestamps"]
             if np.isclose(time, timestamps).any():
-                raise ValueError("Mesh has already been stored at time={time_stamp}.")
+                raise ValueError(f"Mesh {mesh_name!r} has already been stored at time={time}.")
             else:
                 mesh_directory.attrs["timestamps"] = np.append(
                     mesh_directory.attrs["timestamps"], time
@@ -720,7 +720,7 @@ def write_function(
         if "timestamps" in function.attrs.keys():
             timestamps = function.attrs["timestamps"]
             if np.isclose(time, timestamps).any():
-                raise RuntimeError("FUnction has already been stored at time={time_stamp}.")
+                raise RuntimeError(f"Function {u.name!r} has already been stored at time={time}.")
             else:
                 function.attrs["timestamps"] = np.append(function.attrs["timestamps"], time)
         else:

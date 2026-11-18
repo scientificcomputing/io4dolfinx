@@ -158,7 +158,8 @@ def read_timestamps(
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
     Returns:
-        The time-stamps
+        The time-stamps, none for a function the file does not hold (with the
+        adios2 and h5py backends)
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading time-stamps from {filename} for function {function_name}")

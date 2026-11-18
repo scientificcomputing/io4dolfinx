@@ -312,3 +312,44 @@ def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
     )
     assert np.allclose(timestamps_u, t_u)
     assert np.allclose(timestamps_v, t_v)
+
+
+def test_read_timestamps_of_a_name_not_in_the_file_is_empty(mesh_2D, tmp_path, backend):
+    """Every checkpoint backend has no timestamps for a name it never wrote, as adios2 always
+    had, so that code written against one default backend keeps working on the other."""
+    suffix = ".bp" if backend == "adios2" else ".h5"
+    mesh = mesh_2D
+    V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))
+    u = dolfinx.fem.Function(V, dtype=mesh.geometry.x.dtype, name="u")
+    # tmp_path is shared by all ranks, so a mesh on COMM_SELF needs a file per rank
+    name = f"no_timestamps_{MPI.COMM_WORLD.rank}" if mesh.comm.size == 1 else "no_timestamps"
+    filename = (tmp_path / name).with_suffix(suffix)
+
+    io4dolfinx.write_mesh(filename, mesh, backend=backend)
+    no_function = io4dolfinx.read_timestamps(filename, mesh.comm, "v", backend=backend)
+    io4dolfinx.write_function(filename, u, time=0.5, backend=backend)
+    another_function = io4dolfinx.read_timestamps(filename, mesh.comm, "v", backend=backend)
+
+    assert len(no_function) == 0
+    assert len(another_function) == 0
+    assert np.allclose(io4dolfinx.read_timestamps(filename, mesh.comm, "u", backend=backend), [0.5])
+
+
+def test_writing_at_a_stored_time_names_the_time(mesh_2D, tmp_path, backend):
+    """The h5py backends refuse a second write at a stored time, saying which."""
+    if backend == "adios2":
+        pytest.skip("adios2 appends a second write at a stored time")
+    mesh = mesh_2D
+    V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))
+    u = dolfinx.fem.Function(V, dtype=mesh.geometry.x.dtype, name="u")
+    name = f"stored_time_{MPI.COMM_WORLD.rank}" if mesh.comm.size == 1 else "stored_time"
+    filename = (tmp_path / name).with_suffix(".h5")
+
+    io4dolfinx.write_mesh(filename, mesh, backend=backend, time=0.25)
+    with pytest.raises(ValueError, match=r"Mesh 'mesh' has already been stored at time=0\.25"):
+        io4dolfinx.write_mesh(
+            filename, mesh, backend=backend, time=0.25, mode=io4dolfinx.FileMode.append
+        )
+    io4dolfinx.write_function(filename, u, time=0.25, backend=backend)
+    with pytest.raises(RuntimeError, match=r"Function 'u' has already been stored at time=0\.25"):
+        io4dolfinx.write_function(filename, u, time=0.25, backend=backend)
