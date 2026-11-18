@@ -264,7 +264,6 @@ def _set_time_steps(h5file: h5py.File, stamps: np.ndarray):
         steps.attrs["NSteps"] = np.int64(num_steps)
 
 
-
 def _link_steps_at_root(h5file: h5py.File):
     """Link ``/VTKHDF/Steps`` to the time steps of the first grid in a file.
 
@@ -282,6 +281,7 @@ def _link_steps_at_root(h5file: h5py.File):
     grids = _get_all_temporal_unstructured_grids(h5file)
     if "Steps" not in hdf and len(grids) > 0:
         hdf["Steps"] = grids[0]["Steps"]
+
 
 def _get_time_steps_and_data_offset(
     h5file: h5py.File, record: str, offsets_path: str
