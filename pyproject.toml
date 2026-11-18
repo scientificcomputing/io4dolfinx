@@ -147,3 +147,12 @@ current_version = "2.0.0"
 filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
+
+# A new minor release gets its own documentation version, built in the DOLFINx image of the
+# previous minor release. Update that image if a newer DOLFINx release is stable.
+[[tool.bumpversion.files]]
+filename = ".github/docs-versions.toml"
+include_bumps = ["major", "minor"]
+regex = true
+search = '(?P<last>^"\d+\.\d+" = "(?P<image>[^"]+)"\n)\Z'
+replace = '\g<last>"{new_major}.{new_minor}" = "\g<image>"\n'
