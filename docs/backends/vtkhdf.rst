@@ -35,13 +35,30 @@ corresponding arguments to :meth:`h5py.Group.create_dataset`; see the h5py
   :ref:`h5py:dataset_scaleoffset`.
 
 All boolean options must be ``True`` or ``False``. Other compression filters
-and explicit chunk shapes are not supported, as files using them may not be
-readable in ParaView.
+are not supported, as files using them may not be readable in ParaView.
 
-Coordinates, connectivity, topology offsets, cell types, point/cell values and
-mesh tag values are filtered independently, each with h5py
-:ref:`automatic chunking<h5py:dataset_chunks>`. Small bookkeeping
-arrays, including timestep metadata, remain unfiltered.
+Chunking
+~~~~~~~~
+
+VTKHDF appends every time step to resizable datasets, which HDF5 requires to be
+:ref:`chunked<h5py:dataset_chunks>`. Coordinates, connectivity, topology offsets,
+cell types, point/cell values and mesh tag values are each chunked by whole rows,
+and filtered independently. Small bookkeeping arrays, including timestep metadata,
+use h5py's automatic chunking and remain unfiltered.
+
+- ``chunk_bytes`` (default ``1048576``, 1 MiB): the size of a chunk in bytes,
+  rounded down to whole rows and at least one row. A chunk is never longer than
+  the dataset when it is created.
+
+Each rank writes, and each reader reads, a contiguous block of rows, which then
+shares at most two chunks with its neighbours, whatever the number of processes.
+
+The default fits the 1 MiB chunk cache of HDF5 1.x, which ParaView bundles; see the
+HDF5 `chunking guide <https://support.hdfgroup.org/documentation/hdf5-docs/advanced_topics/chunking_in_hdf5.html>`_.
+
+The chunk size, like the filters, must be the same on every rank. Unlike the
+filters, it only applies to new datasets: an existing dataset keeps its chunks on
+append, and another ``chunk_bytes`` is not an error.
 
 Settings apply when a dataset is first created. On append, omitted options retain
 that dataset's existing settings; explicitly conflicting settings raise

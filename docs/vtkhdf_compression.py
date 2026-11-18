@@ -17,6 +17,8 @@
 #   number of bits. Floating-point data are left unchanged, as scale-offset is lossy
 #   for them. The default applies to new datasets only; `scaleoffset=False` turns it
 #   off, and so does `fletcher32=True`, as h5py cannot combine the two.
+# - `chunk_bytes` (1 MiB by default): the size of the chunks of whole rows that each
+#   dataset is split into, and filtered by; see {ref}`the backend<vtkhdfbackend>`.
 #
 # ## Writing compressed data
 #

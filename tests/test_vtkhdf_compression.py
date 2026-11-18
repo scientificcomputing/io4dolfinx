@@ -215,6 +215,12 @@ def test_compressed_empty_ranks(shared_tmp_path, dtype, association, options, ba
         {"compression_opts": 4},
         {"shuffle": "yes"},
         {"chunks": (25000,)},
+        {"chunks": True},
+        {"chunk_bytes": 0},
+        {"chunk_bytes": -1},
+        {"chunk_bytes": 2**32},
+        {"chunk_bytes": 1.5},
+        {"chunk_bytes": True},
         {"scaleoffset": 2},
         {"fletcher32": 1},
         {"fletcher32": True, "scaleoffset": True},
@@ -403,6 +409,7 @@ def test_rank_local_filter_failure(shared_tmp_path, monkeypatch):
             marks=requires_gzip,
         ),
         lambda rank: {"fletcher32": rank == 0},
+        lambda rank: {"chunk_bytes": 2**20 + rank},
     ],
 )
 def test_inconsistent_rank_options(shared_tmp_path, rank_options):
@@ -416,3 +423,78 @@ def test_inconsistent_rank_options(shared_tmp_path, rank_options):
             filename, mesh, backend="vtkhdf", backend_args=rank_options(comm.rank)
         )
     assert not filename.exists()
+
+
+def _rows_per_chunk(chunk_bytes: int, dataset: h5py.Dataset) -> int:
+    """Rows in a chunk of about ``chunk_bytes``, capped by the rows at creation."""
+    row_bytes = dataset.dtype.itemsize * int(np.prod(dataset.shape[1:], dtype=np.int64))
+    return max(1, chunk_bytes // row_bytes)
+
+
+@pytest.mark.parametrize("chunk_bytes", [None, 1, 240, 2**12])
+@pytest.mark.parametrize("backend", ["vtkhdf", "vtkhdf-serial"])
+def test_row_chunks(shared_tmp_path, chunk_bytes, backend):
+    """Bulk datasets are chunked by whole rows; appends keep the chunks."""
+    comm = MPI.COMM_WORLD
+    if backend == "vtkhdf" and comm.size > 1 and not h5py.get_config().mpi:
+        pytest.skip("Writing in parallel needs h5py with MPI")
+    filename = shared_tmp_path / "chunks.vtkhdf"
+    mesh = create_unit_square(comm, 12, 9)
+    options = {} if chunk_bytes is None else {"chunk_bytes": chunk_bytes}
+    target = 2**20 if chunk_bytes is None else chunk_bytes
+    io4dolfinx.write_mesh(filename, mesh, backend=backend, backend_args=options)
+    u = Function(functionspace(mesh, ("Lagrange", 1, (2,))), name="u")
+    q = Function(functionspace(mesh, ("DG", 0)), name="q")
+    dim = mesh.topology.dim
+    cell_map = mesh.topology.index_map(dim)
+    cells = np.arange(cell_map.size_local, dtype=np.int32)
+    tags = meshtags(mesh, dim, cells, cells + cell_map.local_range[0])
+    io4dolfinx.write_meshtags(filename, mesh, tags, "tags", backend=backend, backend_args=options)
+
+    with h5py.File(filename, "r") as hdf:
+        block = hdf["VTKHDF/mesh"]
+        created = {path: block[path].shape for path in INTEGER_DATASETS + ("Points",)}
+
+    for time in (0.0, 1.0):
+        if time:
+            # Another chunk size on append neither raises nor changes existing chunks.
+            io4dolfinx.write_mesh(
+                filename,
+                mesh,
+                time=time,
+                mode=io4dolfinx.FileMode.append,
+                backend=backend,
+                backend_args={"chunk_bytes": 2 * target},
+            )
+        for writer, function in ((io4dolfinx.write_point_data, u), (io4dolfinx.write_cell_data, q)):
+            function.x.array[:] = time
+            writer(
+                filename,
+                function,
+                time=time,
+                mode=io4dolfinx.FileMode.append,
+                backend=backend,
+                backend_args=options if time == 0.0 else {"chunk_bytes": 2 * target},
+            )
+
+    with h5py.File(filename, "r") as hdf:
+        block = hdf["VTKHDF/mesh"]
+        for path in INTEGER_DATASETS + ("Points", "PointData/u", "CellData/q"):
+            dataset = block[path]
+            rows = created[path][0] if path in created else dataset.shape[0] // 2
+            expected = (min(_rows_per_chunk(target, dataset), rows), *dataset.shape[1:])
+            assert dataset.chunks == expected, path
+        assert block["Points"].shape[0] == 2 * created["Points"][0]
+        tag_block = hdf["VTKHDF/mesh_tags"]
+        for path in ("CellData/tags", *INTEGER_DATASETS):
+            dataset = tag_block[path]
+            assert dataset.chunks == (
+                min(_rows_per_chunk(target, dataset), dataset.shape[0]),
+                *dataset.shape[1:],
+            )
+        # Bookkeeping arrays keep h5py's automatic chunking.
+        assert block["NumberOfPoints"].chunks is not None
+
+    restored = io4dolfinx.read_mesh(filename, comm, time=1.0, backend="vtkhdf")
+    v = io4dolfinx.read_point_data(filename, "u", restored, time=1.0, backend="vtkhdf")
+    np.testing.assert_allclose(v.x.array, 1.0)

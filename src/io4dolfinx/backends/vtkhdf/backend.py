@@ -762,31 +762,31 @@ def _create_dataset(
     name: str,
     shape: tuple[int, ...],
     dtype: npt.DTypeLike,
-    chunks: bool,
     maxshape: tuple[int | None, ...],
     mode: str,
     resize: bool = True,
-    filters: dict[str, Any] | None = None,
+    storage: dict[str, Any] | None = None,
 ) -> h5py.Dataset:
     """Create a dataset, or open (and resize) an existing one in append mode.
 
     Args:
-        filters: h5py filter arguments for a new dataset, from
-            :func:`io4dolfinx.backends.h5py.storage.filter_options`. Omitted for small
+        storage: Storage options of a bulk dataset, from
+            :func:`io4dolfinx.backends.h5py.storage.storage_options`. A new bulk dataset
+            is chunked by rows and filtered as these options say. Omitted for small
             bookkeeping datasets, which every rank writes independently and which must
-            therefore stay unfiltered.
+            therefore stay unfiltered; they use h5py's automatic chunking.
     """
     if name not in root.keys():
         mode = "w"
     if mode == "w":
-        dataset = root.create_dataset(
-            name,
-            shape=shape,
-            dtype=dtype,
-            chunks=chunks,
-            maxshape=maxshape,
-            **(filters or {}),
-        )
+        if storage is None:
+            layout: dict[str, Any] = {"chunks": True}
+        else:
+            layout = {
+                "chunks": h5_storage.chunk_shape(storage, shape, dtype),
+                **h5_storage.filter_options(storage, dtype),
+            }
+        dataset = root.create_dataset(name, shape=shape, dtype=dtype, maxshape=maxshape, **layout)
     elif mode == "a":
         dataset = root[name]
         old_shape = dataset.shape
@@ -916,7 +916,6 @@ def write_mesh(
             "NumberOfPoints",
             shape=(num_steps,),
             dtype=np.int64,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
             resize=False,
@@ -928,10 +927,9 @@ def write_mesh(
             "Points",
             shape=(mesh.num_nodes_global, 3),
             dtype=mesh.local_geometry.dtype,
-            chunks=True,
             maxshape=(None, 3),
             mode=h5_mode,
-            filters=h5_storage.filter_options(storage_options, mesh.local_geometry.dtype),
+            storage=storage_options,
         )
         insert_slice = _compute_append_slice(
             points, mesh.num_nodes_global, mesh.local_geometry_pos, h5_mode
@@ -953,7 +951,6 @@ def write_mesh(
                 key,
                 shape=(num_steps,),
                 dtype=np.int64,
-                chunks=True,
                 maxshape=(None,),
                 mode=h5_mode,
                 resize=False,  # Static, stored once
@@ -971,11 +968,10 @@ def write_mesh(
             "Offsets",
             shape=(mesh.num_cells_global + 1,),
             dtype=np.int64,
-            chunks=True,
             mode=h5_mode,
             maxshape=(None,),
             resize=False,  # Static, stored once
-            filters=h5_storage.filter_options(storage_options, np.int64),
+            storage=storage_options,
         )
         # Each offset has one writer. Only the last nonempty rank writes the final offset.
         first, last = mesh.local_topology_pos
@@ -1001,11 +997,10 @@ def write_mesh(
             "Connectivity",
             shape=(mesh.num_cells_global * num_dofs_per_cell,),
             dtype=np.int64,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Static, stored once
-            filters=h5_storage.filter_options(storage_options, np.int64),
+            storage=storage_options,
         )
         insert_slice = _compute_append_slice(
             topology,
@@ -1028,10 +1023,9 @@ def write_mesh(
             shape=(mesh.num_cells_global,),
             dtype=np.uint8,
             maxshape=(None,),
-            chunks=True,
             mode=h5_mode,
             resize=False,  # Static, stored once
-            filters=h5_storage.filter_options(storage_options, np.uint8),
+            storage=storage_options,
         )
         insert_slice = _compute_append_slice(
             types, mesh.num_cells_global, mesh.local_topology_pos, h5_mode
@@ -1056,7 +1050,6 @@ def write_mesh(
                 key,
                 shape=(num_steps,),
                 dtype=dtype,
-                chunks=True,
                 maxshape=(None,),
                 mode=h5_mode,
                 resize=False,
@@ -1130,10 +1123,9 @@ def write_meshtags(
             data.name,
             shape=(data.num_entities_global,),
             dtype=data.values.dtype,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
-            filters=h5_storage.filter_options(storage_options, data.values.dtype),
+            storage=storage_options,
         )
         assert data.local_start is not None
         insert_slice = _compute_append_slice(
@@ -1151,7 +1143,6 @@ def write_meshtags(
             "NumberOfCells",
             shape=(1,),
             dtype=np.int64,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Static, stored once
@@ -1170,7 +1161,6 @@ def write_meshtags(
             "NumberOfConnectivityIds",
             shape=(1,),
             dtype=np.int64,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Static, stored once
@@ -1184,11 +1174,10 @@ def write_meshtags(
             "Offsets",
             shape=(data.num_entities_global + 1,),
             dtype=np.int64,
-            chunks=True,
             mode=h5_mode,
             maxshape=(None,),
             resize=False,  # Static, stored once
-            filters=h5_storage.filter_options(storage_options, np.int64),
+            storage=storage_options,
         )
         # Each offset has one writer. Only the last nonempty rank writes the final offset.
         assert data.local_start is not None
@@ -1216,11 +1205,10 @@ def write_meshtags(
             "Connectivity",
             shape=(data.num_entities_global * num_dofs_per_cell,),
             dtype=np.int64,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
             resize=False,  # Static, stored once
-            filters=h5_storage.filter_options(storage_options, np.int64),
+            storage=storage_options,
         )
         insert_slice = _compute_append_slice(
             topology,
@@ -1244,10 +1232,9 @@ def write_meshtags(
             shape=(data.num_entities_global,),
             dtype=np.uint8,
             maxshape=(None,),
-            chunks=True,
             mode=h5_mode,
             resize=False,  # Static, stored once
-            filters=h5_storage.filter_options(storage_options, np.uint8),
+            storage=storage_options,
         )
         insert_slice = _compute_append_slice(
             types,
@@ -1276,7 +1263,6 @@ def write_meshtags(
                 key,
                 shape=(1,),
                 dtype=np.int64,
-                chunks=True,
                 maxshape=(None,),
                 mode=h5_mode,
             )
@@ -1290,7 +1276,6 @@ def write_meshtags(
             data.name,
             shape=parent_mesh_group["Steps"]["CellOffsets"].shape,
             dtype=np.int64,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
         )
@@ -1568,10 +1553,9 @@ def write_data(
             array_data.name,
             shape=global_shape,
             dtype=values.dtype,
-            chunks=True,
             maxshape=(None, values.shape[1]),
             mode=h5_mode,
-            filters=h5_storage.filter_options(storage_options, values.dtype),
+            storage=storage_options,
         )
         insert_slice = _compute_append_slice(
             dataset,
@@ -1598,7 +1582,6 @@ def write_data(
             array_data.name,
             shape=(num_steps,),
             dtype=np.int64,
-            chunks=True,
             maxshape=(None,),
             mode=h5_mode,
             resize=False,

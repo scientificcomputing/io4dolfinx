@@ -2,8 +2,8 @@
 
 Currently used by the VTKHDF backend.
 
-Validates filter settings passed through ``backend_args``, agrees on them across
-ranks, and writes local slices, collectively for files opened with MPI-IO.
+Validates filter and chunk settings passed through ``backend_args``, agrees on them
+across ranks, and writes local slices, collectively for files opened with MPI-IO.
 Filter options are passed to :meth:`h5py.Group.create_dataset` under their h5py names,
 see https://docs.h5py.org/en/stable/high/dataset.html#dataset-compression. Only gzip
 compression is accepted, as ParaView's bundled HDF5 can read it without filter plugins.
@@ -24,6 +24,7 @@ import numpy.typing as npt
 __all__ = [
     "DEFAULT_STORAGE_OPTIONS",
     "check_storage_options",
+    "chunk_shape",
     "filter_options",
     "storage_options",
     "write_dataset",
@@ -40,7 +41,12 @@ DEFAULT_STORAGE_OPTIONS: dict[str, Any] = {
     "shuffle": False,
     "fletcher32": False,
     "scaleoffset": True,  # Integer datasets only; off by default with fletcher32
+    "chunk_bytes": 2**20,  # Target size of a chunk of whole rows, see `chunk_shape`
 }
+#: HDF5 limits the size of a chunk to less than 4 GiB.
+_MAX_CHUNK_BYTES = 2**32 - 1
+#: Options that set up a new dataset only and are not checked against existing ones.
+_CREATION_OPTIONS = ("chunk_bytes",)
 _BOOLEAN_OPTIONS = tuple(
     key for key, value in DEFAULT_STORAGE_OPTIONS.items() if isinstance(value, bool)
 )
@@ -63,12 +69,18 @@ def _resolve(options: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+def _is_integer(value: Any) -> bool:
+    """Whether a value is a Python or numpy integer, excluding booleans."""
+    return isinstance(value, numbers.Integral) and not isinstance(value, bool | np.bool_)
+
+
 def _get_and_validate_storage_options(arguments: dict[str, Any]) -> dict[str, Any]:
     """Extract the storage options from backend arguments and validate them locally.
 
     Args:
         arguments: Backend arguments. Keys other than those in
-            :data:`DEFAULT_STORAGE_OPTIONS` and ``chunks`` are ignored.
+            :data:`DEFAULT_STORAGE_OPTIONS` are ignored, except ``chunks``, which is
+            rejected in favour of ``chunk_bytes``.
 
     Returns:
         The storage options present in ``arguments``, with numpy integers and booleans
@@ -89,20 +101,25 @@ def _get_and_validate_storage_options(arguments: dict[str, Any]) -> dict[str, An
         raise ValueError("HDF5 compression must be 'gzip' or None")
     if "compression_opts" in options:
         level = options["compression_opts"]
-        if (
-            compression != "gzip"
-            or not isinstance(level, numbers.Integral)
-            or isinstance(level, bool | np.bool_)
-            or not 0 <= int(level) <= 9
-        ):
+        if compression != "gzip" or not _is_integer(level) or not 0 <= int(level) <= 9:
             raise ValueError("compression_opts requires gzip and an integer level from 0 to 9")
         options["compression_opts"] = int(level)
     settings = _resolve(options)
     if settings["fletcher32"] and settings["scaleoffset"]:
         # h5py forbids the combination, as scale-offset is lossy for floats.
         raise ValueError("fletcher32 cannot be combined with scaleoffset")
-    if "chunks" in arguments and arguments["chunks"] is not True:
-        raise ValueError("Only automatic chunking (chunks=True) is supported")
+    if "chunk_bytes" in options:
+        size = options["chunk_bytes"]
+        if not _is_integer(size) or not 1 <= int(size) <= _MAX_CHUNK_BYTES:
+            raise ValueError(
+                f"chunk_bytes must be an integer from 1 to {_MAX_CHUNK_BYTES} (HDF5's limit)"
+            )
+        options["chunk_bytes"] = int(size)
+    if "chunks" in arguments:
+        raise ValueError(
+            "Chunks are whole rows of the dataset; set their size with chunk_bytes instead "
+            "of chunks"
+        )
     filters = [h5py.h5z.FILTER_DEFLATE] if compression else []
     filters += [filter_id for key, filter_id in _FILTERS.items() if settings[key]]
     for filter_id in filters:
@@ -173,9 +190,34 @@ def filter_options(options: dict[str, Any], dtype: npt.DTypeLike) -> dict[str, A
     return filters
 
 
+def chunk_shape(
+    options: dict[str, Any], shape: tuple[int, ...], dtype: npt.DTypeLike
+) -> tuple[int, ...]:
+    """Chunk shape of a new bulk dataset: whole rows, about ``chunk_bytes`` per chunk.
+
+    At least one row, and at most the rows of the dataset at creation.
+
+    Args:
+        options: Storage options returned by :func:`storage_options`.
+        shape: Shape of the new dataset; rows are along the first axis.
+        dtype: Data type of the dataset.
+
+    Returns:
+        The ``chunks`` argument for :meth:`h5py.Group.create_dataset`.
+    """
+    row_bytes = np.dtype(dtype).itemsize * int(np.prod(shape[1:], dtype=np.int64))
+    rows = max(1, _resolve(options)["chunk_bytes"] // max(row_bytes, 1))
+    return (min(rows, max(shape[0], 1)), *shape[1:])
+
+
 def check_storage_options(dataset: h5py.Dataset, options: dict[str, Any]) -> None:
-    """Reject explicit changes to the immutable filters of an existing dataset."""
+    """Reject explicit changes to the immutable filters of an existing dataset.
+
+    Chunk sizes only apply to new datasets, so an existing dataset keeps its chunks.
+    """
     for key, requested in options.items():
+        if key in _CREATION_OPTIONS:
+            continue
         if key == "scaleoffset" and not np.issubdtype(dataset.dtype, np.integer):
             continue
         actual = getattr(dataset, key)
