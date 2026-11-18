@@ -127,3 +127,6 @@ class ArrayData:
     global_shape: tuple[int, int]  # Global shape of data
     local_range: tuple[int, int]  # Start and stop of local array in global array
     type: str  # Type of array-data
+    #: Value shape of the function the values come from (``()`` for a scalar), or ``None``
+    #: when unknown. Lets a backend lay out vectors and tensors for its file format.
+    value_shape: tuple[int, ...] | None = None

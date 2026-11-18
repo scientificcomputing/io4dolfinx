@@ -925,7 +925,9 @@ def write_point_data(
     """
     backend_args = _with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
-    V = create_geometry_function_space(u.function_space.mesh, int(np.prod(u.ufl_shape)))
+    V = create_geometry_function_space(
+        u.function_space.mesh, int(np.prod(u.ufl_shape)), value_shape=u.ufl_shape
+    )
     v_out = dolfinx.fem.Function(V, name=u.name, dtype=u.x.array.dtype)
     v_out.interpolate(u)
     comm = v_out.function_space.mesh.comm
@@ -946,6 +948,7 @@ def write_point_data(
         global_shape=data_shape,
         local_range=local_range,
         type="Point",
+        value_shape=tuple(u.ufl_shape),
     )
     logger.debug(
         f"Using {backend} backend with arguments {backend_args} and mode {mode} to write point data"
@@ -1014,6 +1017,7 @@ def write_cell_data(
         global_shape=data_shape,
         local_range=local_range,
         type="Cell",
+        value_shape=tuple(u.ufl_shape),
     )
     logger.debug(
         f"Using {backend} backend with arguments {backend_args} and mode {mode} to write cell data"

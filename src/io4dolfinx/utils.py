@@ -32,6 +32,9 @@ __all__ = [
     "codim_names",
     "match_rows",
     "same_time",
+    "vtk_components",
+    "pad_for_vtk",
+    "strip_vtk_padding",
     "strip_suffix",
     "input_cell_index",
     "create_mixed_mesh",
@@ -303,6 +306,64 @@ def same_time(stamps: npt.ArrayLike, time: float) -> npt.NDArray[np.bool_]:
     dtype = stamps.dtype if np.issubdtype(stamps.dtype, np.floating) else np.dtype(np.float64)
     eps = np.finfo(dtype).eps
     return np.isclose(stamps, time, rtol=np.sqrt(eps), atol=eps)
+
+
+def vtk_components(value_shape: tuple[int, ...]) -> tuple[int, npt.NDArray[np.int64]]:
+    """The layout VTK expects for values of a given shape.
+
+    VTK reads arrays with 3 components as vectors and arrays with 9 components as
+    tensors. Vectors with fewer than 3 components are therefore padded to 3, and tensors
+    of at most 3 x 3 are embedded in a 3 x 3 tensor, row by row. Other shapes are stored
+    as they are.
+
+    Args:
+        value_shape: Value shape of the data, for instance ``(2,)`` or ``(2, 2)``
+
+    Returns:
+        The number of components VTK stores, and the component holding each value (in
+        row-major order)
+    """
+    if len(value_shape) == 1 and value_shape[0] < 3:
+        return 3, np.arange(value_shape[0], dtype=np.int64)
+    if len(value_shape) == 2 and max(value_shape) <= 3:
+        rows, cols = np.indices(value_shape).reshape(2, -1)
+        return 9, (3 * rows + cols).astype(np.int64)
+    size = int(np.prod(value_shape))
+    return size, np.arange(size, dtype=np.int64)
+
+
+def pad_for_vtk(values: np.ndarray, value_shape: tuple[int, ...]) -> np.ndarray:
+    """Lay out values as VTK expects them, see :func:`vtk_components`.
+
+    Args:
+        values: Values with one row per point or cell and one column per component
+        value_shape: Value shape of the data
+
+    Returns:
+        The values, with zeros in the components added for VTK
+    """
+    num_components, columns = vtk_components(value_shape)
+    padded = np.zeros((values.shape[0], num_components), dtype=values.dtype)
+    padded[:, columns] = values
+    return padded
+
+
+def strip_vtk_padding(data: np.ndarray, value_shape: tuple[int, ...] | None) -> np.ndarray:
+    """Remove the components added by :func:`pad_for_vtk`.
+
+    Args:
+        data: Data read from a VTK file, 1D for single-component arrays
+        value_shape: Value shape of the data, ``None`` if unknown
+
+    Returns:
+        The data with one column per component: those of the value shape, or every
+        stored column if it is unknown
+    """
+    if data.ndim == 1:
+        data = data.reshape(-1, 1)
+    if value_shape is None:
+        return data
+    return data[:, vtk_components(value_shape)[1]]
 
 
 def strip_suffix(filename: Path | str, suffixes: Sequence[str]) -> Path:
