@@ -80,6 +80,11 @@ Only the geometry of a mesh can change between time steps: its topology is store
 so writing a mesh with another number of points or cells under the same name raises a
 ``ValueError``.
 
+VTK 9.7 reads only the first time step of a MultiBlockDataSet when a time is requested
+(`vtk#20246 <https://gitlab.kitware.com/vtk/vtk/-/issues/20246>`_), unless the root has a
+``Steps`` group. Until this is fixed, io4dolfinx links ``/VTKHDF/Steps`` to the time steps
+of the first mesh, which earlier versions of VTK ignore.
+
 :func:`io4dolfinx.read_timestamps` returns every time step of the mesh an array is
 stored on. See :doc:`../vtkhdf_time_steps` for an executed example with a splitting
 scheme, and the write orders that are rejected.

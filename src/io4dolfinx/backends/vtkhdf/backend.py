@@ -264,6 +264,25 @@ def _set_time_steps(h5file: h5py.File, stamps: np.ndarray):
         steps.attrs["NSteps"] = np.int64(num_steps)
 
 
+
+def _link_steps_at_root(h5file: h5py.File):
+    """Link ``/VTKHDF/Steps`` to the time steps of the first grid in a file.
+
+    Workaround for VTK 9.7, which reads the first time step of a MultiBlockDataSet for
+    any time requested through the pipeline unless the root has a ``Steps`` group, see
+    https://gitlab.kitware.com/vtk/vtk/-/issues/20246. The VTKHDF specification has no
+    ``Steps`` group at the root of a MultiBlockDataSet, and earlier versions of VTK
+    ignore it. All grids share their time steps, so those of any grid will do, and the
+    hard link follows them as steps are added. To be removed once the issue is fixed.
+
+    Args:
+        h5file: An open MultiBlockDataSet file
+    """
+    hdf = h5file["VTKHDF"]
+    grids = _get_all_temporal_unstructured_grids(h5file)
+    if "Steps" not in hdf and len(grids) > 0:
+        hdf["Steps"] = grids[0]["Steps"]
+
 def _get_time_steps_and_data_offset(
     h5file: h5py.File, record: str, offsets_path: str
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -999,6 +1018,7 @@ def write_mesh(
         steps["PointOffsets"][:] = _fill_time_steps(num_steps, written_steps, written_offsets)
         number_of_points[:] = _fill_time_steps(num_steps, written_steps, written_points)
         _create_temporal_record(h5file, record, written_steps)
+        _link_steps_at_root(h5file)
 
 
 def write_meshtags(
@@ -1515,3 +1535,4 @@ def write_data(
         written_steps = np.append(written_steps, step)
         offsets[:] = _fill_time_steps(num_steps, written_steps, written_offsets)
         _create_temporal_record(h5file, record, written_steps)
+        _link_steps_at_root(h5file)

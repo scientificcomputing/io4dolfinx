@@ -788,7 +788,9 @@ def test_meshes_share_time_steps(tmp_path, vtkhdf_backend):
     # entry per time step
     comm.barrier()
     with h5py.File(filename, "r") as h5file:
-        blocks = {name for name in h5file["VTKHDF"] if name != "Assembly"}
+        # The root Steps link works around https://gitlab.kitware.com/vtk/vtk/-/issues/20246
+        np.testing.assert_allclose(h5file["VTKHDF/Steps/Values"], [0.0, 1.0, 2.0])
+        blocks = {name for name in h5file["VTKHDF"] if name not in ("Assembly", "Steps")}
         assert blocks == {"square", "square_cells", "interval", "added"}
         for name in blocks:
             block = h5file["VTKHDF"][name]
@@ -842,29 +844,34 @@ def test_meshes_share_time_steps_in_vtk(tmp_path):
     filename = tmp_path / "shared_steps_vtk.vtkhdf"
     write_meshes(filename, "vtkhdf")
     if comm.rank == 0:
-        reader = vtk.vtkHDFReader()
-        reader.SetFileName(str(filename))
-        reader.UpdateInformation()
-        info = reader.GetOutputInformation(0)
-        times = info.Get(vtk.vtkStreamingDemandDrivenPipeline.TIME_STEPS())
-        np.testing.assert_allclose(times, [0.0, 1.0, 2.0])
-        for step, t in enumerate(times):
-            # Select the step itself: for MultiBlockDataSet files, VTK 9.7 ignores the
-            # time requested with UpdateTimeStep and reads the first step
-            reader.SetStep(step)
-            reader.Update()
-            blocks = {}
-            iterator = reader.GetOutputDataObject(0).NewIterator()
-            iterator.InitTraversal()
-            while not iterator.IsDoneWithTraversal():
-                name = iterator.GetCurrentMetaData().Get(vtk.vtkCompositeDataSet.NAME())
-                blocks[name] = iterator.GetCurrentDataObject()
-                iterator.GoToNextItem()
-            assert set(blocks) == {"square", "cells", "interval", "added"}
-            u = numpy_support.vtk_to_numpy(blocks["square"].GetPointData().GetArray("u"))
-            np.testing.assert_array_equal(u, t)
-            v = numpy_support.vtk_to_numpy(blocks["interval"].GetPointData().GetArray("v"))
-            np.testing.assert_array_equal(v, 5.0)
+        # Select each step by time, as the pipeline does, and by index, each with its own
+        # reader as a requested time overrides SetStep. VTK 9.7 needs the root Steps link
+        # for the former, see https://gitlab.kitware.com/vtk/vtk/-/issues/20246
+        for by_index in (False, True):
+            reader = vtk.vtkHDFReader()
+            reader.SetFileName(str(filename))
+            reader.UpdateInformation()
+            info = reader.GetOutputInformation(0)
+            times = info.Get(vtk.vtkStreamingDemandDrivenPipeline.TIME_STEPS())
+            np.testing.assert_allclose(times, [0.0, 1.0, 2.0])
+            for step, t in enumerate(times):
+                if by_index:
+                    reader.SetStep(step)
+                    reader.Update()
+                else:
+                    reader.UpdateTimeStep(t)
+                blocks = {}
+                iterator = reader.GetOutputDataObject(0).NewIterator()
+                iterator.InitTraversal()
+                while not iterator.IsDoneWithTraversal():
+                    name = iterator.GetCurrentMetaData().Get(vtk.vtkCompositeDataSet.NAME())
+                    blocks[name] = iterator.GetCurrentDataObject()
+                    iterator.GoToNextItem()
+                assert set(blocks) == {"square", "cells", "interval", "added"}
+                u = numpy_support.vtk_to_numpy(blocks["square"].GetPointData().GetArray("u"))
+                np.testing.assert_array_equal(u, t)
+                v = numpy_support.vtk_to_numpy(blocks["interval"].GetPointData().GetArray("v"))
+                np.testing.assert_array_equal(v, 5.0)
 
 
 def test_append_to_file_without_record(tmp_path, vtkhdf_backend):
