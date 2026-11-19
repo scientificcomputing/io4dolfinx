@@ -326,7 +326,7 @@ def test_default_scaleoffset_only_for_new_datasets(shared_tmp_path):
         mesh,
         mode=io4dolfinx.FileMode.append,
         backend="vtkhdf",
-        backend_args={"name": "other"},
+        mesh_name="other",
     )
     with h5py.File(filename, "r") as hdf:
         for path in INTEGER_DATASETS:

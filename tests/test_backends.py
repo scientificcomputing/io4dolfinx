@@ -100,6 +100,23 @@ def test_list_builtin_backends():
     assert "h5py" in available_backends or "adios2" in available_backends
 
 
+def test_mesh_name_in_backend_args_is_deprecated(tmp_path):
+    """A mesh name in backend_args still selects the mesh, with a deprecation warning, and
+    must not contradict mesh_name."""
+    comm = MPI.COMM_WORLD
+    mesh = dolfinx.mesh.create_unit_square(comm, 2, 3)
+    filename = tmp_path / "named_mesh.h5"
+    with pytest.warns(DeprecationWarning, match="use mesh_name"):
+        io4dolfinx.write_mesh(filename, mesh, backend="h5py", backend_args={"name": "fluid"})
+    mesh_in = io4dolfinx.read_mesh(filename, comm, backend="h5py", mesh_name="fluid")
+    num_cells = mesh.topology.index_map(mesh.topology.dim).size_global
+    assert mesh_in.topology.index_map(mesh.topology.dim).size_global == num_cells
+    with pytest.raises(ValueError, match="name different meshes"):
+        io4dolfinx.read_mesh(
+            filename, comm, backend="h5py", backend_args={"name": "fluid"}, mesh_name="solid"
+        )
+
+
 class _SerialConfig:
     mpi = False
 
