@@ -13,7 +13,7 @@ import numpy.typing as npt
 from ...format import METADATA_KEYS, stamp
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists
-from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, function_not_found, get_mesh_name
 from .helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
@@ -67,6 +67,29 @@ def mesh_prefix(backend_args: dict[str, Any] | None) -> str:
     """
     name = get_mesh_name(backend_args)
     return "" if name == DEFAULT_MESH_NAME else f"{name}/"
+
+
+def _function_names(variables, prefix: str) -> set[str]:
+    """Names of the functions of the mesh with ``prefix`` among ADIOS2 ``variables``.
+
+    Every function has a ``<prefix><name>_time`` variable. The default mesh's prefix is
+    empty, so a name holding ``/`` there belongs to another mesh and is left out.
+
+    Args:
+        variables: Names of the variables of a step
+        prefix: The mesh's prefix (:func:`mesh_prefix`)
+
+    Returns:
+        The function names
+    """
+    suffix = "_time"
+    names = set()
+    for variable in variables:
+        if variable.startswith(prefix) and variable.endswith(suffix):
+            name = variable[len(prefix) : -len(suffix)]
+            if name and "/" not in name:
+                names.add(name)
+    return names
 
 
 def _seek_step(adios_file, variable: str, start: int = 0) -> int:
@@ -266,6 +289,9 @@ def read_timestamps(
         backend: What backend to use for writing.
     Returns:
         The time-stamps
+
+    Raises:
+        KeyError: If the file does not hold the function on that mesh, naming those it does
     """
     check_file_exists(filename)
 
@@ -281,9 +307,12 @@ def read_timestamps(
     ) as adios_file:
         time_name = f"{prefix}{function_name}_time"
         time_stamps = []
+        function_names: set[str] = set()
         for _ in range(adios_file.file.Steps()):
             adios_file.file.BeginStep()
-            if time_name in adios_file.io.AvailableVariables().keys():
+            variables = adios_file.io.AvailableVariables()
+            function_names |= _function_names(variables, prefix)
+            if time_name in variables.keys():
                 arr = adios_file.io.InquireVariable(time_name)
                 time_shape = arr.Shape()
                 arr.SetSelection([[0], [time_shape[0]]])
@@ -295,6 +324,10 @@ def read_timestamps(
                 time_stamps.append(times[0])
             adios_file.file.EndStep()
 
+    if not time_stamps:  # Every write of a function writes its time
+        raise function_not_found(
+            filename, function_name, get_mesh_name(backend_args), function_names
+        )
     return np.array(time_stamps)
 
 
