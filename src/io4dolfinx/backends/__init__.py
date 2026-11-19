@@ -1,4 +1,5 @@
 import warnings
+from collections.abc import Iterable
 from enum import Enum
 from importlib import import_module
 from pathlib import Path
@@ -23,6 +24,7 @@ __all__ = [
     "DEFAULT_MESH_NAME",
     "FileMode",
     "IOBackend",
+    "function_not_found",
     "get_backend",
     "get_mesh_name",
     "set_default_backend",
@@ -53,6 +55,34 @@ def get_mesh_name(backend_args: dict[str, Any] | None) -> str:
         return DEFAULT_MESH_NAME
     name = backend_args.get("name", DEFAULT_MESH_NAME)
     return DEFAULT_MESH_NAME if name is None else str(name)
+
+
+def function_not_found(
+    filename: Path | str, function_name: str, mesh_name: str, function_names: Iterable[str]
+) -> KeyError:
+    """The error for a function a checkpoint does not hold, naming the ones it does.
+
+    The names tell a misspelt name, or one written on another mesh, from a function that
+    was never written.
+
+    Args:
+        filename: Path to the file
+        function_name: Name of the function asked for
+        mesh_name: Name of the mesh it was asked for on
+        function_names: Names of the functions the file holds on that mesh
+
+    Returns:
+        The error to raise
+    """
+    names = sorted(set(function_names))
+    holds = (
+        f"Functions on that mesh: {', '.join(map(repr, names))}."
+        if names
+        else "There are no functions on that mesh."
+    )
+    return KeyError(
+        f"Function {function_name!r} not found on mesh {mesh_name!r} in {filename}. {holds}"
+    )
 
 
 def set_default_backend(backend: str):
@@ -176,8 +206,12 @@ class IOBackend(Protocol):
             backend_args: Arguments to backend
 
         Returns:
-            Numpy array of timestamps read from file. A checkpoint backend returns an empty
-            array for a function the file does not hold.
+            Numpy array of timestamps read from file
+
+        Raises:
+            KeyError: In the adios2 and h5py backends, if the file does not hold the
+                function on that mesh. The message names the functions it does hold
+                (:func:`function_not_found`).
         """
 
     def write_mesh(

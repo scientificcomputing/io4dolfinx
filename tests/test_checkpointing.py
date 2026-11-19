@@ -314,25 +314,43 @@ def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
     assert np.allclose(timestamps_v, t_v)
 
 
-def test_read_timestamps_of_a_name_not_in_the_file_is_empty(mesh_2D, tmp_path, backend):
-    """Every checkpoint backend has no timestamps for a name it never wrote, as adios2 always
-    had, so that code written against one default backend keeps working on the other."""
+def test_read_timestamps_of_a_name_not_in_the_file_raises_KeyError(mesh_2D, tmp_path, backend):
+    """Both checkpoint backends raise KeyError for a function the file does not hold, naming
+    the functions it holds on that mesh, and only those."""
     suffix = ".bp" if backend == "adios2" else ".h5"
     mesh = mesh_2D
     V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))
     u = dolfinx.fem.Function(V, dtype=mesh.geometry.x.dtype, name="u")
+    w = dolfinx.fem.Function(V, dtype=mesh.geometry.x.dtype, name="w")
     # tmp_path is shared by all ranks, so a mesh on COMM_SELF needs a file per rank
     name = f"no_timestamps_{MPI.COMM_WORLD.rank}" if mesh.comm.size == 1 else "no_timestamps"
     filename = (tmp_path / name).with_suffix(suffix)
 
-    io4dolfinx.write_mesh(filename, mesh, backend=backend)
-    no_function = io4dolfinx.read_timestamps(filename, mesh.comm, "v", backend=backend)
-    io4dolfinx.write_function(filename, u, time=0.5, backend=backend)
-    another_function = io4dolfinx.read_timestamps(filename, mesh.comm, "v", backend=backend)
+    def read(function_name, mesh_name=None):
+        return io4dolfinx.read_timestamps(
+            filename, mesh.comm, function_name, backend=backend, mesh_name=mesh_name
+        )
 
-    assert len(no_function) == 0
-    assert len(another_function) == 0
-    assert np.allclose(io4dolfinx.read_timestamps(filename, mesh.comm, "u", backend=backend), [0.5])
+    io4dolfinx.write_mesh(filename, mesh, backend=backend)
+    with pytest.raises(KeyError, match="Function 'v' not found on mesh 'mesh' in .*no_timestamps"):
+        read("v")
+    with pytest.raises(KeyError, match="There are no functions on that mesh"):
+        read("v")
+
+    io4dolfinx.write_function(filename, w, time=0.5, backend=backend)
+    io4dolfinx.write_function(filename, u, time=0.5, backend=backend)
+    # A function on another mesh is not one of this mesh's
+    io4dolfinx.write_mesh(
+        filename, mesh, backend=backend, mesh_name="other", mode=io4dolfinx.FileMode.append
+    )
+    io4dolfinx.write_function(filename, u, time=1.5, name="x", backend=backend, mesh_name="other")
+    with pytest.raises(KeyError, match="Functions on that mesh: 'u', 'w'\\."):
+        read("v")
+    with pytest.raises(KeyError, match="'v' not found on mesh 'other'.* mesh: 'x'\\."):
+        read("v", mesh_name="other")
+
+    assert np.allclose(read("u"), [0.5])
+    assert np.allclose(read("x", mesh_name="other"), [1.5])
 
 
 def test_writing_at_a_stored_time_names_the_time(mesh_2D, tmp_path, backend):
