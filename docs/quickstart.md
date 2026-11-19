@@ -148,7 +148,9 @@ Helper functions are available to query the contents of a checkpoint file.
 
 * **`read_function_names`**: Returns a list of all functions stored in a file.
 
-* **`read_timestamps`**: Returns the time steps available for a specific function.
+* **`read_timestamps`**: Returns the time steps available for a specific function. With the
+  adios2 and h5py backends, a function the file does not hold raises `KeyError`, naming the
+  functions it does hold. Up to io4dolfinx 2.0.0, adios2 returned an empty array instead.
 
 * **`read_attributes` / `write_attributes`**: Allows storing arbitrary metadata dictionaries.
 
