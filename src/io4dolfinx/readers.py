@@ -21,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 import ufl
 
-from .backends import ReadMode, get_backend
+from .backends import ReadMode, get_backend, with_mesh_name
 from .comm_helpers import all_to_all, send_dofs_and_recv_values
 from .utils import (
     check_file_exists,
@@ -33,21 +33,6 @@ from .utils import (
 
 __all__ = ["read_mesh_from_legacy_h5", "read_function_from_legacy_h5", "read_point_data"]
 logger = logging.getLogger(__name__)
-
-
-def _with_mesh_name(
-    backend_args: dict[str, Any] | None, mesh_name: str | None
-) -> dict[str, Any] | None:
-    """Select which mesh in the file a backend call refers to.
-
-    See :func:`io4dolfinx.checkpointing._with_mesh_name`; duplicated here to keep
-    :mod:`io4dolfinx.readers` free of a circular import.
-    """
-    if mesh_name is None:
-        return backend_args
-    args = dict(backend_args) if backend_args else {}
-    args["name"] = mesh_name
-    return args
 
 
 def map_dofmap(dofmap: dolfinx.graph.AdjacencyList, bs: int | np.int64) -> npt.NDArray[np.int64]:
@@ -474,7 +459,7 @@ def read_point_data(
         coordinate element (up to shape).
     """
 
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading point data from {filename} with name {name} at time {time}")
     logger.debug(f"Using backend {backend} with arguments {backend_args}")
     backend_cls = get_backend(backend)
@@ -544,7 +529,7 @@ def read_cell_data(
     Returns:
         A function in a DG-0 space on the mesh. The cells not found in input is set to zero.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
 
     backend_cls = get_backend(backend)
 
