@@ -111,6 +111,21 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduc
 
 `io4dolfinx` includes a comprehensive test suite that ensures functionality across different backends and compatibility with legacy data formats, see the [Testing Guide](./docs/testing.md) for details.
 
+## Releasing
+Versions are managed with [bump-my-version](https://callowayproject.github.io/bump-my-version/), configured in `pyproject.toml`. Between releases the version is a development version, `X.Y.Z.devN`; a release drops the suffix. Each bump commits the version change, so start from a clean working tree.
+
+To release the current development version, e.g. `2.1.0.dev0`, and start the next one:
+
+```bash
+bump-my-version bump release --no-tag  # 2.1.0.dev0 -> 2.1.0
+bump-my-version bump minor --no-tag    # 2.1.0 -> 2.2.0.dev0
+```
+
+For a patch release of 2.1, bump `patch` instead of `minor` (`2.1.0 -> 2.1.1.dev0`), then `release` (`2.1.1.dev0 -> 2.1.1`). `bump-my-version show-bump` previews what each bump gives.
+
+The bumps do not tag. A `v*` tag publishes to PyPI and the documentation, so tag the release commit (`Bump version: 2.1.0.dev0 → 2.1.0`) as `v2.1.0`, for instance by creating a GitHub release from it.
+
+Releasing a new minor version also adds it to `.github/docs-versions.toml`, which lists the versions on the documentation website, built in the DOLFINx image of the previous one; edit that image afterwards if a newer DOLFINx release should be used. A patch release needs no entry, as each minor version is built from its newest tag.
 
 ## LICENSE
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
