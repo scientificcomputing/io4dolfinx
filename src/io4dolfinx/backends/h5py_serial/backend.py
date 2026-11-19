@@ -19,6 +19,7 @@ import numpy as np
 from ...structures import FunctionData, MeshData, MeshTagsData
 from .. import FileMode
 from ..h5py import backend as parallel
+from ..h5py import storage as h5_storage
 from ..serial import (
     gather_function,
     gather_mesh,
@@ -72,6 +73,7 @@ def write_mesh(
     time: float = 0.0,
 ):
     """Write a mesh to file, see :func:`io4dolfinx.backends.h5py.backend.write_mesh`."""
+    h5_storage.storage_options(comm, backend_args or {})
     data = gather_mesh(comm, mesh)
     write_on_root(
         comm,
@@ -87,6 +89,7 @@ def write_meshtags(
     backend_args: dict[str, Any] | None = None,
 ):
     """Write mesh tags to file, see :func:`io4dolfinx.backends.h5py.backend.write_meshtags`."""
+    h5_storage.storage_options(comm, backend_args or {})
     tags = gather_meshtags(comm, data)
     write_on_root(
         comm, tags, lambda d: parallel.write_meshtags(filename, MPI.COMM_SELF, d, backend_args)
@@ -102,6 +105,7 @@ def write_function(
     backend_args: dict[str, Any] | None,
 ):
     """Write a function to file, see :func:`io4dolfinx.backends.h5py.backend.write_function`."""
+    h5_storage.storage_options(comm, backend_args or {})
     data = gather_function(comm, u)
     write_on_root(
         comm,
@@ -123,10 +127,14 @@ def snapshot_checkpoint(
     comm = u.function_space.mesh.comm
     dofmap = u.function_space.dofmap
     start, stop = np.array(dofmap.index_map.local_range) * dofmap.index_map_bs
+    options = h5_storage.storage_options(comm, backend_args or {})
     values = gather_rows(comm, start, u.x.array[: stop - start])
 
     def write(dofs: np.ndarray):
         with parallel.h5pyfile(filename, filemode="w", comm=MPI.COMM_SELF) as h5file:
-            h5file.create_group("snapshot").create_dataset("dofs", data=dofs)
+            dataset = h5_storage.create_dataset(
+                h5file.create_group("snapshot"), "dofs", dofs.shape, dofs.dtype, options
+            )
+            h5_storage.write_dataset(dataset, slice(None), dofs)
 
     write_on_root(comm, values, write)

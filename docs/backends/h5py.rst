@@ -42,6 +42,13 @@ Note that this code block does not install DOLFINx, it just illustrates how to g
     RUN python3 -m pip install setuptools cython numpy pkgconfig mpi4py
     RUN CC=mpicc python3 -m pip install --no-binary=h5py h5py --no-build-isolation
 
+Lossless compression
+~~~~~~~~~~~~~~~~~~~~
+
+Datasets can be stored with lossless HDF5 filters, set through ``backend_args``; by default,
+integer arrays such as topologies and dofmaps use scale-offset. See :doc:`../compression` for
+the options, an example and a comparison of file sizes and write/read times.
+
 .. automodule:: io4dolfinx.backends.h5py.backend
     :members:
     :exclude-members: read_point_data
