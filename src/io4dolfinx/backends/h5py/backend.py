@@ -22,8 +22,9 @@ from dolfinx.graph import adjacencylist
 from ...format import METADATA_KEYS
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
-from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, get_mesh_name
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, function_not_found,get_mesh_name
 from . import storage as h5_storage
+
 
 read_mode = ReadMode.parallel
 
@@ -247,14 +248,18 @@ def read_timestamps(
 
     Returns:
         The time-stamps
+
+    Raises:
+        KeyError: If the file does not hold the function on that mesh, naming those it does
     """
     check_file_exists(filename)
     mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode="r", comm=comm, force_serial=False) as h5file:
-        mesh_directory = h5file[mesh_name]
-        functions = mesh_directory["functions"]
-        u = functions[function_name]
-        timestamps = u.attrs["timestamps"]
+        functions = h5file.get(f"{mesh_name}/functions")
+        if functions is None or function_name not in functions:
+            names = [] if functions is None else list(functions.keys())
+            raise function_not_found(filename, function_name, mesh_name, names)
+        timestamps = functions[function_name].attrs["timestamps"]
     return timestamps
 
 
