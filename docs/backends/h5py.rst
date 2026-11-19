@@ -46,7 +46,7 @@ Lossless compression
 ~~~~~~~~~~~~~~~~~~~~
 
 Datasets can be stored with lossless HDF5 filters, set through ``backend_args``; by default,
-integer arrays such as topologies and dofmaps use scale-offset. See :doc:`../compression` for
+integer arrays such as topologies and dofmaps use scale-offset. See :doc:`../hdf5_compression` for
 the options, an example and a comparison of file sizes and write/read times.
 
 .. automodule:: io4dolfinx.backends.h5py.backend

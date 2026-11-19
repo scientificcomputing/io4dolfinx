@@ -29,7 +29,7 @@ parts:
     - file: "docs/snapshot_checkpoint"
     - file: "docs/original_checkpoint"
     - file: "docs/checkpoint_format"
-    - file: "docs/compression"
+    - file: "docs/hdf5_compression"
     - file: "docs/vtkhdf_time_steps"
 
   - caption: Python API

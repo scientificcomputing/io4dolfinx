@@ -67,4 +67,4 @@ sphinx:
       h5py: ["https://docs.h5py.org/en/stable/", null]
       adios2: ["https://adios2.readthedocs.io/en/latest", null]
 
-exclude_patterns: [".pytest_cache/*"]
+exclude_patterns: [".pytest_cache/*", ".github/*"]
