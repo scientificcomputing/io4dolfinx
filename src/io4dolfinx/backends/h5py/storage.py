@@ -1,6 +1,6 @@
 """HDF5 dataset storage options for the h5py-based backends.
 
-Currently used by the VTKHDF backend.
+Used by the h5py and VTKHDF backends.
 
 Validates filter and chunk settings passed through ``backend_args``, agrees on them
 across ranks, and writes local slices, collectively for files opened with MPI-IO.
@@ -251,6 +251,8 @@ def write_dataset(
         selection: This rank's part of the dataset.
         values: Data for ``selection``; may be empty.
     """
+    # Parallel filtered writes cannot ask HDF5 to convert the memory datatype.
+    values = np.asarray(values, dtype=dataset.dtype, order="C")
     if dataset.file.driver != "mpio":
         dataset[selection] = values
     elif values.size > 0:
