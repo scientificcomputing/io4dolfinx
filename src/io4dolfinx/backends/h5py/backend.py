@@ -22,9 +22,8 @@ from dolfinx.graph import adjacencylist
 from ...format import METADATA_KEYS
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
-from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, function_not_found,get_mesh_name
+from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, function_not_found, get_mesh_name
 from . import storage as h5_storage
-
 
 read_mode = ReadMode.parallel
 
