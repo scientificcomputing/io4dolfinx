@@ -25,6 +25,7 @@ __all__ = [
     "DEFAULT_STORAGE_OPTIONS",
     "check_storage_options",
     "chunk_shape",
+    "create_dataset",
     "filter_options",
     "storage_options",
     "write_dataset",
@@ -228,6 +229,44 @@ def check_storage_options(dataset: h5py.Dataset, options: dict[str, Any]) -> Non
                 f"Dataset {dataset.name} already has {key}={actual!r}; "
                 f"cannot append with {key}={requested!r}"
             )
+
+
+def create_dataset(
+    group: h5py.Group,
+    name: str,
+    shape: tuple[int, ...] | list[int],
+    dtype: npt.DTypeLike,
+    options: dict[str, Any],
+    previous: h5py.Dataset | None = None,
+) -> h5py.Dataset:
+    """Create a bulk dataset, chunked and filtered as set by the storage options.
+
+    Args:
+        group: Group to create the dataset in.
+        name: Name of the dataset.
+        shape: Shape of the dataset.
+        dtype: Data type of the dataset.
+        options: Storage options returned by :func:`storage_options`.
+        previous: Dataset of an earlier time step, whose chunks and filters the new
+            dataset keeps. ``options`` must not conflict with them.
+
+    Returns:
+        The new dataset.
+    """
+    shape = tuple(shape)
+    if previous is None:
+        layout = {"chunks": chunk_shape(options, shape, dtype), **filter_options(options, dtype)}
+    else:
+        check_storage_options(previous, options)
+        layout = {
+            key: getattr(previous, key)
+            for key in ("compression", "compression_opts", "shuffle", "fletcher32", "scaleoffset")
+        }
+        layout["chunks"] = previous.chunks
+    # A zero-length dataset still needs a positive chunk size
+    if any(size == 0 for size in shape):
+        layout["maxshape"] = tuple(None if size == 0 else size for size in shape)
+    return group.create_dataset(name, shape=shape, dtype=dtype, **layout)
 
 
 def write_dataset(

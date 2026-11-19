@@ -132,7 +132,7 @@ def snapshot_checkpoint(
 
     def write(dofs: np.ndarray):
         with parallel.h5pyfile(filename, filemode="w", comm=MPI.COMM_SELF) as h5file:
-            dataset = parallel._create_dataset(
+            dataset = h5_storage.create_dataset(
                 h5file.create_group("snapshot"), "dofs", dofs.shape, dofs.dtype, options
             )
             h5_storage.write_dataset(dataset, slice(None), dofs)
