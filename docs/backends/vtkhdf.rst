@@ -12,7 +12,7 @@ Lossless compression
 ~~~~~~~~~~~~~~~~~~~~
 
 Datasets can be stored with lossless HDF5 filters, set through ``backend_args``; by default,
-the integer mesh arrays use scale-offset. See :doc:`../compression` for the options, an
+the integer mesh arrays use scale-offset. See :doc:`../hdf5_compression` for the options, an
 example and a comparison of file sizes and write/read times.
 
 Vectors and tensors
