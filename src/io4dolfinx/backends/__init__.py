@@ -501,6 +501,17 @@ def get_backend(backend: str | None = None) -> IOBackend:
                 stacklevel=2,
             )
             backend = f"{backend}-serial"
+    elif backend == "adios2":
+        import adios2
+
+        if not adios2.is_built_with_mpi:
+            warnings.warn(
+                "ADIOS2 is built without MPI, so the adios2 backend runs as adios2-serial, "
+                "which writes all data through rank 0. Install ADIOS2 with MPI for parallel IO, "
+                "see the io4dolfinx installation guide.",
+                stacklevel=2,
+            )
+            backend = "adios2-serial"
 
     if backend == "h5py":
         from .h5py import backend as H5PYInterface
@@ -518,6 +529,10 @@ def get_backend(backend: str | None = None) -> IOBackend:
         from .adios2 import backend as ADIOS2Interface
 
         return ADIOS2Interface
+    elif backend == "adios2-serial":
+        from .adios2_serial import backend as ADIOS2SerialInterface
+
+        return ADIOS2SerialInterface
     elif backend == "pyvista":
         from .pyvista import backend as PYVISTAInterface
 
@@ -563,6 +578,7 @@ BUILTIN_BACKENDS = (
     "h5py-serial",
     "vtkhdf-serial",
     "adios2",
+    "adios2-serial",
     "pyvista",
     "xdmf",
     "vtkhdf",

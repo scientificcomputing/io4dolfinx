@@ -11,7 +11,7 @@ from io4dolfinx import FileMode, snapshot_checkpoint
 
 
 def suffix(backend: str) -> str:
-    if backend == "adios2":
+    if backend.startswith("adios2"):
         return ".bp"
     elif backend in ("h5py", "h5py-serial"):
         return ".h5"

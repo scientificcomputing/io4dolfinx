@@ -148,7 +148,7 @@ def write_function_original(
     )
 
     file_hash = f"{el_hash}_{np.dtype(dtype).name}"
-    if backend == "adios2":
+    if backend.startswith("adios2"):
         suffix = ".bp"
     elif backend in ("h5py", "h5py-serial"):
         suffix = ".h5"
@@ -195,7 +195,7 @@ def read_function_original(
     import io4dolfinx
 
     # assert MPI.COMM_WORLD.size > 1
-    if backend == "adios2":
+    if backend.startswith("adios2"):
         backend_args = {"engine": "BP4"}
     else:
         backend_args = None

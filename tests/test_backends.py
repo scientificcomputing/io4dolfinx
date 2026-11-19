@@ -114,6 +114,54 @@ def test_serial_h5py_fallback(monkeypatch, backend):
         assert io4dolfinx.get_backend(backend) is serial
 
 
+def test_serial_adios2_fallback(monkeypatch):
+    """With ADIOS2 built without MPI, the adios2 backend runs as adios2-serial, with a warning
+    to install ADIOS2 with MPI."""
+    adios2 = pytest.importorskip("adios2")
+    monkeypatch.setattr(adios2, "is_built_with_mpi", False)
+    serial = io4dolfinx.get_backend("adios2-serial")
+    with pytest.warns(UserWarning, match="runs as adios2-serial"):
+        assert io4dolfinx.get_backend("adios2") is serial
+
+
+@pytest.mark.parametrize(
+    "writer, reader", [("adios2", "adios2-serial"), ("adios2-serial", "adios2")]
+)
+def test_serial_adios2_writes_adios2_files(tmp_path, writer, reader):
+    """adios2 and adios2-serial write the same files: each reads the checkpoints, partitions
+    and snapshots of the other."""
+    adios2 = pytest.importorskip("adios2")
+    if not adios2.is_built_with_mpi:
+        pytest.skip("Needs ADIOS2 built with MPI")
+    comm = MPI.COMM_WORLD
+    mesh = dolfinx.mesh.create_unit_square(comm, 4, 5)
+    V = dolfinx.fem.functionspace(mesh, ("Lagrange", 2))
+    u = dolfinx.fem.Function(V)
+    u.interpolate(lambda x: x[0] + 2 * x[1] ** 2)
+    atol = 10 * np.finfo(u.x.array.dtype).eps
+
+    filename = tmp_path / "checkpoint.bp"
+    io4dolfinx.write_mesh(filename, mesh, store_partition_info=True, backend=writer)
+    io4dolfinx.write_function(filename, u, time=0.5, backend=writer)
+    for read_from_partition in (False, True):
+        mesh_in = io4dolfinx.read_mesh(
+            filename, comm, read_from_partition=read_from_partition, backend=reader
+        )
+        u_in = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh_in, ("Lagrange", 2)))
+        io4dolfinx.read_function(filename, u_in, time=0.5, backend=reader)
+        u_ex = dolfinx.fem.Function(u_in.function_space)
+        u_ex.interpolate(lambda x: x[0] + 2 * x[1] ** 2)
+        np.testing.assert_allclose(u_in.x.array, u_ex.x.array, atol=atol)
+
+    snapshot = tmp_path / "snapshot.bp"
+    io4dolfinx.snapshot_checkpoint(u, snapshot, io4dolfinx.FileMode.write, backend=writer)
+    v = dolfinx.fem.Function(V)
+    io4dolfinx.snapshot_checkpoint(v, snapshot, io4dolfinx.FileMode.read, backend=reader)
+    # Ghosts of u are interpolated locally, those of v come from their owners
+    num_owned = V.dofmap.index_map.size_local * V.dofmap.index_map_bs
+    np.testing.assert_array_equal(v.x.array[:num_owned], u.x.array[:num_owned])
+
+
 @pytest.mark.skipif(h5py.get_config().mpi, reason="Needs h5py built without MPI, as on PyPI")
 def test_checkpoint_with_serial_h5py(tmp_path):
     """With h5py from PyPI, the default backend writes and reads a checkpoint on any number of

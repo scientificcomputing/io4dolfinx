@@ -4,6 +4,7 @@ Helpers reading/writing data with ADIOS2
 
 from __future__ import annotations
 
+import contextvars
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
@@ -23,6 +24,8 @@ adios2 = fenicsx_compat.resolve_adios_scope(adios2)
 
 
 __all__ = [
+    "force_serial_adios",
+    "create_adios",
     "AdiosFile",
     "ADIOSFile",
     "check_variable_exists",
@@ -42,6 +45,26 @@ adios_to_numpy_dtype = {
     "int64_t": np.int64,
     "uint64_t": np.uint64,
 }
+
+
+#: Create ADIOS objects without MPI on every rank, even with ADIOS2 built with MPI. Set by the
+#: adios2-serial backend, see :mod:`io4dolfinx.backends.serial`.
+force_serial_adios = contextvars.ContextVar("force_serial_adios", default=False)
+
+
+def create_adios(comm: MPI.Comm) -> adios2.ADIOS:
+    """Create an ADIOS object.
+
+    Args:
+        comm: The communicator of the processes opening files with it.
+
+    Returns:
+        An ADIOS object on ``comm``, or one without MPI that opens files on this process
+        only, if ADIOS2 is built without MPI or :data:`force_serial_adios` is set.
+    """
+    if adios2.is_built_with_mpi and not force_serial_adios.get():
+        return adios2.ADIOS(comm)
+    return adios2.ADIOS()
 
 
 class AdiosFile(NamedTuple):

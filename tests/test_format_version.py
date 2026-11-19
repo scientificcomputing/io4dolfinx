@@ -14,7 +14,7 @@ from io4dolfinx.backends import get_backend
 
 
 def filename(path, backend):
-    return path / ("checkpoint.bp" if backend == "adios2" else "checkpoint.h5")
+    return path / ("checkpoint.bp" if backend.startswith("adios2") else "checkpoint.h5")
 
 
 def write_checkpoint(path, backend, time=0.0, mode=io4dolfinx.FileMode.write, on_input_mesh=False):

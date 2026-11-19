@@ -9,7 +9,7 @@ import io4dolfinx
 
 @pytest.mark.parametrize("comm", [MPI.COMM_SELF, MPI.COMM_WORLD])
 def test_read_write_attributes(comm, backend, tmp_path):
-    if backend == "adios2":
+    if backend.startswith("adios2"):
         import adios2
 
         if _v(np.__version__) >= _v("2.0.0") and _v(adios2.__version__) < _v("2.10.2"):
@@ -25,7 +25,7 @@ def test_read_write_attributes(comm, backend, tmp_path):
     }
     # tmp_path is shared by all ranks, so on COMM_SELF each rank needs its own file
     name = f"attributes_{MPI.COMM_WORLD.rank}" if comm.size == 1 else "attributes"
-    suffix = ".bp" if backend == "adios2" else ".h5"
+    suffix = ".bp" if backend.startswith("adios2") else ".h5"
     file = (tmp_path / name).with_suffix(suffix)
 
     io4dolfinx.write_attributes(

@@ -243,7 +243,7 @@ def test_read_write_P_3D_time(
     ],
 )
 def test_read_nonexisting_file_raises_FileNotFoundError(func, args, backend):
-    if backend == "adios2":
+    if backend.startswith("adios2"):
         suffix = ".bp"
     else:
         suffix = ".h5"
@@ -253,7 +253,7 @@ def test_read_nonexisting_file_raises_FileNotFoundError(func, args, backend):
 
 
 def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
-    if backend == "adios2":
+    if backend.startswith("adios2"):
         suffix = ".bp"
     else:
         suffix = ".h5"
@@ -274,7 +274,7 @@ def test_read_function_with_invalid_name_raises_KeyError(tmp_path, backend):
 
 
 def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
-    suffix = ".bp" if backend == "adios2" else ".h5"
+    suffix = ".bp" if backend.startswith("adios2") else ".h5"
 
     mesh = mesh_2D
     dtype = get_dtype(mesh.geometry.x.dtype, False)

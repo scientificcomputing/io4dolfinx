@@ -4,23 +4,24 @@
 #
 # SPDX-License-Identifier:    MIT
 
-"""Run the HDF5 backends with h5py built without MPI.
+"""Run the HDF5 and ADIOS2 backends with h5py or ADIOS2 built without MPI.
 
-The serial backends (``h5py-serial`` and ``vtkhdf-serial``) write the same files as the
-backends they wrap, without parallel HDF5:
+The serial backends (``h5py-serial``, ``vtkhdf-serial`` and ``adios2-serial``) write the
+same files as the backends they wrap, without parallel IO:
 
 - To read, every process opens the file on its own and reads its part, as many processes
-  may read an HDF5 file at the same time.
+  may read a file at the same time.
 - To write, the data is gathered on rank 0, which writes it with the backend it wraps on
   :data:`mpi4py.MPI.COMM_SELF`. Rank 0 then holds all the data being written.
 
 :func:`io4dolfinx.backends.get_backend` uses them in place of ``h5py`` and ``vtkhdf`` when
-h5py is built without MPI.
+h5py is built without MPI, and in place of ``adios2`` when ADIOS2 is built without MPI.
 """
 
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import dataclasses
 import functools
 from collections.abc import Callable, Generator
@@ -51,21 +52,36 @@ T = TypeVar("T")
 
 
 @contextlib.contextmanager
-def serial_files() -> Generator[None, None, None]:
-    """Open HDF5 files without MPI on every rank within the context."""
-    token = force_serial_files.set(True)
+def serial_files(
+    flag: contextvars.ContextVar[bool] = force_serial_files,
+) -> Generator[None, None, None]:
+    """Open files without MPI on every rank within the context.
+
+    Args:
+        flag: The flag making a backend open files without MPI: HDF5 files by default,
+            :data:`io4dolfinx.backends.adios2.helpers.force_serial_adios` for ADIOS2.
+    """
+    token = flag.set(True)
     try:
         yield
     finally:
-        force_serial_files.reset(token)
+        flag.reset(token)
 
 
-def serial(fn: F) -> F:
-    """The function, opening HDF5 files without MPI on every rank."""
+def serial(fn: F, flag: contextvars.ContextVar[bool] = force_serial_files) -> F:
+    """The function, opening files without MPI on every rank.
+
+    Args:
+        fn: The function to wrap.
+        flag: The flag making a backend open files without MPI, see :func:`serial_files`.
+
+    Returns:
+        The wrapped function.
+    """
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        with serial_files():
+        with serial_files(flag):
             return fn(*args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
@@ -167,20 +183,26 @@ def gather_array(comm: MPI.Comm, data: ArrayData) -> ArrayData | None:
     return dataclasses.replace(data, values=values, local_range=(0, data.global_shape[0]))
 
 
-def write_on_root(comm: MPI.Comm, data: T | None, write: Callable[[T], None]):
-    """Write data on rank 0, with HDF5 files opened without MPI, and raise any error it
-    raises on all ranks.
+def write_on_root(
+    comm: MPI.Comm,
+    data: T | None,
+    write: Callable[[T], None],
+    flag: contextvars.ContextVar[bool] = force_serial_files,
+):
+    """Write data on rank 0, with files opened without MPI, and raise any error it raises on
+    all ranks.
 
     Args:
         comm: The communicator of the processes writing.
         data: The data to write on rank 0, as from the gather functions. Not used on the
             other ranks.
         write: Function writing the data.
+        flag: The flag making a backend open files without MPI, see :func:`serial_files`.
     """
 
     def run():
         assert data is not None
-        with serial_files():
+        with serial_files(flag):
             write(data)
 
     run_on_root(comm, run)

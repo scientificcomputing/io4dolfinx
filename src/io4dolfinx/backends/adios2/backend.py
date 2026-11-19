@@ -18,6 +18,7 @@ from .helpers import (
     ADIOSFile,
     adios_to_numpy_dtype,
     check_variable_exists,
+    create_adios,
     read_adjacency_list,
     read_array,
     read_local_rows,
@@ -155,7 +156,7 @@ def read_metadata(
     attribute_prefix = _metadata_prefix(kind, name, backend_args)
     wanted = {f"{attribute_prefix}{key}": key for key in METADATA_KEYS}
     metadata: dict[str, Any] = {}
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -194,7 +195,7 @@ def write_attributes(
         engine: ADIOS2 engine to use
     """
 
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     backend_args = get_default_backend_args(backend_args)
 
     with ADIOSFile(
@@ -230,7 +231,7 @@ def read_attributes(
         The attributes
     """
     check_file_exists(filename)
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     backend_args = get_default_backend_args(backend_args)
     with ADIOSFile(
         adios=adios,
@@ -268,7 +269,7 @@ def read_timestamps(
     """
     check_file_exists(filename)
 
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     backend_args = get_default_backend_args(backend_args)
     prefix = mesh_prefix(backend_args)
     with ADIOSFile(
@@ -322,7 +323,7 @@ def write_mesh(
 
     mode = convert_file_mode(mode)
     gdim = mesh.local_geometry.shape[1]
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
 
     # Topology is constant in time and written once. In append mode it may
     # already be present either because this mesh was written at an earlier time
@@ -441,7 +442,7 @@ def read_mesh_data(
         The mesh topology, geometry, UFL domain and partition function
     """
 
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     backend_args = get_default_backend_args(backend_args)
     legacy = backend_args.get("legacy", False)
     if legacy:
@@ -569,7 +570,7 @@ def write_meshtags(
     io_name = backend_args.get("io_name", "MeshTagWriter")
     engine = backend_args.get("engine", "BP4")
     prefix = mesh_prefix(backend_args)
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -624,7 +625,7 @@ def read_meshtags_data(
         Internal data structure for the mesh tags read from file
     """
 
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     backend_args = get_default_backend_args(backend_args)
     io_name = backend_args.get("io_name", "MeshTagsReader")
     engine = backend_args["engine"]
@@ -754,7 +755,7 @@ def read_dofmap(
 
     engine = backend_args.get("engine", "BP4")
 
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     check_file_exists(filename)
     assert isinstance(xdofmap_path, str)
     return read_adjacency_list(adios, comm, filename, dofmap_path, xdofmap_path, engine=engine)
@@ -788,7 +789,7 @@ def read_dofs(
     io_name = backend_args.get("io_name", f"{name}_FunctionReader")
     prefix = mesh_prefix(backend_args)
     # Check that file contains the function to read
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     check_file_exists(filename)
 
     if not legacy:
@@ -843,7 +844,7 @@ def read_cell_perms(
     .. note::
         No MPI communication is done during this call
     """
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     check_file_exists(filename)
 
     # Open ADIOS engine
@@ -864,7 +865,7 @@ def read_hdf5_array(
     group: str,
     backend_args: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, int]:
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     """Read an array from an HDF5 file.
 
     Args:
@@ -908,7 +909,7 @@ def write_function(
     io_name = backend_args.get("io_name", "{name}_writer")
     prefix = mesh_prefix(backend_args)
 
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     cell_permutations_exists = False
     dofmap_exists = False
     XDofmap_exists = False
@@ -1001,7 +1002,7 @@ def read_format0_checkpoint(
         The mesh, and for each function in the order of the file the arguments of its
         :class:`io4dolfinx.structures.FunctionData` except the name.
     """
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     mesh: MeshData | None = None
     cell_permutations = None
     functions: list[dict[str, Any]] = []
@@ -1084,7 +1085,7 @@ def read_legacy_mesh(
             - Cell type as a string (e.g. "tetrahedron") or None if not found
     """
     # Create ADIOS2 reader
-    adios = adios2.ADIOS(comm)
+    adios = create_adios(comm)
     with ADIOSFile(
         adios=adios,
         filename=filename,
@@ -1133,7 +1134,7 @@ def snapshot_checkpoint(
         backend_args: Arguments to backend
     """
     adios_mode = convert_file_mode(mode)
-    adios = adios2.ADIOS(u.function_space.mesh.comm)
+    adios = create_adios(u.function_space.mesh.comm)
     backend_args = {} if backend_args is None else backend_args
     io_name = backend_args.get("io_name", "SnapshotCheckPoint")
     engine = backend_args.get("engine", "BP4")
