@@ -317,7 +317,7 @@ def test_read_timestamps(get_dtype, mesh_2D, tmp_path, backend):
 def test_read_timestamps_of_a_name_not_in_the_file_raises_KeyError(mesh_2D, tmp_path, backend):
     """Both checkpoint backends raise KeyError for a function the file does not hold, naming
     the functions it holds on that mesh, and only those."""
-    suffix = ".bp" if backend == "adios2" else ".h5"
+    suffix = ".bp" if backend.startswith("adios2") else ".h5"
     mesh = mesh_2D
     V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))
     u = dolfinx.fem.Function(V, dtype=mesh.geometry.x.dtype, name="u")
@@ -355,7 +355,7 @@ def test_read_timestamps_of_a_name_not_in_the_file_raises_KeyError(mesh_2D, tmp_
 
 def test_writing_at_a_stored_time_names_the_time(mesh_2D, tmp_path, backend):
     """The h5py backends refuse a second write at a stored time, saying which."""
-    if backend == "adios2":
+    if backend.startswith("adios2"):
         pytest.skip("adios2 appends a second write at a stored time")
     mesh = mesh_2D
     V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))
