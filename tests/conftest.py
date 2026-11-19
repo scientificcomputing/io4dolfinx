@@ -25,6 +25,8 @@ def find_backends():
 
         if adios2.is_built_with_mpi:
             backends.append("adios2")
+        # Creates ADIOS objects without MPI even if ADIOS2 has it, so runs everywhere
+        backends.append("adios2-serial")
     except ModuleNotFoundError:
         pass
     try:
@@ -97,7 +99,7 @@ def write_function(tmp_path):
         # Consistent tmp dir across processes
         f_path = MPI.COMM_WORLD.bcast(tmp_path, root=0)
         file_hash = f"{el_hash}_{np.dtype(dtype).name}"
-        if backend == "adios2":
+        if backend.startswith("adios2"):
             suffix = ".bp"
         else:
             suffix = ".h5"
@@ -183,7 +185,7 @@ def write_function_time_dep(tmp_path):
         file_hash = f"{el_hash}_{np.dtype(dtype).name}"
         # Consistent tmp dir across processes
         f_path = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-        if backend == "adios2":
+        if backend.startswith("adios2"):
             suffix = ".bp"
         else:
             suffix = ".h5"

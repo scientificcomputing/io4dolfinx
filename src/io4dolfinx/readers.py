@@ -130,7 +130,7 @@ def send_cells_and_receive_dofmap_index(
     backend_cls = get_backend(backend)
     # Read dofmap from file
     backend_args = {"dofmap": dofmap_path, "offsets": xdofmap_path}
-    if backend == "adios2":
+    if backend in ("adios2", "adios2-serial"):
         backend_args.update({"engine": "HDF5"})
     input_dofs = backend_cls.read_dofmap(filename, comm, name="", backend_args=backend_args)
     # Map to xyz

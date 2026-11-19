@@ -70,7 +70,7 @@ def test_checkpointing_meshtags_1D(
     # Write unique mesh file for each combination of MPI communicator and dtype
     hash = f"{mesh.comm.size}_{mesh.geometry.x.dtype}"
     fname = MPI.COMM_WORLD.bcast(tmp_path, root=0)
-    suffix = ".bp" if backend == "adios2" else ".h5"
+    suffix = ".bp" if backend.startswith("adios2") else ".h5"
     filename = (fname / f"{backend}_meshtags_1D_{hash}").with_suffix(suffix)
 
     # If mesh communicator is more than a self communicator or serial write on all processes.

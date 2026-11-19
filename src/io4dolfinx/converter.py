@@ -51,7 +51,7 @@ __all__ = ["convert", "main"]
 
 # Backends that write checkpoints, by the suffix of their files
 _backends_by_suffix = {".bp": "adios2", ".h5": "h5py"}
-_checkpoint_backends = ("adios2", "h5py", "h5py-serial")
+_checkpoint_backends = ("adios2", "adios2-serial", "h5py", "h5py-serial")
 
 
 def _convert_dolfin(

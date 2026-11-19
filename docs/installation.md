@@ -40,7 +40,7 @@ or equivalently
 python3 -m pip install "io4dolfinx[pyvista]"
 ```
 
-- For ADIOS2 support you should have ADIOS2 installed with Python bindings, see https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html for more info. `python3 -m pip install "io4dolfinx[adios2]"` installs the serial ADIOS2 wheels from PyPI.
+- For ADIOS2 support you should have ADIOS2 installed with Python bindings, see https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html for more info. `python3 -m pip install "io4dolfinx[adios2]"` installs the ADIOS2 wheels from PyPI, which are built without MPI: the `adios2` backend then runs as `adios2-serial`, which writes all data through rank 0.
 
 ## Spack
 
