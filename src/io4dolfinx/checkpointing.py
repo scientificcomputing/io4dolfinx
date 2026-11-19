@@ -21,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 import ufl
 
-from .backends import FileMode, ReadMode, get_backend, get_mesh_name
+from .backends import FileMode, ReadMode, get_backend, get_mesh_name, with_mesh_name
 from .comm_helpers import (
     send_and_recv_cell_perm,
     send_dofmap_and_recv_values,
@@ -59,32 +59,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-def _with_mesh_name(
-    backend_args: dict[str, Any] | None, mesh_name: str | None
-) -> dict[str, Any] | None:
-    """Select which mesh in the file a backend call refers to.
-
-    A checkpoint may hold several meshes -- a mesh and a submesh of it, say --
-    and backends take the one to act on from ``backend_args["name"]``. This
-    folds an explicit ``mesh_name`` in without mutating the caller's dictionary.
-    ``mesh_name=None`` leaves ``backend_args`` untouched, so an existing
-    ``backend_args["name"]`` still wins and files written before named meshes
-    existed stay readable.
-
-    Args:
-        backend_args: Arguments for the backend, or None
-        mesh_name: Name of the mesh to act on, or None for the default
-
-    Returns:
-        Backend arguments naming the requested mesh.
-    """
-    if mesh_name is None:
-        return backend_args
-    args = dict(backend_args) if backend_args else {}
-    args["name"] = mesh_name
-    return args
 
 
 def write_attributes(
@@ -164,7 +138,7 @@ def read_timestamps(
         KeyError: With the adios2 and h5py backends, if the file does not hold the
             function on that mesh. The message names the functions it does hold.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading time-stamps from {filename} for function {function_name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read time-stamps")
     check_file_exists(filename)
@@ -205,7 +179,7 @@ def write_meshtags(
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing meshtags to {filename} for meshtag {meshtag_name or meshtags.name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to write meshtags")
 
@@ -286,7 +260,7 @@ def read_meshtags(
     Returns:
         The meshtags
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading meshtags from {filename} for meshtag {meshtag_name}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read meshtags")
     check_file_exists(filename)
@@ -349,7 +323,7 @@ def read_function(
             mesh written without an explicit name, so existing checkpoints and
             call sites are unaffected.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(
         f"Reading function checkpoint from {filename} for function {name or u.name} at time {time}"
     )
@@ -515,7 +489,7 @@ def read_mesh(
         The distributed mesh. A mesh with several cell types, which only some backends
         read, has no UFL domain and requires DOLFINx 0.11 or later.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading mesh from {filename}")
     logger.debug(f"Using {backend} backend with arguments {backend_args}")
     logger.debug(f"Time {time} and read_from_partition {read_from_partition}")
@@ -627,7 +601,7 @@ def write_mesh(
             Cannot be combined with ``store_partition_info``. Use the same value for
             every write to a file; see :ref:`input-ordering`.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing mesh to {filename}")
     if on_input_mesh:
         if store_partition_info:
@@ -710,7 +684,7 @@ def write_function(
             input mesh file). Use the same value for every write to a file;
             see :ref:`input-ordering`.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     n = u.name if name is None else name
     logger.debug(f"Writing function checkpoint to {filename} for function {n} at time {time}")
     logger.debug(f"Using {backend} backend with arguments {backend_args}")
@@ -893,7 +867,7 @@ def read_function_names(
     Returns:
         A list of function names.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Reading function names from {filename}")
     logger.debug(f"Using {backend} backend with arguments {backend_args} to read function names")
     check_file_exists(filename)
@@ -927,7 +901,7 @@ def write_point_data(
         on_input_mesh: If True, the node values are written in the node ordering of the
             input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing point data to {filename} for function {u.name} at time {time}")
     V = create_geometry_function_space(
         u.function_space.mesh, int(np.prod(u.ufl_shape)), value_shape=u.ufl_shape
@@ -988,7 +962,7 @@ def write_cell_data(
         on_input_mesh: If True, the cell values are written in the cell ordering of the
             input mesh, matching a mesh written with :func:`write_mesh_input_order`.
     """
-    backend_args = _with_mesh_name(backend_args, mesh_name)
+    backend_args = with_mesh_name(backend_args, mesh_name)
     logger.debug(f"Writing cell data to {filename} for function {u.name} at time {time}")
     if u.function_space.ufl_element().family_name == "quadrature":
         raise ValueError(

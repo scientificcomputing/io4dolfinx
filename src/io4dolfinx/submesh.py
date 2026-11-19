@@ -41,8 +41,8 @@ import numpy as np
 import numpy.typing as npt
 from dolfinx import cpp as _cpp
 
-from .backends import FileMode, get_backend
-from .checkpointing import _with_mesh_name, write_mesh
+from .backends import FileMode, get_backend, with_mesh_name
+from .checkpointing import write_mesh
 from .comm_helpers import exchange_to_owners, numpy_to_mpi
 from .format import stamp
 from .structures import MeshTagsData
@@ -191,7 +191,7 @@ def write_submesh(
     )
     backend_cls = get_backend(backend)
     parent_args = backend_cls.get_default_backend_args(
-        _with_mesh_name(backend_args, parent_mesh_name)
+        with_mesh_name(backend_args, parent_mesh_name)
     )
     post_code_file = filename if parent_filename is None else parent_filename
     backend_cls.write_meshtags(post_code_file, parent.comm, tag_data, backend_args=parent_args)
@@ -231,7 +231,7 @@ def read_submesh(
     check_file_exists(filename)
     backend_cls = get_backend(backend)
     parent_args = backend_cls.get_default_backend_args(
-        _with_mesh_name(backend_args, parent_mesh_name)
+        with_mesh_name(backend_args, parent_mesh_name)
     )
     # Post codes are global cell indices, so they must survive as int64.
     parent_args["values_dtype"] = np.int64

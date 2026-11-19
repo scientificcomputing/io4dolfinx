@@ -212,7 +212,7 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map, vtkhdf_backend)
         mesh,
         mode=io4dolfinx.FileMode.write,
         time=1.0,
-        backend_args={"name": "hex"},
+        mesh_name="hex",
         backend=vtkhdf_backend,
     )
     dim = mesh.topology.dim
@@ -221,7 +221,7 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map, vtkhdf_backend)
     cells = np.arange(cmap.size_local, dtype=np.int32)
     ct = meshtags(mesh, dim, cells, cells + cmap.local_range[0])
     io4dolfinx.write_meshtags(
-        filename, mesh, ct, "CellTags", backend_args={"name": "hex"}, backend=vtkhdf_backend
+        filename, mesh, ct, "CellTags", mesh_name="hex", backend=vtkhdf_backend
     )
     root = 0
 
@@ -234,7 +234,7 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map, vtkhdf_backend)
         mesh,
         mode=io4dolfinx.FileMode.append,
         time=2.5,
-        backend_args={"name": "hex"},
+        mesh_name="hex",
         backend=vtkhdf_backend,
     )
 
@@ -245,7 +245,7 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map, vtkhdf_backend)
         mesh,
         mode=io4dolfinx.FileMode.append,
         time=1.0,
-        backend_args={"name": "tet"},
+        mesh_name="tet",
         backend=vtkhdf_backend,
     )
     dim = mesh.topology.dim
@@ -256,7 +256,7 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map, vtkhdf_backend)
         mesh,
         mode=io4dolfinx.FileMode.append,
         time=2.5,
-        backend_args={"name": "tet"},
+        mesh_name="tet",
         backend=vtkhdf_backend,
     )
     for dim in range(mesh.topology.dim + 1):
@@ -264,17 +264,17 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map, vtkhdf_backend)
         entities = np.arange(mesh.topology.index_map(dim).size_local, dtype=np.int32)
         et = meshtags(mesh, dim, entities, entities + mesh.topology.index_map(dim).local_range[0])
         io4dolfinx.write_meshtags(
-            filename, mesh, et, f"{dim}tags", backend_args={"name": "tet"}, backend=vtkhdf_backend
+            filename, mesh, et, f"{dim}tags", mesh_name="tet", backend=vtkhdf_backend
         )
         org_maps[dim] = generate_reference_map(mesh, et, comm, root)
 
     tol = 15 * np.finfo(dtype).eps
     # Read in hex grid from second time step
     hex_mesh = io4dolfinx.read_mesh(
-        filename, comm, time=1.0, backend_args={"name": "hex"}, backend=vtkhdf_backend
+        filename, comm, time=1.0, mesh_name="hex", backend=vtkhdf_backend
     )
     hex_tag = io4dolfinx.read_meshtags(
-        filename, hex_mesh, "CellTags", backend_args={"name": "hex"}, backend=vtkhdf_backend
+        filename, hex_mesh, "CellTags", mesh_name="hex", backend=vtkhdf_backend
     )
     read_map = generate_reference_map(hex_mesh, hex_tag, comm, root)
     # On root process, check that midpoints are the same for each value in the meshtag
@@ -286,11 +286,11 @@ def test_write_meshtags(dtype, tmp_path, generate_reference_map, vtkhdf_backend)
 
     # Read tet grid from second time step
     tet_mesh = io4dolfinx.read_mesh(
-        filename, comm, time=2.5, backend_args={"name": "tet"}, backend=vtkhdf_backend
+        filename, comm, time=2.5, mesh_name="tet", backend=vtkhdf_backend
     )
     for dim in range(mesh.topology.dim + 1):
         tet_tag = io4dolfinx.read_meshtags(
-            filename, tet_mesh, f"{dim}tags", backend_args={"name": "tet"}, backend=vtkhdf_backend
+            filename, tet_mesh, f"{dim}tags", mesh_name="tet", backend=vtkhdf_backend
         )
         read_map = generate_reference_map(tet_mesh, tet_tag, comm, root)
         if MPI.COMM_WORLD.rank == root:
@@ -320,7 +320,7 @@ def test_read_write_pointdata(dtype, tmp_path, vtkhdf_backend):
         mesh,
         mode=io4dolfinx.FileMode.write,
         time=1.0,
-        backend_args={"name": "hex"},
+        mesh_name="hex",
         backend=vtkhdf_backend,
     )
 
@@ -333,7 +333,8 @@ def test_read_write_pointdata(dtype, tmp_path, vtkhdf_backend):
         u,
         mode=io4dolfinx.FileMode.append,
         time=1.0,
-        backend_args={"name": "hex"},
+        backend_args=None,
+        mesh_name="hex",
         backend=vtkhdf_backend,
     )
 
@@ -342,7 +343,7 @@ def test_read_write_pointdata(dtype, tmp_path, vtkhdf_backend):
         mesh,
         mode=io4dolfinx.FileMode.append,
         time=2.0,
-        backend_args={"name": "hex"},
+        mesh_name="hex",
         backend=vtkhdf_backend,
     )
     u.interpolate(lambda x: f(x, 2.0))
@@ -351,20 +352,21 @@ def test_read_write_pointdata(dtype, tmp_path, vtkhdf_backend):
         u,
         mode=io4dolfinx.FileMode.append,
         time=2.0,
-        backend_args={"name": "hex"},
+        backend_args=None,
+        mesh_name="hex",
         backend=vtkhdf_backend,
     )
 
     # Read in hex grid from second time step
     hex_mesh = io4dolfinx.read_mesh(
-        filename, comm, time=2.0, backend_args={"name": "hex"}, backend=vtkhdf_backend
+        filename, comm, time=2.0, mesh_name="hex", backend=vtkhdf_backend
     )
     u_end = io4dolfinx.read_point_data(
         filename,
         mesh=hex_mesh,
         name=f_name,
         time=2.0,
-        backend_args={"name": "hex"},
+        mesh_name="hex",
         backend=vtkhdf_backend,
     )
     u_ref = Function(u_end.function_space, dtype=dtype)
@@ -390,13 +392,13 @@ def test_read_write_celldata(dtype, tmp_path, vtkhdf_backend):
     t_0 = 2.2
     t_1 = 3.0
 
-    backend_args = {"name": "Grid"}
+    mesh_name = "Grid"
     io4dolfinx.write_mesh(
         filename,
         mesh,
         mode=io4dolfinx.FileMode.write,
         time=t_0,
-        backend_args=backend_args,
+        mesh_name=mesh_name,
         backend=vtkhdf_backend,
     )
 
@@ -409,7 +411,8 @@ def test_read_write_celldata(dtype, tmp_path, vtkhdf_backend):
         u,
         mode=io4dolfinx.FileMode.append,
         time=t_0,
-        backend_args=backend_args,
+        backend_args=None,
+        mesh_name=mesh_name,
         backend=vtkhdf_backend,
     )
 
@@ -418,7 +421,7 @@ def test_read_write_celldata(dtype, tmp_path, vtkhdf_backend):
         mesh,
         mode=io4dolfinx.FileMode.append,
         time=t_1,
-        backend_args=backend_args,
+        mesh_name=mesh_name,
         backend=vtkhdf_backend,
     )
     u.interpolate(lambda x: f(x, t_1))
@@ -427,20 +430,21 @@ def test_read_write_celldata(dtype, tmp_path, vtkhdf_backend):
         u,
         mode=io4dolfinx.FileMode.append,
         time=t_1,
-        backend_args=backend_args,
+        backend_args=None,
+        mesh_name=mesh_name,
         backend=vtkhdf_backend,
     )
 
     for t in [t_1, t_0]:
         grid = io4dolfinx.read_mesh(
-            filename, comm, time=t, backend_args=backend_args, backend=vtkhdf_backend
+            filename, comm, time=t, mesh_name=mesh_name, backend=vtkhdf_backend
         )
         u_end = io4dolfinx.read_cell_data(
             filename,
             mesh=grid,
             name=f_name,
             time=t,
-            backend_args=backend_args,
+            mesh_name=mesh_name,
             backend=vtkhdf_backend,
         )
         u_ref = Function(u_end.function_space, dtype=dtype)
@@ -470,7 +474,7 @@ def test_read_write_mix_data(dtype, tmp_path, vtkhdf_backend):
     tmp_path = mesh.comm.bcast(tmp_path, root=0)
     filename = tmp_path / "mixed_data.vtkhdf"
 
-    backend_args = {"name": "MyGrid"}
+    mesh_name = "MyGrid"
     for i, t in enumerate(ts):
         if np.isclose(t, 0.1):
             mode = io4dolfinx.FileMode.write
@@ -478,7 +482,7 @@ def test_read_write_mix_data(dtype, tmp_path, vtkhdf_backend):
             mode = io4dolfinx.FileMode.append
         mesh.geometry.x[:] *= 1 + 0.1 * t
         io4dolfinx.write_mesh(
-            filename, mesh, mode=mode, time=t, backend=vtkhdf_backend, backend_args=backend_args
+            filename, mesh, mode=mode, time=t, backend=vtkhdf_backend, mesh_name=mesh_name
         )
         u.interpolate(lambda x: f(x, t))
         q.interpolate(lambda x: g(x, t))
@@ -487,7 +491,8 @@ def test_read_write_mix_data(dtype, tmp_path, vtkhdf_backend):
             u,
             time=t,
             mode=io4dolfinx.FileMode.append,
-            backend_args=backend_args,
+            backend_args=None,
+            mesh_name=mesh_name,
             backend=vtkhdf_backend,
         )
         io4dolfinx.write_point_data(
@@ -495,19 +500,20 @@ def test_read_write_mix_data(dtype, tmp_path, vtkhdf_backend):
             z,
             time=t,
             mode=io4dolfinx.FileMode.append,
-            backend_args=backend_args,
+            backend_args=None,
+            mesh_name=mesh_name,
             backend=vtkhdf_backend,
         )
 
         mesh_in = io4dolfinx.read_mesh(
-            filename, MPI.COMM_WORLD, time=t, backend_args=backend_args, backend=vtkhdf_backend
+            filename, MPI.COMM_WORLD, time=t, mesh_name=mesh_name, backend=vtkhdf_backend
         )
         u_in = io4dolfinx.read_point_data(
             filename,
             name=u.name,
             mesh=mesh_in,
             time=t,
-            backend_args=backend_args,
+            mesh_name=mesh_name,
             backend=vtkhdf_backend,
         )
         u_ref = Function(u_in.function_space, dtype=dtype)
@@ -519,7 +525,8 @@ def test_read_write_mix_data(dtype, tmp_path, vtkhdf_backend):
                 filename,
                 q,
                 time=t,
-                backend_args=backend_args,
+                backend_args=None,
+                mesh_name=mesh_name,
                 mode=io4dolfinx.FileMode.append,
                 backend=vtkhdf_backend,
             )
@@ -531,7 +538,7 @@ def test_read_write_mix_data(dtype, tmp_path, vtkhdf_backend):
                 filename,
                 MPI.COMM_WORLD,
                 time=ts[c_step],
-                backend_args=backend_args,
+                mesh_name=mesh_name,
                 backend=vtkhdf_backend,
             )
         q_in = io4dolfinx.read_cell_data(
@@ -539,7 +546,7 @@ def test_read_write_mix_data(dtype, tmp_path, vtkhdf_backend):
             name=q.name,
             mesh=mesh_in,
             time=t,
-            backend_args=backend_args,
+            mesh_name=mesh_name,
             backend=vtkhdf_backend,
         )
         q_ref = Function(q_in.function_space, dtype=dtype)

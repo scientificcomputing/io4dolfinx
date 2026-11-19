@@ -28,6 +28,7 @@ __all__ = [
     "get_backend",
     "get_mesh_name",
     "set_default_backend",
+    "with_mesh_name",
 ]
 
 _DEFAULT_BACKEND = "h5py"
@@ -55,6 +56,42 @@ def get_mesh_name(backend_args: dict[str, Any] | None) -> str:
         return DEFAULT_MESH_NAME
     name = backend_args.get("name", DEFAULT_MESH_NAME)
     return DEFAULT_MESH_NAME if name is None else str(name)
+
+
+def with_mesh_name(
+    backend_args: dict[str, Any] | None, mesh_name: str | None
+) -> dict[str, Any] | None:
+    """Backend arguments selecting the mesh ``mesh_name``, as backends expect them.
+
+    Public functions take the mesh as ``mesh_name``, while backends read it from
+    ``backend_args["name"]`` (see :func:`get_mesh_name`). Passing the mesh name in
+    ``backend_args`` to a public function is deprecated.
+
+    Args:
+        backend_args: Backend arguments of the caller, not modified.
+        mesh_name: Name of the mesh, or ``None`` for the default mesh.
+
+    Returns:
+        ``backend_args`` with ``"name"`` set to ``mesh_name``.
+
+    Raises:
+        ValueError: If ``backend_args["name"]`` and ``mesh_name`` name different meshes.
+    """
+    if backend_args is not None and "name" in backend_args:
+        if mesh_name is not None and backend_args["name"] != mesh_name:
+            raise ValueError(
+                f"backend_args['name']={backend_args['name']!r} and mesh_name={mesh_name!r} "
+                "name different meshes; pass mesh_name only."
+            )
+        warnings.warn(
+            "Passing the mesh name as backend_args['name'] is deprecated; use mesh_name.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return backend_args
+    if mesh_name is None:
+        return backend_args
+    return {**(backend_args or {}), "name": mesh_name}
 
 
 def function_not_found(
