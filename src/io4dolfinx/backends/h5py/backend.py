@@ -23,6 +23,7 @@ from ...format import METADATA_KEYS
 from ...structures import ArrayData, FunctionData, MeshData, MeshTagsData, ReadMeshData
 from ...utils import check_file_exists, compute_local_range
 from .. import DEFAULT_MESH_NAME, FileMode, ReadMode, function_not_found, get_mesh_name
+from . import storage as h5_storage
 
 read_mode = ReadMode.parallel
 
@@ -277,14 +278,22 @@ def write_mesh(
         filename: Path to file to write to.
         mode: Mode to use (write or append)
         time: Time stamp
+        backend_args: Backend arguments, including the lossless HDF5 storage options
+            documented in :mod:`io4dolfinx.backends.h5py.storage`.
     """
     backend_args = get_default_backend_args(backend_args)
+    options = h5_storage.storage_options(comm, backend_args)
     h5_mode = convert_file_mode(mode)
     mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
         if mesh_name in h5file.keys() and h5_mode == "a":
             mesh_directory = h5file[mesh_name]
             timestamps = mesh_directory.attrs["timestamps"]
+            previous = mesh_directory[f"{len(timestamps) - 1}/Points"]
+            for key in ("Topology", "PartitioningData", "PartitioningOffset"):
+                if key in mesh_directory:
+                    h5_storage.check_storage_options(mesh_directory[key], options)
+            h5_storage.check_storage_options(previous, options)
             if np.isclose(time, timestamps).any():
                 raise ValueError(f"Mesh {mesh_name!r} has already been stored at time={time}.")
             else:
@@ -299,34 +308,50 @@ def write_mesh(
             mesh_directory.attrs["timestamps"] = np.array([time], dtype=np.float64)
             idx = 0
             write_topology = True
+            previous = None
 
         geometry_group = mesh_directory.create_group(f"{idx}")
 
         # Write geometry data
         gdim = mesh.local_geometry.shape[1]
-        geometry_dataset = geometry_group.create_dataset(
+        geometry_dataset = h5_storage.create_dataset(
+            geometry_group,
             "Points",
             [mesh.num_nodes_global, gdim],
-            dtype=mesh.local_geometry.dtype,
+            mesh.local_geometry.dtype,
+            options,
+            previous,
         )
-        geometry_dataset[slice(*mesh.local_geometry_pos), :] = mesh.local_geometry
+        h5_storage.write_dataset(
+            geometry_dataset, np.s_[slice(*mesh.local_geometry_pos), :], mesh.local_geometry
+        )
 
         # Write static partitioning data
         if "PartitioningData" not in mesh_directory.keys() and mesh.store_partition:
+            assert mesh.partition_global is not None
             assert mesh.partition_range is not None
             assert mesh.ownership_array is not None
-            par_dataset = mesh_directory.create_dataset(
-                "PartitioningData", [mesh.partition_global], dtype=mesh.ownership_array.dtype
+            par_dataset = h5_storage.create_dataset(
+                mesh_directory,
+                "PartitioningData",
+                [mesh.partition_global],
+                mesh.ownership_array.dtype,
+                options,
             )
-            par_dataset[slice(*mesh.partition_range)] = mesh.ownership_array
+            h5_storage.write_dataset(
+                par_dataset, slice(*mesh.partition_range), mesh.ownership_array
+            )
 
         if "PartitioningOffset" not in mesh_directory.keys() and mesh.store_partition:
             assert mesh.ownership_offset is not None
-            par_dataset = mesh_directory.create_dataset(
-                "PartitioningOffset", [mesh.num_cells_global + 1], dtype=np.int64
+            par_dataset = h5_storage.create_dataset(
+                mesh_directory, "PartitioningOffset", [mesh.num_cells_global + 1], np.int64, options
             )
-            par_dataset[mesh.local_topology_pos[0] : mesh.local_topology_pos[1] + 1] = (
-                mesh.ownership_offset
+            # Neighbouring ranks share an offset; only the last rank writes the end.
+            stop = mesh.local_topology_pos[1] + (comm.rank == comm.size - 1)
+            count = stop - mesh.local_topology_pos[0]
+            h5_storage.write_dataset(
+                par_dataset, slice(mesh.local_topology_pos[0], stop), mesh.ownership_offset[:count]
             )
 
         if "PartitionProcesses" not in mesh_directory.attrs.keys() and mesh.store_partition:
@@ -338,10 +363,16 @@ def write_mesh(
             mesh_directory.attrs["Degree"] = mesh.degree
             mesh_directory.attrs["LagrangeVariant"] = mesh.lagrange_variant
             num_dofs_per_cell = mesh.local_topology.shape[1]
-            topology_dataset = mesh_directory.create_dataset(
-                "Topology", [mesh.num_cells_global, num_dofs_per_cell], dtype=np.int64
+            topology_dataset = h5_storage.create_dataset(
+                mesh_directory,
+                "Topology",
+                [mesh.num_cells_global, num_dofs_per_cell],
+                np.int64,
+                options,
             )
-            topology_dataset[slice(*mesh.local_topology_pos), :] = mesh.local_topology
+            h5_storage.write_dataset(
+                topology_dataset, np.s_[slice(*mesh.local_topology_pos), :], mesh.local_topology
+            )
 
 
 def read_mesh_data(
@@ -442,7 +473,10 @@ def write_meshtags(
         backend_args: Arguments to backend
     """
     backend_args = get_default_backend_args(backend_args)
+    options = h5_storage.storage_options(comm, backend_args)
 
+    assert data.num_entities_global is not None
+    assert data.num_dofs_per_entity is not None
     mesh_name = get_mesh_name(backend_args)
     with h5pyfile(filename, filemode="a", comm=comm, force_serial=False) as h5file:
         if mesh_name not in h5file.keys():
@@ -458,20 +492,26 @@ def write_meshtags(
         _write_metadata(tag, data.metadata)
 
         # Add topology
-        topology = tag.create_dataset(
-            "Topology", shape=[data.num_entities_global, data.num_dofs_per_entity], dtype=np.int64
+        topology = h5_storage.create_dataset(
+            tag, "Topology", [data.num_entities_global, data.num_dofs_per_entity], np.int64, options
         )
         assert data.local_start is not None
-        topology[data.local_start : data.local_start + len(data.indices), :] = data.indices
+        h5_storage.write_dataset(
+            topology,
+            np.s_[data.local_start : data.local_start + len(data.indices), :],
+            data.indices,
+        )
 
         # Add cell_type attribute
         tag.attrs["CellType"] = data.cell_type
 
         # Add values
-        values = tag.create_dataset(
-            "Values", shape=[data.num_entities_global], dtype=data.values.dtype
+        values = h5_storage.create_dataset(
+            tag, "Values", [data.num_entities_global], data.values.dtype, options
         )
-        values[data.local_start : data.local_start + len(data.indices)] = data.values
+        h5_storage.write_dataset(
+            values, slice(data.local_start, data.local_start + len(data.indices)), data.values
+        )
 
         # Add dimension
         tag.attrs["dim"] = data.dim
@@ -678,6 +718,7 @@ def write_function(
 
     mesh_name = get_mesh_name(backend_args)
     backend_args = get_default_backend_args(backend_args)
+    options = h5_storage.storage_options(comm, backend_args)
     h5_mode = convert_file_mode(mode)
     with h5pyfile(filename, filemode=h5_mode, comm=comm, force_serial=False) as h5file:
         # In write mode the file is new, so every group is created
@@ -699,26 +740,42 @@ def write_function(
         else:
             function = functions[u.name]
 
+        previous = None
+        if "timestamps" in function.attrs:
+            previous = function[f"{len(function.attrs['timestamps']) - 1}/array"]
+            h5_storage.check_storage_options(previous, options)
+        for group, key in (
+            (function, "dofmap"),
+            (function, "dofmap_offsets"),
+        ):
+            if key in group:
+                h5_storage.check_storage_options(group[key], options)
+
         dofmap_exists = "dofmap" in function.keys()
         dofmap_offsets_exists = "dofmap_offsets" in function.keys()
 
         if not cell_permutations_exist:
-            cell_perms = mesh.create_dataset(
-                "CellPermutations", shape=[u.num_cells_global], dtype=np.uint32
+            cell_perms = h5_storage.create_dataset(
+                mesh, "CellPermutations", [u.num_cells_global], np.uint32, options
             )
-            cell_perms[slice(*u.local_cell_range)] = u.cell_permutations
+            h5_storage.write_dataset(cell_perms, slice(*u.local_cell_range), u.cell_permutations)
 
         if not dofmap_exists:
-            dofmap = function.create_dataset(
-                "dofmap", shape=[u.global_dofs_in_dofmap], dtype=np.int64
+            dofmap = h5_storage.create_dataset(
+                function, "dofmap", [u.global_dofs_in_dofmap], np.int64, options
             )
-            dofmap[slice(*u.dofmap_range)] = u.dofmap_array
+            h5_storage.write_dataset(dofmap, slice(*u.dofmap_range), u.dofmap_array)
 
         if not dofmap_offsets_exists:
-            dofmap_offsets = function.create_dataset(
-                "dofmap_offsets", shape=[u.num_cells_global + 1], dtype=np.int64
+            dofmap_offsets = h5_storage.create_dataset(
+                function, "dofmap_offsets", [u.num_cells_global + 1], np.int64, options
             )
-            dofmap_offsets[u.local_cell_range[0] : u.local_cell_range[1] + 1] = u.dofmap_offsets
+            # Filtered collective writes require each offset to have one writer.
+            stop = u.local_cell_range[1] + (comm.rank == comm.size - 1)
+            count = stop - u.local_cell_range[0]
+            h5_storage.write_dataset(
+                dofmap_offsets, slice(u.local_cell_range[0], stop), u.dofmap_offsets[:count]
+            )
 
         # Write timestamp
         if "timestamps" in function.attrs.keys():
@@ -732,8 +789,10 @@ def write_function(
         idx = len(function.attrs["timestamps"]) - 1
 
         data_group = function.create_group(f"{idx:d}")
-        array = data_group.create_dataset("array", shape=[u.num_dofs_global], dtype=u.values.dtype)
-        array[slice(*u.dof_range)] = u.values
+        array = h5_storage.create_dataset(
+            data_group, "array", [u.num_dofs_global], u.values.dtype, options, previous
+        )
+        h5_storage.write_dataset(array, slice(*u.dof_range), u.values)
 
 
 def read_legacy_mesh(
@@ -837,11 +896,14 @@ def snapshot_checkpoint(
     num_dofs_global = dofmap.index_map.size_global * dofmap.index_map_bs
     h5mode = convert_file_mode(mode)
     if h5mode == "w":
+        options = h5_storage.storage_options(comm, backend_args or {})
         with h5pyfile(filename, filemode=h5mode, comm=comm, force_serial=False) as h5file:
             local_dofs = u.x.array[:num_dofs_local].copy()
             data = h5file.create_group("snapshot")
-            dataset = data.create_dataset("dofs", shape=num_dofs_global, dtype=local_dofs.dtype)
-            dataset[slice(*local_range)] = local_dofs
+            dataset = h5_storage.create_dataset(
+                data, "dofs", [num_dofs_global], local_dofs.dtype, options
+            )
+            h5_storage.write_dataset(dataset, slice(*local_range), local_dofs)
     elif h5mode == "r":
         with h5pyfile(filename, filemode=h5mode, comm=comm, force_serial=False) as h5file:
             data = h5file["snapshot"]["dofs"]

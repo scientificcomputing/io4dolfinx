@@ -11,69 +11,9 @@ it runs as :code:`vtkhdf-serial`, which writes through rank 0 in the same way as
 Lossless compression
 ~~~~~~~~~~~~~~~~~~~~
 
-Datasets can be stored with lossless HDF5 filters through ``backend_args``. See
-:doc:`../vtkhdf_compression` for an executed example and a comparison of file sizes
-and write/read times. The filter options have the names and meaning of the
-corresponding arguments to :meth:`h5py.Group.create_dataset`; see the h5py
-:ref:`filter pipeline<h5py:dataset_compression>`. Supported options are:
-
-- ``compression`` (default ``None``): ``"gzip"`` or ``None``.
-- ``compression_opts``: an integer from 0 to 9, requiring ``compression="gzip"``;
-  the gzip default is 4.
-- ``shuffle`` (default ``False``): lossless byte reordering that can improve gzip
-  compression; see :ref:`h5py:dataset_shuffle`.
-- ``fletcher32`` (default ``False``): store a checksum per chunk, so that
-  corrupted data raise an error when read; see :ref:`h5py:dataset_fletcher32`.
-- ``scaleoffset`` (default ``True``): store integer arrays (connectivity,
-  topology offsets and cell types) with the minimum number of bits per chunk.
-  This is lossless for integers; floating-point data are left unchanged, as
-  scale-offset would be lossy for them. It is a built-in HDF5 filter, available
-  in every HDF5 build. The default applies to new datasets only; set
-  ``scaleoffset=False`` to turn it off. h5py cannot combine it with
-  ``fletcher32``, so ``fletcher32=True`` turns it off unless ``scaleoffset=True``
-  is also given, which raises an error. Unlike h5py, this is a boolean; see
-  :ref:`h5py:dataset_scaleoffset`.
-
-All boolean options must be ``True`` or ``False``. Other compression filters
-are not supported, as files using them may not be readable in ParaView.
-
-Chunking
-~~~~~~~~
-
-VTKHDF appends every time step to resizable datasets, which HDF5 requires to be
-:ref:`chunked<h5py:dataset_chunks>`. Coordinates, connectivity, topology offsets,
-cell types, point/cell values and mesh tag values are each chunked by whole rows,
-and filtered independently. Small bookkeeping arrays, including timestep metadata,
-use h5py's automatic chunking and remain unfiltered.
-
-- ``chunk_bytes`` (default ``1048576``, 1 MiB): the size of a chunk in bytes,
-  rounded down to whole rows and at least one row. A chunk is never longer than
-  the dataset when it is created.
-
-Each rank writes, and each reader reads, a contiguous block of rows, which then
-shares at most two chunks with its neighbours, whatever the number of processes.
-
-The default fits the 1 MiB chunk cache of HDF5 1.x, which ParaView bundles; see the
-HDF5 `chunking guide <https://support.hdfgroup.org/documentation/hdf5-docs/advanced_topics/chunking_in_hdf5.html>`_.
-
-The chunk size, like the filters, must be the same on every rank. Unlike the
-filters, it only applies to new datasets: an existing dataset keeps its chunks on
-append, and another ``chunk_bytes`` is not an error.
-
-Settings apply when a dataset is first created. On append, omitted options retain
-that dataset's existing settings; explicitly conflicting settings raise
-``ValueError`` before datasets are resized. Newly created fields use the options
-of their own write call and do not inherit settings from ``write_mesh``.
-
-Invalid options and unavailable filters raise errors rather than silently
-disabling compression.
-
-.. note::
-    In parallel, all datasets are written with collective MPI-IO, as in DOLFINx:
-    every rank in the communicator must call the writer, including ranks with no
-    local data, and must pass identical options. Parallel filtered writes require
-    MPI-enabled h5py; see the
-    `HDF5 parallel compression guidance <https://portal.hdfgroup.org/documentation/hdf5/latest/_par_compr.html>`_.
+Datasets can be stored with lossless HDF5 filters, set through ``backend_args``; by default,
+the integer mesh arrays use scale-offset. See :doc:`../compression` for the options, an
+example and a comparison of file sizes and write/read times.
 
 Vectors and tensors
 ~~~~~~~~~~~~~~~~~~~
