@@ -746,7 +746,7 @@ def read_function_names(
     backend_args = get_default_backend_args(backend_args)
     check_file_exists(filename)
     with h5pyfile(filename, "r", comm=comm) as h5file:
-        hdf = h5file["VTKHDF"]
+        hdf = _get_vtk_group(h5file, backend_args["name"])
         function_names = set()
         if "CellData" in hdf.keys():
             for item in hdf["CellData"].keys():

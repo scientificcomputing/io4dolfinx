@@ -581,6 +581,55 @@ def test_read_timestamps(tmp_path, vtkhdf_backend, mesh_name):
         )
 
 
+def test_read_function_names(tmp_path, vtkhdf_backend):
+    """The names of the point and cell data of each mesh in a multi-block file."""
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / "function_names.vtkhdf"
+    mesh = create_unit_square(comm, 4, 3)
+    u = Function(functionspace(mesh, ("Lagrange", 1)), name="u")
+    q = Function(functionspace(mesh, ("DG", 0)), name="q")
+    v = Function(functionspace(mesh, ("Lagrange", 2)), name="v")
+    for mesh_name, mode, functions in (
+        (None, io4dolfinx.FileMode.write, [(io4dolfinx.write_point_data, u)]),
+        (
+            "MyGrid",
+            io4dolfinx.FileMode.append,
+            [(io4dolfinx.write_point_data, v), (io4dolfinx.write_cell_data, q)],
+        ),
+    ):
+        io4dolfinx.write_mesh(
+            filename, mesh, mode=mode, time=0.0, backend=vtkhdf_backend, mesh_name=mesh_name
+        )
+        for writer, function in functions:
+            writer(
+                filename,
+                function,
+                time=0.0,
+                mode=io4dolfinx.FileMode.append,
+                backend_args=None,
+                backend=vtkhdf_backend,
+                mesh_name=mesh_name,
+            )
+    for mesh_name, names in ((None, ["u"]), ("MyGrid", ["q", "v"])):
+        found = io4dolfinx.read_function_names(
+            filename, comm, backend=vtkhdf_backend, mesh_name=mesh_name
+        )
+        assert sorted(found) == names
+
+
+def test_read_function_names_dolfinx_written(tmp_path):
+    """The names of the point data of a single-grid file written by DOLFINx."""
+    comm = MPI.COMM_WORLD
+    tmp_path = comm.bcast(tmp_path, root=0)
+    filename = tmp_path / "dolfinx_names.vtkhdf"
+    mesh = create_unit_square(comm, 3, 2)
+    write_mesh(str(filename), mesh)
+    write_point_data(str(filename), mesh, np.zeros(mesh.geometry.index_map().size_local), 0.0)
+    comm.barrier()
+    assert io4dolfinx.read_function_names(filename, comm, backend="vtkhdf") == ["u"]
+
+
 def write_point(filename, function, time, backend, mesh_name=None):
     """Append the point data of ``function`` at ``time``."""
     io4dolfinx.write_point_data(
