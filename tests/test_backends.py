@@ -149,7 +149,9 @@ def test_serial_adios2_writes_adios2_files(tmp_path, writer, reader):
     and snapshots of the other."""
     adios2 = pytest.importorskip("adios2")
     if not adios2.is_built_with_mpi:
-        pytest.skip("Needs ADIOS2 built with MPI")
+        # Without MPI, adios2 falls back to adios2-serial, whose writes and reads the tests
+        # with the backend fixture cover
+        pytest.skip("Compares the MPI adios2 backend with adios2-serial; needs ADIOS2 with MPI")
     comm = MPI.COMM_WORLD
     mesh = dolfinx.mesh.create_unit_square(comm, 4, 5)
     V = dolfinx.fem.functionspace(mesh, ("Lagrange", 2))
