@@ -63,6 +63,34 @@ def shared_tmp_path(tmp_path):
     return tmp_path
 
 
+@pytest.fixture
+def scotch_partitioner(monkeypatch):
+    """Partition meshes with PT-SCOTCH instead of DOLFINx's default, which is ParMETIS when
+    DOLFINx is built with it (as on conda-forge).
+
+    ParMETIS rejects a cell graph without edges, as of a mesh whose cells share no facet,
+    on the ranks holding cells only, so the other ranks wait forever.
+    """
+    if MPI.COMM_WORLD.size == 1:
+        return  # Meshes on one process are not partitioned
+    if not dolfinx.has_ptscotch:
+        pytest.skip("Needs DOLFINx with PT-SCOTCH")
+    scotch = dolfinx.graph.partitioner_scotch()
+    if hasattr(dolfinx.mesh, "create_cell_partitioner"):
+        # DOLFINx 0.10 and 0.11: the ghost mode is part of the cell partitioner
+        create = dolfinx.mesh.create_cell_partitioner
+
+        def cell_partitioner(ghost_mode, max_facet_to_cell_links=2):
+            if fenicsx_compat.before("0.11.0.dev0"):
+                # The overload with a graph partitioner fixes the links at 2
+                return create(scotch, ghost_mode)
+            return create(scotch, ghost_mode, max_facet_to_cell_links)
+
+        monkeypatch.setattr(dolfinx.mesh, "create_cell_partitioner", cell_partitioner)
+    else:
+        monkeypatch.setattr(dolfinx.graph, "partitioner", lambda: scotch)
+
+
 @pytest.fixture(scope="module")
 def cluster():
     cluster = ipp.Cluster(engines="mpi", n=2)
