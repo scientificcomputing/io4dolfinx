@@ -24,7 +24,8 @@ from .helpers import (
     read_local_rows,
 )
 
-adios2 = fenicsx_compat.resolve_adios_scope(adios2)
+# ADIOS2 without MPI is supported through the adios2-serial backend
+adios2 = fenicsx_compat.resolve_adios_scope(adios2, require_mpi=False)
 
 read_mode = ReadMode.parallel
 
