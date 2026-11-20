@@ -20,7 +20,8 @@ import numpy.typing as npt
 
 from ...utils import compute_local_range, valid_function_types
 
-adios2 = fenicsx_compat.resolve_adios_scope(adios2)
+# ADIOS2 without MPI is supported through the adios2-serial backend
+adios2 = fenicsx_compat.resolve_adios_scope(adios2, require_mpi=False)
 
 
 __all__ = [
