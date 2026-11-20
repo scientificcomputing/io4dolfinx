@@ -496,6 +496,7 @@ def test_binary_and_compressed_files(shared_tmp_path, label_bits, compress, unit
         assert comm.allreduce(len(a.values), op=MPI.SUM) > 0
 
 
+@pytest.mark.usefixtures("scotch_partitioner")
 def test_baffle(shared_tmp_path, unit_mesh, integral):
     """Two cells side by side, with separate but coincident points on the face between
     them and a patch on each side. The patches are told apart by their labels, which
