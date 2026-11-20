@@ -20,7 +20,7 @@ authors = [
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["fenics-dolfinx>=0.10.0", "fenicsx-compat>=0.5.0", "h5py>=3.10"]
+dependencies = ["fenics-dolfinx>=0.10.0", "fenicsx-compat>=0.7.0", "h5py>=3.10"]
 
 [project.scripts]
 io4dolfinx-convert = "io4dolfinx.converter:main"
