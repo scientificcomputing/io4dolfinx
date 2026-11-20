@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "io4dolfinx"
-version = "2.2.0"
+version = "2.3.0.dev0"
 description = "Checkpointing functionality for DOLFINx meshes/functions with ADIOS2"
 authors = [
     { name = "Jørgen S. Dokken", email = "dokken@simula.no" },
@@ -141,7 +141,7 @@ tag = true
 sign_tags = false
 tag_name = "v{new_version}"
 tag_message = "Bump version: {current_version} → {new_version}"
-current_version = "2.2.0"
+current_version = "2.3.0.dev0"
 # X.Y.Z.devN while developing, X.Y.Z when released
 parse = '(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.(?P<release>dev)(?P<pre_n>\d+))?'
 serialize = ["{major}.{minor}.{patch}.{release}{pre_n}", "{major}.{minor}.{patch}"]
