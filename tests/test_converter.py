@@ -44,6 +44,8 @@ def test_convert(shared_tmp_path, backend, command_line):
     """The converted checkpoint is read as any other, with the backend chosen from its
     suffix."""
     source = legacy_dir / "adios4dolfinx_checkpoint.bp"
+    if not source.exists():
+        pytest.skip(f"{source} does not exist")
     output = shared_tmp_path / f"converted{suffixes[backend]}"
     if command_line:
         main([str(source), str(output)])
@@ -59,6 +61,8 @@ def test_convert(shared_tmp_path, backend, command_line):
 def test_names(shared_tmp_path, backend):
     """Each function of the file gets the name at its position."""
     source = legacy_dir / "adios4dolfinx_two_functions.bp"
+    if not source.exists():
+        pytest.skip(f"{source} does not exist")
     output = shared_tmp_path / "two_functions.checkpoint"
     main([str(source), str(output), "--names", "u", "v", "--backend", backend])
 
@@ -98,6 +102,8 @@ def test_convert_dolfin(shared_tmp_path, backend):
     """The mesh and a mesh function of a legacy DOLFIN file become a mesh and mesh tags, with
     the node order of the file, so DOLFIN functions are read onto the converted mesh."""
     source = dolfin_dir / "mesh.h5"
+    if not source.exists():
+        pytest.skip(f"{source} does not exist")
     output = shared_tmp_path / f"dolfin{suffixes[backend]}"
     main([str(source), str(output), "--meshtags", "facet_tags"])
 
